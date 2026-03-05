@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-03-05
+
+- Stopped tracking the repository sample `agents/` workspace so local agent definitions remain gitignored by default
+- Kept the workbench, research, architecture, and validation updates from `0.2.0` as the functional baseline
+
 ## 0.2.0 - 2026-03-05
 
 - Reframed the UI into a workbench-style Test Lab with provider setup, agent queueing, benchmark playlists, and batch launch planning
