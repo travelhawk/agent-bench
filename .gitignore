@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.agent-bench/
+npm-debug.log*

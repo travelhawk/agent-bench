@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>agent-bench dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="min-h-screen lg:flex">
+      <aside class="w-full border-b border-slate-800 bg-[#09142a] p-5 lg:w-64 lg:border-b-0 lg:border-r lg:p-6">
+        <div class="mb-10 flex items-center gap-3 text-2xl font-extrabold">
+          <div class="grid h-10 w-10 place-content-center rounded-xl bg-blue-600 text-xl">⚡</div>
+          <span>agent-bench</span>
+        </div>
+
+        <nav class="space-y-2">
+          <a href="#" class="nav-item active">Dashboard</a>
+          <a href="#" class="nav-item">Run History</a>
+          <a href="#" class="nav-item">Benchmarks</a>
+        </nav>
+
+        <div class="mt-16 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+          <div class="text-sm text-slate-300">Local Environment</div>
+          <div class="text-xs text-slate-500">v0.1.0-alpha</div>
+        </div>
+      </aside>
+
+      <main class="flex-1 p-5 md:p-8">
+        <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <h1 class="text-4xl font-extrabold">Dashboard</h1>
+          <div class="flex items-center gap-4">
+            <input type="search" placeholder="Search runs..." class="w-64 rounded-full border border-slate-700 bg-[#0b1732] px-5 py-3 text-slate-200 placeholder:text-slate-500" />
+            <button class="rounded-xl border border-slate-700 p-3">⚙</button>
+          </div>
+        </div>
+
+        <section id="stats-grid" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"></section>
+
+        <section class="mt-8 grid gap-6 xl:grid-cols-[2fr_1fr]">
+          <div>
+            <div class="mb-4 flex items-center justify-between">
+              <h2 class="text-4xl font-extrabold md:text-5xl">Recent Runs</h2>
+              <a class="text-blue-300" href="#">View all history</a>
+            </div>
+            <div id="runs-list" class="space-y-3"></div>
+          </div>
+
+          <div>
+            <h2 class="mb-4 text-4xl font-extrabold md:text-5xl">Quick Start</h2>
+            <div class="rounded-2xl border border-slate-800 bg-[#08162f] p-5">
+              <p class="mb-6 text-slate-300">Select a benchmark suite to run against your local agent configuration.</p>
+              <div id="benchmarks-list" class="space-y-3"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="w-full border-t border-slate-800 bg-[#020919] p-5 lg:w-[360px] lg:border-l lg:border-t-0">
+        <div class="mb-4 flex items-center justify-between text-sm tracking-wider text-slate-400">
+          <span>&gt;_ LOGS</span>
+          <span class="text-lg">•••</span>
+        </div>
+        <pre id="log-panel" class="h-[520px] overflow-y-auto rounded-xl border border-slate-800 bg-black/40 p-4 text-sm leading-relaxed text-cyan-300"></pre>
+      </aside>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

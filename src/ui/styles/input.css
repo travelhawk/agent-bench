@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-[#040b1e] text-slate-100 antialiased;
+  background-image: radial-gradient(circle at 20% 10%, rgba(21, 65, 149, 0.35), transparent 40%),
+    radial-gradient(circle at 80% 90%, rgba(24, 101, 76, 0.2), transparent 35%);
+}
+
+.stat-card {
+  @apply rounded-3xl border border-slate-800/90 bg-[#0b1732]/90 p-6 shadow-panel;
+}
+
+.nav-item {
+  @apply flex items-center gap-3 rounded-xl px-4 py-3 text-lg text-slate-300 transition hover:bg-slate-800/60;
+}
+
+.nav-item.active {
+  @apply bg-[#1a3368] text-blue-300;
+}
+
+.run-card {
+  @apply flex items-center justify-between rounded-2xl border border-slate-800 bg-[#08162f] p-5;
+}
+
+.quick-btn {
+  @apply flex w-full items-center justify-between rounded-xl border border-slate-700 bg-[#0f254a] px-4 py-4 text-left text-lg font-semibold text-slate-100 hover:border-blue-400;
+}

@@ -1,97 +1,94 @@
 # agent-bench
 
-A modular benchmarking framework for AI agents that reduces regression uncertainty by testing agent configurations against reproducible task suites and producing objective scores.
+`agent-bench` is a local benchmarking tool for AI agents with a CLI-first workflow and a dashboard UI.
 
-## Vision
+Current implementation delivers a working vertical slice:
+- SQLite-backed run persistence
+- Weighted scoring (tests 60%, LLM-judge 30%, performance 10%)
+- Regression alerts
+- Artifact/log snapshots per run
+- Dashboard UI inspired by the provided mockup
 
-`agent-bench` aims to become the quality standard for agent development: local, repeatable validation before production deployment.
+## Stack
 
-Core idea: treat prompt and agent changes like software changes, with measurable quality gates instead of intuition.
-
-## Product Scope (v0 baseline)
-
-- CLI-first benchmarking workflow for power users
-- Support for agent definitions (prompts, tools, model settings)
-- Benchmark runner for sequential/parallel suite execution
-- Isolated execution environment (sandboxed runs)
-- Persistent local run history (SQLite)
-- Weighted scoring:
-  - Automated tests: 60%
-  - LLM judge: 30%
-  - Performance metrics: 10%
-- Regression alerts when new runs score below best baseline
-- Artifact-first output (snapshots + logs)
-- Web UI for analysis:
-  - Dashboard
-  - Run explorer
-  - Diff viewer
-
-## Architecture Principles
-
-- Strict decoupling between agent definitions and benchmark definitions
-- Artifact-first design: every run produces a reproducible black-box trace
-- Minimal stack:
-  - TypeScript / Node.js
-  - SQLite
-  - Commander.js (CLI)
-  - Tailwind CSS (UI)
+- TypeScript / Node.js
+- Commander.js (CLI)
+- SQLite (`better-sqlite3`)
+- Express (UI server/API)
+- Tailwind CSS (compiled static UI styles)
 
 ## Setup
 
-1. Clone the repository.
-2. Install dependencies (once `package.json` is available):
-   - `npm install`
-3. Prepare local config/env:
-   - LLM provider key (for judge integration)
-   - Database path (SQLite)
-   - Sandbox runtime settings
+1. Install dependencies:
+```bash
+npm install
+```
+2. Build project:
+```bash
+npm run build
+```
+3. Initialize local storage:
+```bash
+node dist/src/index.js init --local
+```
 
 ## Usage
 
-Planned command flow:
+### Run a benchmark
+```bash
+node dist/src/index.js run --agent ./agents/coder-v1.md --suite fix-react-bug
+```
 
-- Run benchmark suite:
-  - `agent-bench run --agent ./agents/agent-v1.md --suite ./benchmarks/core`
-- Compare versions:
-  - `agent-bench compare --left ./agents/agent-v1.md --right ./agents/agent-v2.md`
-- Start analysis UI:
-  - `agent-bench ui`
+### Show run history
+```bash
+node dist/src/index.js history --limit 10
+```
+
+### Compare two runs
+```bash
+node dist/src/index.js compare --left run-abc123 --right run-def456
+```
+
+### Start the dashboard
+```bash
+node dist/src/index.js ui --port 4173
+```
+Open: `http://localhost:4173`
 
 ## Configuration
 
-Expected config areas:
+Defaults:
+- DB path: `.agent-bench/data.db`
+- Artifact path: `.agent-bench/artifacts/`
 
-- `agent`: prompt/tool/model references
-- `runner`: concurrency, timeout, retries
-- `judge`: model, rubric, temperature
-- `scoring`: weight distribution and thresholds
-- `storage`: SQLite path and retention policy
-- `sandbox`: resource limits and isolation mode
+Override DB path per command:
+```bash
+node dist/src/index.js run --agent ./agents/coder-v1.md --db ./tmp/bench.db
+```
 
 ## Example Workflow
 
-1. Define or update an agent (`agent-v2.md`).
-2. Execute suite with `agent-bench run`.
-3. Review score + latency + cost.
-4. Open UI and inspect logs/snapshots.
-5. Compare with previous best run.
-6. Ship only if no regression is detected.
+1. `init` local database.
+2. Execute one or more `run` commands for agent variants.
+3. Inspect `history` and `compare` output.
+4. Open `ui` and review score/cost trends plus latest logs.
+5. Use regression alerts as a quality gate before shipping agent changes.
 
 ## Troubleshooting
 
-- Missing API key:
-  - Ensure your LLM provider key is set in environment/config.
-- Empty or inconsistent scores:
-  - Verify benchmark suite includes both deterministic tests and evaluation prompts.
-- Slow runs:
-  - Lower concurrency or tighten suite size for local iteration.
-- Large artifact storage growth:
-  - Configure retention and prune historical runs.
-- UI does not show latest run:
-  - Check SQLite path alignment between CLI and UI config.
+- `no such table: runs`
+  - Re-run `init`; commands now auto-initialize schema, but manual DB edits may require reset.
 
-## Project Status
+- UI has no data
+  - Run at least one benchmark first with `run --agent ...`.
 
-Planning/bootstrapping stage. This repository currently contains PRD material and baseline documentation.
+- Build warning: Browserslist outdated
+  - Optional maintenance command: `npx update-browserslist-db@latest`
 
-See [docs/PRD.md](docs/PRD.md) for full product requirements.
+- Missing Tailwind binary
+  - Ensure `npm install` finished successfully.
+
+## Project Artifacts
+
+- Product requirements: [docs/PRD.md](docs/PRD.md)
+- Research + architecture records: [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md)
