@@ -9,14 +9,6 @@ export function initializeSchema(db: Database.Database): void {
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
 
-    CREATE TABLE IF NOT EXISTS benchmarks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT NOT NULL UNIQUE,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_key TEXT NOT NULL UNIQUE,

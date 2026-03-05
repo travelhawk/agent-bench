@@ -18,9 +18,9 @@
         </div>
 
         <nav class="space-y-2">
-          <a href="#" class="nav-item active">Dashboard</a>
-          <a href="#" class="nav-item">Run History</a>
-          <a href="#" class="nav-item">Benchmarks</a>
+          <a href="#dashboard" class="nav-item active" data-view="dashboard">Dashboard</a>
+          <a href="#history" class="nav-item" data-view="history">Run History</a>
+          <a href="#benchmarks" class="nav-item" data-view="benchmarks">Benchmarks</a>
         </nav>
 
         <div class="mt-16 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
@@ -38,24 +38,61 @@
           </div>
         </div>
 
-        <section id="stats-grid" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"></section>
-
-        <section class="mt-8 grid gap-6 xl:grid-cols-[2fr_1fr]">
-          <div>
-            <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-4xl font-extrabold md:text-5xl">Recent Runs</h2>
-              <a class="text-blue-300" href="#">View all history</a>
+        <section id="dashboard-view">
+          <section id="stats-grid" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"></section>
+          <section class="mt-8 grid gap-6 xl:grid-cols-[2fr_1fr]">
+            <div>
+              <div class="mb-4 flex items-center justify-between">
+                <h2 class="text-4xl font-extrabold md:text-5xl">Recent Runs</h2>
+                <a id="view-all-history" class="text-blue-300" href="#history">View all history</a>
+              </div>
+              <div id="runs-list" class="space-y-3"></div>
             </div>
-            <div id="runs-list" class="space-y-3"></div>
-          </div>
 
-          <div>
-            <h2 class="mb-4 text-4xl font-extrabold md:text-5xl">Quick Start</h2>
-            <div class="rounded-2xl border border-slate-800 bg-[#08162f] p-5">
-              <p class="mb-6 text-slate-300">Select a benchmark suite to run against your local agent configuration.</p>
-              <div id="benchmarks-list" class="space-y-3"></div>
+            <div>
+              <h2 class="mb-4 text-4xl font-extrabold md:text-5xl">Quick Start</h2>
+              <div class="rounded-2xl border border-slate-800 bg-[#08162f] p-5">
+                <p class="mb-6 text-slate-300">Select a benchmark suite to run against your local agent configuration.</p>
+                <div id="benchmarks-list" class="space-y-3"></div>
+                <form id="run-form" class="mt-5 space-y-3">
+                  <input id="benchmark-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Benchmark key (e.g. core-engineering)" />
+                  <input id="task-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Task key (optional, e.g. fix-react-bug)" />
+                  <input id="agent-path-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Agent path (optional if using markdown)" />
+                  <textarea id="agent-md-input" class="h-28 w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Agent markdown (optional if using path)"></textarea>
+                  <input id="model-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Model (optional, e.g. openai/gpt-4.1-mini)" />
+                  <button id="run-button" type="submit" class="quick-btn !w-full !justify-center"><span>Run Evaluation</span></button>
+                  <p id="run-status" class="text-xs text-slate-400"></p>
+                </form>
+              </div>
             </div>
+          </section>
+        </section>
+
+        <section id="history-view" class="hidden mt-8">
+          <div class="mb-4 flex items-center justify-between">
+            <h2 class="text-4xl font-extrabold md:text-5xl">Run History</h2>
           </div>
+          <div id="history-list" class="space-y-3"></div>
+        </section>
+
+        <section id="benchmarks-view" class="hidden mt-8">
+          <div class="mb-4 flex items-center justify-between">
+            <h2 class="text-4xl font-extrabold md:text-5xl">Benchmarks</h2>
+          </div>
+          <form id="benchmark-form" class="mb-5 space-y-3 rounded-2xl border border-slate-800 bg-[#08162f] p-4">
+            <select id="benchmark-type-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100">
+              <option value="suite">Create benchmark suite</option>
+              <option value="task">Create task in benchmark</option>
+            </select>
+            <input id="benchmark-parent-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Parent benchmark key (required for task)" />
+            <input id="benchmark-key-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Benchmark key (e.g. auth-migration)" />
+            <input id="benchmark-title-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Title" />
+            <textarea id="benchmark-description-input" class="h-24 w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Task description: what needs to be done"></textarea>
+            <textarea id="benchmark-outcome-input" class="h-20 w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Expected outcome"></textarea>
+            <button id="benchmark-create-button" type="submit" class="quick-btn !w-full !justify-center"><span>Add Benchmark</span></button>
+            <p id="benchmark-status" class="text-xs text-slate-400"></p>
+          </form>
+          <div id="tasks-list" class="space-y-2"></div>
         </section>
       </main>
 
@@ -65,6 +102,17 @@
           <span class="text-lg">•••</span>
         </div>
         <pre id="log-panel" class="h-[520px] overflow-y-auto rounded-xl border border-slate-800 bg-black/40 p-4 text-sm leading-relaxed text-cyan-300"></pre>
+        <div class="mt-4 rounded-xl border border-slate-800 bg-black/40 p-4">
+          <div class="mb-2 text-sm tracking-wide text-slate-400">RUN DETAILS</div>
+          <div id="run-detail-empty" class="text-xs text-slate-500">Select "Open Run" in recent runs or history.</div>
+          <div id="run-detail-content" class="hidden space-y-2">
+            <div id="run-detail-title" class="text-sm font-semibold text-slate-200"></div>
+            <div id="run-detail-matrix" class="grid grid-cols-2 gap-2 text-xs"></div>
+            <a id="run-detail-screenshot-link" href="#" target="_blank" rel="noreferrer">
+              <img id="run-detail-screenshot" class="mt-2 h-28 w-full rounded border border-slate-700 object-cover" alt="Run detail screenshot" />
+            </a>
+          </div>
+        </div>
       </aside>
     </div>
 

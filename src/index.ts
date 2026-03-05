@@ -1,9 +1,13 @@
+#!/usr/bin/env node
+import "dotenv/config";
 import { mkdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
-import { simulateRun } from "./core/runner";
+import { listBenchmarkSuitesFromFiles } from "./benchmarks/files";
+import { newRunKey, runEvaluationInRuntime } from "./core/runner";
 import { createDb, initializeSchema } from "./db/schema";
-import { getBestScore, insertRun, listRuns, seedBenchmarks } from "./db/store";
+import { getBestScore, getRunByKey, insertRun, listRuns } from "./db/store";
 import { startUi } from "./ui/server";
 
 const program = new Command();
@@ -11,21 +15,25 @@ const cwd = process.cwd();
 
 function resolveDbPath(input?: string): string {
   if (input) return path.resolve(cwd, input);
-  return path.join(cwd, ".agent-bench", "data.db");
+  return path.join(os.homedir(), ".agent-bench", "data.db");
 }
 
-function ensureProjectDirs(): { root: string; artifacts: string } {
-  const root = path.join(cwd, ".agent-bench");
+function ensureProjectDirs(dbPath: string): { root: string; artifacts: string } {
+  const root = path.dirname(dbPath);
   const artifacts = path.join(root, "artifacts");
   mkdirSync(root, { recursive: true });
   mkdirSync(artifacts, { recursive: true });
   return { root, artifacts };
 }
 
+function resolveBenchmarksDir(): string {
+  return path.join(cwd, "benchmarks");
+}
+
 function ensureDbReady(dbPath: string) {
+  mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = createDb(dbPath);
   initializeSchema(db);
-  seedBenchmarks(db);
   return db;
 }
 
@@ -40,8 +48,8 @@ program
   .option("--local", "Initialize using local defaults", true)
   .option("--db <path>", "Custom sqlite path")
   .action((opts) => {
-    const dirs = ensureProjectDirs();
     const dbPath = resolveDbPath(opts.db);
+    const dirs = ensureProjectDirs(dbPath);
     ensureDbReady(dbPath);
 
     // eslint-disable-next-line no-console
@@ -54,17 +62,29 @@ program
 
 program
   .command("run")
-  .description("Execute one benchmark run for an agent")
-  .requiredOption("--agent <path>", "Path to agent definition")
-  .option("--suite <name>", "Benchmark suite key", "core")
+  .description("Execute one benchmark suite run for an agent")
+  .option("--agent <path>", "Path to agent definition", "./agent.md")
+  .option("--benchmark <key>", "Benchmark suite key", "core-engineering")
+  .option("--task <key>", "Optional task key inside benchmark")
+  .option("--model <provider/model>", "Vercel AI Gateway model identifier")
   .option("--db <path>", "Custom sqlite path")
-  .action((opts) => {
-    const dirs = ensureProjectDirs();
+  .action(async (opts) => {
     const dbPath = resolveDbPath(opts.db);
+    const dirs = ensureProjectDirs(dbPath);
     const db = ensureDbReady(dbPath);
 
     const bestBefore = getBestScore(db);
-    const runInput = simulateRun(path.resolve(cwd, opts.agent), opts.suite, dirs.artifacts);
+    const benchmarks = listBenchmarkSuitesFromFiles(resolveBenchmarksDir());
+    const runKey = newRunKey();
+    const runInput = await runEvaluationInRuntime({
+      runKey,
+      agentPath: path.resolve(cwd, opts.agent),
+      benchmarkKey: opts.benchmark,
+      taskKey: opts.task,
+      artifactsRoot: dirs.artifacts,
+      benchmarks,
+      model: opts.model
+    });
     const inserted = insertRun(db, runInput);
 
     // eslint-disable-next-line no-console
@@ -104,9 +124,8 @@ program
   .action((opts) => {
     const dbPath = resolveDbPath(opts.db);
     const db = ensureDbReady(dbPath);
-    const runs = listRuns(db, 500);
-    const left = runs.find((r) => r.runKey === opts.left);
-    const right = runs.find((r) => r.runKey === opts.right);
+    const left = getRunByKey(db, opts.left);
+    const right = getRunByKey(db, opts.right);
 
     if (!left || !right) {
       throw new Error("Both run keys must exist. Use `agent-bench history` to list available keys.");
@@ -132,4 +151,9 @@ program
     startUi(dbPath, Number(opts.port));
   });
 
-program.parse();
+void program.parseAsync().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  // eslint-disable-next-line no-console
+  console.error(message);
+  process.exit(1);
+});

@@ -1,94 +1,98 @@
 # agent-bench
 
-`agent-bench` is a local benchmarking tool for AI agents with a CLI-first workflow and a dashboard UI.
+CLI benchmark tool for AI agents.
+Uses Vercel AI SDK 5 for model calls.
 
-Current implementation delivers a working vertical slice:
-- SQLite-backed run persistence
-- Weighted scoring (tests 60%, LLM-judge 30%, performance 10%)
-- Regression alerts
-- Artifact/log snapshots per run
-- Dashboard UI inspired by the provided mockup
+## Super Quick Start
 
-## Stack
-
-- TypeScript / Node.js
-- Commander.js (CLI)
-- SQLite (`better-sqlite3`)
-- Express (UI server/API)
-- Tailwind CSS (compiled static UI styles)
-
-## Setup
-
-1. Install dependencies:
+Install globally from this repo:
 ```bash
-npm install
-```
-2. Build project:
-```bash
-npm run build
-```
-3. Initialize local storage:
-```bash
-node dist/src/index.js init --local
+npm install -g .
 ```
 
-## Usage
-
-### Run a benchmark
+Run immediately:
 ```bash
-node dist/src/index.js run --agent ./agents/coder-v1.md --suite fix-react-bug
+agent-bench run
+agent-bench ui
 ```
 
-### Show run history
+No manual SQLite work is needed. The CLI auto-creates and auto-migrates the local DB.
+
+## Optional Gateway Setup
+
+If you want live LLM judging through Vercel AI Gateway, create a `.env` from sample and set your key:
 ```bash
-node dist/src/index.js history --limit 10
+cp .env.sample .env
 ```
 
-### Compare two runs
 ```bash
-node dist/src/index.js compare --left run-abc123 --right run-def456
+# PowerShell
+$env:AI_GATEWAY_API_KEY="your_key"
 ```
 
-### Start the dashboard
+Without a key, `agent-bench run` still works using local fallback judging so you can start immediately.
+
+## Main Commands
+
 ```bash
-node dist/src/index.js ui --port 4173
-```
-Open: `http://localhost:4173`
-
-## Configuration
-
-Defaults:
-- DB path: `.agent-bench/data.db`
-- Artifact path: `.agent-bench/artifacts/`
-
-Override DB path per command:
-```bash
-node dist/src/index.js run --agent ./agents/coder-v1.md --db ./tmp/bench.db
+agent-bench run
+agent-bench ui
 ```
 
-## Example Workflow
+Useful options:
+```bash
+agent-bench run --agent ./agents/coder-v1.md --benchmark core-engineering --task fix-react-bug --model openai/gpt-4.1-mini
+agent-bench ui --port 4173
+```
 
-1. `init` local database.
-2. Execute one or more `run` commands for agent variants.
-3. Inspect `history` and `compare` output.
-4. Open `ui` and review score/cost trends plus latest logs.
-5. Use regression alerts as a quality gate before shipping agent changes.
+Deterministic behavior:
+- `LLM_JUDGE_RESPONSE_CACHE=true` (default) keeps repeated identical runs stable.
+- With AI Gateway key set, first run calls the LM and then reuses cached judge output for identical inputs.
+- Without AI Gateway key, local deterministic fallback judge is used.
+- Optional custom judge system prompt via `LLM_JUDGE_SYSTEM_PROMPT`.
 
-## Troubleshooting
+## Defaults
 
-- `no such table: runs`
-  - Re-run `init`; commands now auto-initialize schema, but manual DB edits may require reset.
+- DB path: `$HOME/.agent-bench/data.db`
+- Artifact path: `$HOME/.agent-bench/artifacts/`
+- Judge model: `openai/gpt-4.1-mini`
+- Benchmarks folder: `./benchmarks`
 
-- UI has no data
-  - Run at least one benchmark first with `run --agent ...`.
+Concepts:
+- Benchmark: a suite that groups related tasks.
+- Task: one specific natural-language challenge with expected outcome inside a benchmark.
 
-- Build warning: Browserslist outdated
-  - Optional maintenance command: `npx update-browserslist-db@latest`
+Benchmark suite structure:
 
-- Missing Tailwind binary
-  - Ensure `npm install` finished successfully.
+```md
+benchmarks/
+  <benchmark-key>/
+    benchmark.md
+    tasks/
+      <task-key>.md
+```
 
-## Project Artifacts
+`benchmark.md`:
 
-- Product requirements: [docs/PRD.md](docs/PRD.md)
-- Research + architecture records: [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md)
+```md
+# <Benchmark Title>
+
+Key: <benchmark-key>
+
+## Description
+<what this benchmark suite covers>
+```
+
+Task file format (`tasks/<task-key>.md`):
+
+```md
+# <Task Title>
+
+Key: <task-key>
+
+## Task
+<natural-language task description for this task>
+
+## Expected Outcome
+<clear expected result>
+```

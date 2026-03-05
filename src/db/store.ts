@@ -1,52 +1,13 @@
 import Database from "better-sqlite3";
 import { RunInput, RunRecord } from "../types";
-import { newRunKey } from "../core/runner";
 
 export interface DashboardSummary {
   totalRuns: number;
   avgScore: number;
   totalCost: number;
-  activeBenchmarks: number;
-}
-
-const DEFAULT_BENCHMARKS = [
-  {
-    key: "fix-react-bug",
-    title: "Fix React Bug",
-    description: "Repair a failing React component behavior in an isolated repo."
-  },
-  {
-    key: "logic-puzzle",
-    title: "Logic Puzzle",
-    description: "Solve a deterministic reasoning benchmark with traceable steps."
-  },
-  {
-    key: "design-rest-api",
-    title: "Design REST API",
-    description: "Produce routes and contracts for a small API specification task."
-  },
-  {
-    key: "sql-refactor",
-    title: "SQL Refactor",
-    description: "Improve correctness and performance of an existing SQL query."
-  }
-];
-
-export function seedBenchmarks(db: Database.Database): void {
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO benchmarks (key, title, description)
-    VALUES (@key, @title, @description)
-  `);
-
-  const transaction = db.transaction((rows: typeof DEFAULT_BENCHMARKS) => {
-    rows.forEach((row) => stmt.run(row));
-  });
-
-  transaction(DEFAULT_BENCHMARKS);
 }
 
 export function insertRun(db: Database.Database, input: RunInput): RunRecord {
-  const runKey = newRunKey();
   db.prepare(`
     INSERT INTO runs (
       run_key, agent_name, agent_version, suite_name, status,
@@ -58,7 +19,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
       @latency_ms, @cost_usd, @duration_ms, @artifacts_path, @log_text
     )
   `).run({
-    run_key: runKey,
+    run_key: input.runKey,
     agent_name: input.agentName,
     agent_version: input.agentVersion,
     suite_name: input.suiteName,
@@ -75,9 +36,24 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
 
   const row = db.prepare(`
     SELECT * FROM runs WHERE run_key = ?
-  `).get(runKey) as Record<string, unknown>;
+  `).get(input.runKey) as Record<string, unknown>;
 
   return mapRun(row);
+}
+
+export function getRunByKey(db: Database.Database, runKey: string): RunRecord | null {
+  const row = db.prepare(`
+    SELECT * FROM runs WHERE run_key = ?
+  `).get(runKey) as Record<string, unknown> | undefined;
+
+  return row ? mapRun(row) : null;
+}
+
+export function deleteRunByKey(db: Database.Database, runKey: string): boolean {
+  const result = db.prepare(`
+    DELETE FROM runs WHERE run_key = ?
+  `).run(runKey);
+  return result.changes > 0;
 }
 
 export function listRuns(db: Database.Database, limit = 20): RunRecord[] {
@@ -99,22 +75,12 @@ export function getDashboardSummary(db: Database.Database): DashboardSummary {
   const totalRuns = (db.prepare(`SELECT COUNT(*) as c FROM runs`).get() as { c: number }).c;
   const avgScore = (db.prepare(`SELECT COALESCE(AVG(score), 0) as s FROM runs`).get() as { s: number }).s;
   const totalCost = (db.prepare(`SELECT COALESCE(SUM(cost_usd), 0) as c FROM runs`).get() as { c: number }).c;
-  const activeBenchmarks = (db.prepare(`SELECT COUNT(*) as c FROM benchmarks`).get() as { c: number }).c;
 
   return {
     totalRuns,
     avgScore: Number(avgScore.toFixed(2)),
-    totalCost: Number(totalCost.toFixed(2)),
-    activeBenchmarks
+    totalCost: Number(totalCost.toFixed(2))
   };
-}
-
-export function listBenchmarks(db: Database.Database): Array<{ key: string; title: string; description: string }> {
-  return db.prepare(`SELECT key, title, description FROM benchmarks ORDER BY id ASC`).all() as Array<{
-    key: string;
-    title: string;
-    description: string;
-  }>;
 }
 
 function mapRun(row: Record<string, unknown>): RunRecord {

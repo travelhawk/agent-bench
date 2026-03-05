@@ -2,3 +2,7 @@ node_modules/
 dist/
 .agent-bench/
 npm-debug.log*
+.zencoder
+.zenflow
+.env.local
+.env
