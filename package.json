@@ -1,6 +1,6 @@
 {
   "name": "agent-bench",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI and web dashboard for benchmarking AI agents",
   "type": "commonjs",
   "main": "dist/src/index.js",

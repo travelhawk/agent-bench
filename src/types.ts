@@ -48,6 +48,16 @@ export interface RuntimeEvaluationRequest {
   artifactsRoot: string;
   benchmarks: BenchmarkSuiteRecord[];
   model?: string;
+  gatewayApiKey?: string;
+}
+
+export interface AgentRecord {
+  key: string;
+  name: string;
+  path: string;
+  summary: string;
+  source: "discovered" | "manual";
+  status: "ready";
 }
 
 export interface BenchmarkTaskRecord {

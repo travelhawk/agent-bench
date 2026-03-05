@@ -1,55 +1,114 @@
 # agent-bench
 
-CLI benchmark tool for AI agents.
-Uses Vercel AI SDK 5 for model calls.
+Local-first benchmarking workbench for AI agents.
 
-## Super Quick Start
+`agent-bench` combines a CLI, a lightweight web UI, SQLite persistence, benchmark markdown files, and artifact snapshots so you can iterate on agent definitions without needing a hosted evaluation platform first.
 
-Install globally from this repo:
+## What Changed In v0.2.0
+
+- The UI is now workbench-first instead of dashboard-first.
+- You can configure provider access directly in the browser session.
+- Agent definitions are discovered from `./agents` and can be queued visually.
+- The UI can run one challenge or an entire benchmark cycle across multiple agents.
+- Research and product architecture notes now live in:
+  - `docs/RESEARCH_BRIEF.md`
+  - `docs/ARCHITECTURE_SPEC.md`
+
+## Quick Start
+
+Install from this repo:
+
 ```bash
 npm install -g .
 ```
 
-Run immediately:
+Run the CLI:
+
 ```bash
 agent-bench run
+agent-bench history
+agent-bench compare --left <run-key> --right <run-key>
+```
+
+Start the workbench UI:
+
+```bash
 agent-bench ui
 ```
 
-No manual SQLite work is needed. The CLI auto-creates and auto-migrates the local DB.
+By default the UI starts on `http://localhost:4173`.
 
-## Optional Gateway Setup
+## The Recommended Flow
 
-If you want live LLM judging through Vercel AI Gateway, create a `.env` from sample and set your key:
+1. Open the Test Lab in the browser.
+2. Enter an optional gateway API key in the provider bar, or rely on `AI_GATEWAY_API_KEY` from your environment.
+3. Load one or more agent definitions from `./agents`.
+4. Choose either:
+   - one challenge
+   - the full benchmark cycle for a suite
+5. Launch the batch and inspect the resulting runs, logs, and artifacts.
+
+## Provider Setup
+
+If you want live LLM judging through Vercel AI Gateway, create a local env file and set your key:
+
 ```bash
 cp .env.sample .env
 ```
 
 ```bash
-# PowerShell
-$env:AI_GATEWAY_API_KEY="your_key"
+export AI_GATEWAY_API_KEY="your_key"
 ```
 
-Without a key, `agent-bench run` still works using local fallback judging so you can start immediately.
+You can also paste a key directly into the UI for the current browser session. That session key is not written to SQLite or run artifacts.
 
-## Main Commands
+Without a key, `agent-bench` still works using deterministic local fallback judging.
 
-```bash
-agent-bench run
-agent-bench ui
+## Benchmarks
+
+Benchmarks live in markdown files:
+
+```text
+benchmarks/
+  <benchmark-key>/
+    benchmark.md
+    tasks/
+      <task-key>.md
 ```
 
-Useful options:
-```bash
-agent-bench run --agent ./agents/coder-v1.md --benchmark core-engineering --task fix-react-bug --model openai/gpt-4.1-mini
-agent-bench ui --port 4173
+`benchmark.md`
+
+```md
+# <Benchmark Title>
+
+Key: <benchmark-key>
+
+## Description
+<what this suite covers>
 ```
 
-Deterministic behavior:
-- `LLM_JUDGE_RESPONSE_CACHE=true` (default) keeps repeated identical runs stable.
-- With AI Gateway key set, first run calls the LM and then reuses cached judge output for identical inputs.
-- Without AI Gateway key, local deterministic fallback judge is used.
-- Optional custom judge system prompt via `LLM_JUDGE_SYSTEM_PROMPT`.
+`tasks/<task-key>.md`
+
+```md
+# <Task Title>
+
+Key: <task-key>
+
+## Task
+<natural-language task>
+
+## Expected Outcome
+<what counts as complete>
+```
+
+## Agent Definitions
+
+The workbench scans `./agents` for markdown agent definitions and ignores task folders plus helper files like `AGENTS.md` and `README.md`.
+
+Important:
+
+- `./agents` is gitignored for local work.
+- Keep real agent definitions local unless you explicitly want them versioned elsewhere.
 
 ## Defaults
 
@@ -58,41 +117,8 @@ Deterministic behavior:
 - Judge model: `openai/gpt-4.1-mini`
 - Benchmarks folder: `./benchmarks`
 
-Concepts:
-- Benchmark: a suite that groups related tasks.
-- Task: one specific natural-language challenge with expected outcome inside a benchmark.
+## Current Limits
 
-Benchmark suite structure:
-
-```md
-benchmarks/
-  <benchmark-key>/
-    benchmark.md
-    tasks/
-      <task-key>.md
-```
-
-`benchmark.md`:
-
-```md
-# <Benchmark Title>
-
-Key: <benchmark-key>
-
-## Description
-<what this benchmark suite covers>
-```
-
-Task file format (`tasks/<task-key>.md`):
-
-```md
-# <Task Title>
-
-Key: <task-key>
-
-## Task
-<natural-language task description for this task>
-
-## Expected Outcome
-<clear expected result>
-```
+- The scoring/runtime pipeline is still an MVP and can fall back to deterministic local judging.
+- The UI now supports multi-agent batch execution, but trace-level grading and artifact diffs are still future work.
+- The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.

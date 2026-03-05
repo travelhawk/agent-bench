@@ -1,27 +1,98 @@
 import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import express from "express";
+import { inspectAgentFile, listAgentFiles } from "../agents/files";
 import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesFromFiles } from "../benchmarks/files";
-import { createDb } from "../db/schema";
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
+import { createDb } from "../db/schema";
 import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns } from "../db/store";
+import { BenchmarkSuiteRecord, RunRecord } from "../types";
+
+type RunMode = "single-task" | "benchmark-cycle";
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolveRunMode(value: unknown): RunMode {
+  return value === "single-task" ? "single-task" : "benchmark-cycle";
+}
+
+function resolveTaskPlan(benchmarks: BenchmarkSuiteRecord[], benchmarkKey: string, runMode: RunMode, taskKey?: string): string[] {
+  const benchmark = benchmarks.find((entry) => entry.key === benchmarkKey);
+  if (!benchmark) {
+    throw new Error(`Unknown benchmark: ${benchmarkKey}`);
+  }
+
+  if (runMode === "single-task") {
+    if (!taskKey) {
+      throw new Error("Select a task when using single-task mode.");
+    }
+    if (!benchmark.tasks.some((task) => task.key === taskKey)) {
+      throw new Error(`Unknown task '${taskKey}' in benchmark '${benchmarkKey}'.`);
+    }
+    return [taskKey];
+  }
+
+  if (benchmark.tasks.length === 0) {
+    throw new Error(`Benchmark '${benchmarkKey}' does not contain any tasks yet.`);
+  }
+
+  return benchmark.tasks.map((task) => task.key);
+}
+
+async function executeRun(input: {
+  artifactsRoot: string;
+  benchmarks: BenchmarkSuiteRecord[];
+  benchmarkKey: string;
+  taskKey?: string;
+  agentPath?: string;
+  agentMarkdown?: string;
+  model?: string;
+  gatewayApiKey?: string;
+  db: ReturnType<typeof createDb>;
+}): Promise<{ run: RunRecord; bestBefore: number | null; regressed: boolean }> {
+  const bestBefore = getBestScore(input.db);
+  const runInput = await runEvaluationInRuntime({
+    runKey: newRunKey(),
+    agentPath: input.agentPath,
+    agentMarkdown: input.agentMarkdown,
+    benchmarkKey: input.benchmarkKey,
+    taskKey: input.taskKey,
+    artifactsRoot: input.artifactsRoot,
+    benchmarks: input.benchmarks,
+    model: input.model,
+    gatewayApiKey: input.gatewayApiKey
+  });
+  const inserted = insertRun(input.db, runInput);
+
+  return {
+    run: inserted,
+    bestBefore,
+    regressed: bestBefore !== null ? inserted.score < bestBefore : false
+  };
+}
 
 export function startUi(dbPath: string, port: number): void {
   const app = express();
   const db = createDb(dbPath);
+  const workspaceRoot = process.cwd();
   const artifactsRoot = path.join(path.dirname(dbPath), "artifacts");
-  const benchmarksDir = path.join(process.cwd(), "benchmarks");
+  const benchmarksDir = path.join(workspaceRoot, "benchmarks");
 
   app.use(express.json({ limit: "1mb" }));
-  app.use(express.static(path.join(process.cwd(), "src", "ui", "public")));
+  app.use(express.static(path.join(workspaceRoot, "src", "ui", "public")));
   app.use("/artifacts", express.static(artifactsRoot));
 
   app.get("/api/summary", (_req, res) => {
     const summary = getDashboardSummary(db);
     const benchmarks = listBenchmarkSuitesFromFiles(benchmarksDir);
+    const agents = listAgentFiles(workspaceRoot);
+
     res.json({
       ...summary,
-      activeBenchmarks: benchmarks.length
+      activeBenchmarks: benchmarks.length,
+      availableAgents: agents.length
     });
   });
 
@@ -33,6 +104,29 @@ export function startUi(dbPath: string, port: number): void {
 
   app.get("/api/benchmarks", (_req, res) => {
     res.json(listBenchmarkSuitesFromFiles(benchmarksDir));
+  });
+
+  app.get("/api/agents", (_req, res) => {
+    res.json({
+      agents: listAgentFiles(workspaceRoot)
+    });
+  });
+
+  app.post("/api/agents/inspect", (req, res) => {
+    const agentPath = readOptionalString(req.body?.agentPath);
+    if (!agentPath) {
+      res.status(400).json({ error: "agentPath is required." });
+      return;
+    }
+
+    try {
+      res.json({
+        agent: inspectAgentFile(workspaceRoot, agentPath)
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
+    }
   });
 
   app.post("/api/benchmarks", (req, res) => {
@@ -113,21 +207,14 @@ export function startUi(dbPath: string, port: number): void {
   });
 
   app.post("/api/run", async (req, res) => {
-    const benchmarkKey = typeof req.body?.benchmarkKey === "string" && req.body.benchmarkKey.trim()
-      ? req.body.benchmarkKey.trim()
-      : "core-engineering";
-    const taskKey = typeof req.body?.taskKey === "string" && req.body.taskKey.trim()
-      ? req.body.taskKey.trim()
+    const benchmarkKey = readOptionalString(req.body?.benchmarkKey) ?? "core-engineering";
+    const taskKey = readOptionalString(req.body?.taskKey);
+    const agentPath = readOptionalString(req.body?.agentPath)
+      ? path.resolve(workspaceRoot, String(req.body.agentPath).trim())
       : undefined;
-    const agentPath = typeof req.body?.agentPath === "string" && req.body.agentPath.trim()
-      ? path.resolve(process.cwd(), req.body.agentPath.trim())
-      : undefined;
-    const agentMarkdown = typeof req.body?.agentMarkdown === "string" && req.body.agentMarkdown.trim()
-      ? req.body.agentMarkdown
-      : undefined;
-    const model = typeof req.body?.model === "string" && req.body.model.trim()
-      ? req.body.model.trim()
-      : undefined;
+    const agentMarkdown = readOptionalString(req.body?.agentMarkdown);
+    const model = readOptionalString(req.body?.model);
+    const gatewayApiKey = readOptionalString(req.body?.providerApiKey);
 
     if (!agentPath && !agentMarkdown) {
       res.status(400).json({ error: "Provide either agentPath or agentMarkdown." });
@@ -135,25 +222,69 @@ export function startUi(dbPath: string, port: number): void {
     }
 
     try {
-      const bestBefore = getBestScore(db);
-      const runKey = newRunKey();
       const benchmarks = listBenchmarkSuitesFromFiles(benchmarksDir);
-      const runInput = await runEvaluationInRuntime({
-        runKey,
-        agentPath,
-        agentMarkdown,
-        benchmarkKey,
-        taskKey,
+      const result = await executeRun({
         artifactsRoot,
         benchmarks,
-        model
+        benchmarkKey,
+        taskKey,
+        agentPath,
+        agentMarkdown,
+        model,
+        gatewayApiKey,
+        db
       });
-      const inserted = insertRun(db, runInput);
+
+      res.json(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/run/batch", async (req, res) => {
+    const benchmarkKey = readOptionalString(req.body?.benchmarkKey) ?? "core-engineering";
+    const taskKey = readOptionalString(req.body?.taskKey);
+    const model = readOptionalString(req.body?.model);
+    const gatewayApiKey = readOptionalString(req.body?.providerApiKey);
+    const runMode = resolveRunMode(req.body?.runMode);
+    const agentPaths = Array.isArray(req.body?.agents)
+      ? req.body.agents
+        .filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value: string) => path.resolve(workspaceRoot, value.trim()))
+      : [];
+
+    if (agentPaths.length === 0) {
+      res.status(400).json({ error: "Select at least one agent to run." });
+      return;
+    }
+
+    try {
+      const benchmarks = listBenchmarkSuitesFromFiles(benchmarksDir);
+      const taskPlan = resolveTaskPlan(benchmarks, benchmarkKey, runMode, taskKey);
+      const results: Array<{ run: RunRecord; bestBefore: number | null; regressed: boolean }> = [];
+
+      for (const agentPath of agentPaths) {
+        for (const plannedTaskKey of taskPlan) {
+          results.push(await executeRun({
+            artifactsRoot,
+            benchmarks,
+            benchmarkKey,
+            taskKey: plannedTaskKey,
+            agentPath,
+            model,
+            gatewayApiKey,
+            db
+          }));
+        }
+      }
 
       res.json({
-        run: inserted,
-        bestBefore,
-        regressed: bestBefore !== null ? inserted.score < bestBefore : false
+        runMode,
+        benchmarkKey,
+        taskPlan,
+        queueSize: results.length,
+        runs: results
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

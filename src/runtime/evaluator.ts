@@ -261,7 +261,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const testsScore = Number((6 + testsSeed * 3.5).toFixed(2));
 
   const model = input.model ?? process.env.AGENT_BENCH_JUDGE_MODEL ?? DEFAULT_MODEL;
-  const apiKey = process.env.AI_GATEWAY_API_KEY;
+  const apiKey = input.gatewayApiKey?.trim() || process.env.AI_GATEWAY_API_KEY;
   const deterministic = getDeterministicEnabled();
   const judgePromptContent = `Task Context:\n${taskContext}\n\nAgent Markdown:\n${preview}`;
   const fingerprint = makeJudgeFingerprint({

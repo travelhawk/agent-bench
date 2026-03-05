@@ -3,117 +3,243 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>agent-bench dashboard</title>
+    <title>agent-bench test lab</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="min-h-screen lg:flex">
-      <aside class="w-full border-b border-slate-800 bg-[#09142a] p-5 lg:w-64 lg:border-b-0 lg:border-r lg:p-6">
-        <div class="mb-10 flex items-center gap-3 text-2xl font-extrabold">
-          <div class="grid h-10 w-10 place-content-center rounded-xl bg-blue-600 text-xl">⚡</div>
-          <span>agent-bench</span>
-        </div>
-
-        <nav class="space-y-2">
-          <a href="#dashboard" class="nav-item active" data-view="dashboard">Dashboard</a>
-          <a href="#history" class="nav-item" data-view="history">Run History</a>
-          <a href="#benchmarks" class="nav-item" data-view="benchmarks">Benchmarks</a>
-        </nav>
-
-        <div class="mt-16 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-          <div class="text-sm text-slate-300">Local Environment</div>
-          <div class="text-xs text-slate-500">v0.1.0-alpha</div>
-        </div>
-      </aside>
-
-      <main class="flex-1 p-5 md:p-8">
-        <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <h1 class="text-4xl font-extrabold">Dashboard</h1>
-          <div class="flex items-center gap-4">
-            <input type="search" placeholder="Search runs..." class="w-64 rounded-full border border-slate-700 bg-[#0b1732] px-5 py-3 text-slate-200 placeholder:text-slate-500" />
-            <button class="rounded-xl border border-slate-700 p-3">⚙</button>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <div class="brand-mark">AB</div>
+          <div>
+            <div class="eyebrow">Open-source agent evals</div>
+            <div class="brand-title">agent-bench</div>
           </div>
         </div>
 
-        <section id="dashboard-view">
-          <section id="stats-grid" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"></section>
-          <section class="mt-8 grid gap-6 xl:grid-cols-[2fr_1fr]">
-            <div>
-              <div class="mb-4 flex items-center justify-between">
-                <h2 class="text-4xl font-extrabold md:text-5xl">Recent Runs</h2>
-                <a id="view-all-history" class="text-blue-300" href="#history">View all history</a>
+        <nav class="nav-stack">
+          <a href="#lab" class="nav-item active" data-view="lab">Test Lab</a>
+          <a href="#history" class="nav-item" data-view="history">Run History</a>
+          <a href="#benchmarks" class="nav-item" data-view="benchmarks">Benchmark Library</a>
+        </nav>
+
+        <div class="sidebar-callout">
+          <div class="eyebrow">North star</div>
+          <p>Make agent testing feel like a launch sequence: load, verify, queue, compare.</p>
+        </div>
+
+        <div class="sidebar-callout sidebar-callout-muted">
+          <div class="eyebrow">Current build</div>
+          <p>Local workbench with batch runs, benchmark playlists, and artifact-first history.</p>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Workbench-first UX</p>
+            <h1>Agent Test Lab</h1>
+            <p>
+              Configure a provider, load one or more agents, choose a challenge or an entire benchmark cycle,
+              and inspect the differences like an experiment board instead of a plain log viewer.
+            </p>
+          </div>
+          <div id="stats-grid" class="hero-stats"></div>
+        </header>
+
+        <section id="lab-view" class="view-stack">
+          <section class="config-strip panel">
+            <div class="section-intro">
+              <div>
+                <p class="eyebrow">Provider configuration</p>
+                <h2>Connect judgment, pick the run mode, then launch a batch.</h2>
               </div>
-              <div id="runs-list" class="space-y-3"></div>
+              <p class="section-note">
+                The API key is stored only in this browser session. Leave it empty to rely on
+                <code>AI_GATEWAY_API_KEY</code> from your environment.
+              </p>
             </div>
 
-            <div>
-              <h2 class="mb-4 text-4xl font-extrabold md:text-5xl">Quick Start</h2>
-              <div class="rounded-2xl border border-slate-800 bg-[#08162f] p-5">
-                <p class="mb-6 text-slate-300">Select a benchmark suite to run against your local agent configuration.</p>
-                <div id="benchmarks-list" class="space-y-3"></div>
-                <form id="run-form" class="mt-5 space-y-3">
-                  <input id="benchmark-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Benchmark key (e.g. core-engineering)" />
-                  <input id="task-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Task key (optional, e.g. fix-react-bug)" />
-                  <input id="agent-path-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Agent path (optional if using markdown)" />
-                  <textarea id="agent-md-input" class="h-28 w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Agent markdown (optional if using path)"></textarea>
-                  <input id="model-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Model (optional, e.g. openai/gpt-4.1-mini)" />
-                  <button id="run-button" type="submit" class="quick-btn !w-full !justify-center"><span>Run Evaluation</span></button>
-                  <p id="run-status" class="text-xs text-slate-400"></p>
-                </form>
+            <div class="config-grid">
+              <label class="field">
+                <span>Gateway API key</span>
+                <input id="provider-api-key-input" type="password" placeholder="Optional for live judging" />
+              </label>
+              <label class="field">
+                <span>Judge model</span>
+                <input id="model-input" placeholder="openai/gpt-4.1-mini" />
+              </label>
+              <label class="field">
+                <span>Benchmark suite</span>
+                <select id="benchmark-input"></select>
+              </label>
+              <label class="field">
+                <span>Run mode</span>
+                <select id="run-mode-input">
+                  <option value="benchmark-cycle">Benchmark cycle</option>
+                  <option value="single-task">Single challenge</option>
+                </select>
+              </label>
+              <label class="field field-span-2">
+                <span>Challenge</span>
+                <select id="task-input"></select>
+              </label>
+            </div>
+          </section>
+
+          <section class="lab-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div class="step-badge">1</div>
+                <div>
+                  <h2>Load Agents</h2>
+                  <p>Discover agent markdown files in the workspace and build a ready-to-run queue.</p>
+                </div>
               </div>
+
+              <div id="selected-agents-summary" class="summary-band"></div>
+              <div id="agents-list" class="agent-list"></div>
+
+              <form id="manual-agent-form" class="inline-form">
+                <input id="manual-agent-path-input" placeholder="Add another agent path inside ./agents" />
+                <button type="submit" class="secondary-action">Inspect path</button>
+              </form>
+              <p id="manual-agent-status" class="status-line"></p>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div class="step-badge">2</div>
+                <div>
+                  <h2>Build the Playlist</h2>
+                  <p>Choose a suite and decide whether to run one challenge or the full cycle.</p>
+                </div>
+              </div>
+
+              <div id="playlist-summary" class="summary-band"></div>
+              <div id="suite-pills" class="suite-pills"></div>
+              <div id="playlist-list" class="playlist-list"></div>
+            </article>
+
+            <article class="panel panel-highlight">
+              <div class="panel-head">
+                <div class="step-badge">3</div>
+                <div>
+                  <h2>Launch Batch</h2>
+                  <p>Run every selected agent against the current playlist and compare the results.</p>
+                </div>
+              </div>
+
+              <div id="run-plan" class="run-plan"></div>
+              <button id="run-button" type="button" class="primary-action">Run selected agents</button>
+              <p id="run-status" class="status-line"></p>
+              <div id="batch-results" class="batch-results"></div>
+            </article>
+          </section>
+
+          <section class="dashboard-grid">
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <p class="eyebrow">Recent output</p>
+                  <h2>Latest runs</h2>
+                </div>
+                <a id="view-all-history" href="#history" class="text-link">View full history</a>
+              </div>
+              <div id="runs-list" class="run-list"></div>
+            </article>
+
+            <div class="rail-stack">
+              <article class="panel rail-panel">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Activity</p>
+                    <h2>Latest log</h2>
+                  </div>
+                </div>
+                <pre id="log-panel" class="log-panel"></pre>
+              </article>
+
+              <article class="panel rail-panel">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Inspector</p>
+                    <h2>Run details</h2>
+                  </div>
+                </div>
+                <div id="run-detail-empty" class="empty-state">Open any run card to inspect its score breakdown and artifact preview.</div>
+                <div id="run-detail-content" class="hidden run-detail-content">
+                  <div id="run-detail-title" class="detail-title"></div>
+                  <div id="run-detail-matrix" class="detail-grid"></div>
+                  <a id="run-detail-screenshot-link" href="#" target="_blank" rel="noreferrer">
+                    <img id="run-detail-screenshot" class="detail-image" alt="Run detail screenshot" />
+                  </a>
+                </div>
+              </article>
             </div>
           </section>
         </section>
 
-        <section id="history-view" class="hidden mt-8">
-          <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-4xl font-extrabold md:text-5xl">Run History</h2>
-          </div>
-          <div id="history-list" class="space-y-3"></div>
+        <section id="history-view" class="hidden view-stack">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Audit trail</p>
+                <h2>Run History</h2>
+              </div>
+            </div>
+            <div id="history-list" class="run-list"></div>
+          </article>
         </section>
 
-        <section id="benchmarks-view" class="hidden mt-8">
-          <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-4xl font-extrabold md:text-5xl">Benchmarks</h2>
-          </div>
-          <form id="benchmark-form" class="mb-5 space-y-3 rounded-2xl border border-slate-800 bg-[#08162f] p-4">
-            <select id="benchmark-type-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100">
-              <option value="suite">Create benchmark suite</option>
-              <option value="task">Create task in benchmark</option>
-            </select>
-            <input id="benchmark-parent-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Parent benchmark key (required for task)" />
-            <input id="benchmark-key-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Benchmark key (e.g. auth-migration)" />
-            <input id="benchmark-title-input" class="w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Title" />
-            <textarea id="benchmark-description-input" class="h-24 w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Task description: what needs to be done"></textarea>
-            <textarea id="benchmark-outcome-input" class="h-20 w-full rounded-lg border border-slate-700 bg-[#0b1732] px-3 py-2 text-sm text-slate-100" placeholder="Expected outcome"></textarea>
-            <button id="benchmark-create-button" type="submit" class="quick-btn !w-full !justify-center"><span>Add Benchmark</span></button>
-            <p id="benchmark-status" class="text-xs text-slate-400"></p>
-          </form>
-          <div id="tasks-list" class="space-y-2"></div>
+        <section id="benchmarks-view" class="hidden view-stack">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Benchmark authoring</p>
+                <h2>Benchmark Library</h2>
+              </div>
+            </div>
+
+            <form id="benchmark-form" class="benchmark-form">
+              <label class="field">
+                <span>Create</span>
+                <select id="benchmark-type-input">
+                  <option value="suite">Benchmark suite</option>
+                  <option value="task">Task in existing suite</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Parent benchmark</span>
+                <input id="benchmark-parent-input" placeholder="Required for tasks" />
+              </label>
+              <label class="field">
+                <span>Key</span>
+                <input id="benchmark-key-input" placeholder="auth-migration" />
+              </label>
+              <label class="field">
+                <span>Title</span>
+                <input id="benchmark-title-input" placeholder="Authentication Migration" />
+              </label>
+              <label class="field field-span-2">
+                <span>Description</span>
+                <textarea id="benchmark-description-input" placeholder="What should the agent do?"></textarea>
+              </label>
+              <label class="field field-span-2">
+                <span>Expected outcome</span>
+                <textarea id="benchmark-outcome-input" placeholder="What proves that the task is complete?"></textarea>
+              </label>
+              <button id="benchmark-create-button" type="submit" class="primary-action">Add benchmark</button>
+              <p id="benchmark-status" class="status-line"></p>
+            </form>
+
+            <div id="tasks-list" class="benchmark-library"></div>
+          </article>
         </section>
       </main>
-
-      <aside class="w-full border-t border-slate-800 bg-[#020919] p-5 lg:w-[360px] lg:border-l lg:border-t-0">
-        <div class="mb-4 flex items-center justify-between text-sm tracking-wider text-slate-400">
-          <span>&gt;_ LOGS</span>
-          <span class="text-lg">•••</span>
-        </div>
-        <pre id="log-panel" class="h-[520px] overflow-y-auto rounded-xl border border-slate-800 bg-black/40 p-4 text-sm leading-relaxed text-cyan-300"></pre>
-        <div class="mt-4 rounded-xl border border-slate-800 bg-black/40 p-4">
-          <div class="mb-2 text-sm tracking-wide text-slate-400">RUN DETAILS</div>
-          <div id="run-detail-empty" class="text-xs text-slate-500">Select "Open Run" in recent runs or history.</div>
-          <div id="run-detail-content" class="hidden space-y-2">
-            <div id="run-detail-title" class="text-sm font-semibold text-slate-200"></div>
-            <div id="run-detail-matrix" class="grid grid-cols-2 gap-2 text-xs"></div>
-            <a id="run-detail-screenshot-link" href="#" target="_blank" rel="noreferrer">
-              <img id="run-detail-screenshot" class="mt-2 h-28 w-full rounded border border-slate-700 object-cover" alt="Run detail screenshot" />
-            </a>
-          </div>
-        </div>
-      </aside>
     </div>
 
     <script src="/app.js"></script>

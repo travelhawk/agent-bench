@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 - 2026-03-05
+
+- Reframed the UI into a workbench-style Test Lab with provider setup, agent queueing, benchmark playlists, and batch launch planning
+- Added agent discovery and manual inspection APIs for markdown definitions under `./agents`
+- Added multi-agent batch execution with `single-task` and `benchmark-cycle` modes
+- Added research and architecture docs for the next-stage product direction
+- Added tests for agent discovery and updated `.gitignore` so local `agents/` work stays out of commits by default
+
 ## 0.1.0 - 2026-03-05
 
 - Implemented CLI commands: `init`, `run`, `history`, `compare`, `ui`

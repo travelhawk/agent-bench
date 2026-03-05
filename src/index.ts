@@ -40,7 +40,7 @@ function ensureDbReady(dbPath: string) {
 program
   .name("agent-bench")
   .description("Benchmark AI agent configurations with reproducible scoring")
-  .version("0.1.0");
+  .version("0.2.0");
 
 program
   .command("init")
