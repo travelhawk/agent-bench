@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Added benchmark metadata for resolution, interaction surface, evaluator mode, difficulty, tags, and environment constraints
+- Added a second seeded suite for higher-resolution agentic workflow and superagent-style tests
+- Added a third seeded suite for browser, computer-use, and tool-routing benchmark surfaces
+- Hardened batch execution with input bounds, agent-path validation, deduplication, and a maximum batch size
+- Hardened JSON API parsing and made batch execution resilient to partial per-run failures
+- Added parser and validation tests for metadata round-trips and batch hardening behavior
+- Added a research brief documenting current benchmark patterns across OpenAI Evals, LangSmith, Braintrust, SWE-bench, WebArena, OSWorld, GAIA, tau-bench, and TheAgentCompany
+
 ## 0.3.0 - 2026-03-06
 
 - Migrated the workbench into a Next.js full-stack app with App Router pages and API routes

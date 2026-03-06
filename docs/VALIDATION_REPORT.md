@@ -6,7 +6,7 @@ Status: PASS
 
 ## Scope
 
-Validation covered the Option C full-stack migration: Next.js app shell, App Router APIs, server-side workbench services, batch execution runtime changes, updated versioning/docs, and regression tests.
+Validation covered the Option C full-stack workbench plus the latest hardening pass: benchmark metadata, richer seeded suites, JSON route validation, partial-failure batch execution, updated docs, and regression tests.
 
 ## Checks Performed
 
@@ -29,12 +29,16 @@ Validation covered the Option C full-stack migration: Next.js app shell, App Rou
 
 - `pnpm test`
   - Result: pass
-  - Tests passed: 7/7
+  - Tests passed: 17/17
 
 Covered tests:
 
 - agent discovery ignores task docs and helper files
 - invalid agent paths are rejected
+- invalid JSON and non-object request bodies are rejected
+- benchmark markdown metadata round-trips correctly and legacy files still backfill defaults
+- seeded suites now cover browser and computer-use interaction surfaces
+- batch execution logic continues after a single job failure and reports that failure separately
 - runtime evaluation writes artifacts without relying on a dist-only child-process path
 - LLM judge parsing still works
 - LLM judge empty response handling still fails correctly
@@ -43,17 +47,19 @@ Covered tests:
 
 ### Runtime Smoke
 
-- `./node_modules/.bin/next start --port 4173`
+- `./node_modules/.bin/next start --port 4175`
   - Result: pass
   - Environment: clean validation mirror under `/tmp/agent-bench-option-c`
 
-- Browser smoke on `http://127.0.0.1:4173`
+- Browser smoke on `http://127.0.0.1:4175`
   - Result: pass
   - Verified:
     - workbench home page renders
+    - no browser console errors or hydration mismatch appeared on load
     - discovered agents are visible
-    - clicking `Run selected agents` completes a 4-run benchmark cycle
-    - recent run cards, inspector details, and screenshot artifacts render
+    - the new `Interaction Surfaces` suite appears with browser and computer-use tasks
+    - clicking `Run selected agents` completes a 6-run benchmark cycle across two agents
+    - recent run cards, inspector details, and screenshot artifacts render for the new suite
 
 ## Notes
 
@@ -70,7 +76,7 @@ cd /tmp/agent-bench-option-c
 pnpm install
 ./node_modules/.bin/tsc -p tsconfig.cli.json --pretty false
 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
-pnpm run build
 pnpm test
-./node_modules/.bin/next start --port 4173
+pnpm run build
+./node_modules/.bin/next start --port 4175
 ```

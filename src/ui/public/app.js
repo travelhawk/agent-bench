@@ -549,7 +549,9 @@ async function submitRunBatch() {
     };
     const result = await postJson("/api/run/batch", payload);
     state.batchResults = result.runs || [];
-    runStatus.textContent = `Completed ${result.queueSize} run(s) across ${selectedAgents.length} agent(s).`;
+    runStatus.textContent = result.failedRuns > 0
+      ? `Completed ${result.completedRuns}/${result.queueSize} run(s). ${result.failedRuns} failed.`
+      : `Completed ${result.queueSize} run(s) across ${selectedAgents.length} agent(s).`;
     await loadDashboard();
     renderBatchResults();
   } catch (error) {

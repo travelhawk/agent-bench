@@ -60,17 +60,40 @@ export interface AgentRecord {
   status: "ready";
 }
 
+export type BenchmarkResolution = "atomic" | "workflow" | "campaign" | "swarm";
+export type BenchmarkInteractionMode = "artifact" | "terminal" | "browser" | "tool-use" | "computer-use" | "multi-agent";
+export type BenchmarkEvaluatorMode = "state" | "artifact" | "trace" | "judge" | "hybrid";
+export type BenchmarkDifficulty = "low" | "medium" | "high";
+
+export interface BenchmarkSuiteMetadata {
+  resolution: BenchmarkResolution;
+  domain: string;
+  tags: string[];
+}
+
+export interface BenchmarkTaskMetadata {
+  resolution: BenchmarkResolution;
+  interaction: BenchmarkInteractionMode;
+  evaluator: BenchmarkEvaluatorMode;
+  difficulty: BenchmarkDifficulty;
+  tags: string[];
+  requiresIsolation: boolean;
+  requiresNetwork: boolean;
+}
+
 export interface BenchmarkTaskRecord {
   key: string;
   title: string;
   description: string;
   expectedOutcome: string;
+  metadata: BenchmarkTaskMetadata;
 }
 
 export interface BenchmarkSuiteRecord {
   key: string;
   title: string;
   description: string;
+  metadata: BenchmarkSuiteMetadata;
   tasks: BenchmarkTaskRecord[];
 }
 
@@ -96,6 +119,23 @@ export interface RunEvaluationResult {
   run: RunRecord;
   bestBefore: number | null;
   regressed: boolean;
+}
+
+export interface BatchRunFailure {
+  agentPath: string;
+  taskKey: string;
+  message: string;
+}
+
+export interface BatchRunResult {
+  runMode: RunMode;
+  benchmarkKey: string;
+  taskPlan: string[];
+  queueSize: number;
+  completedRuns: number;
+  failedRuns: number;
+  runs: RunEvaluationResult[];
+  failures: BatchRunFailure[];
 }
 
 export interface RunResultPayload {

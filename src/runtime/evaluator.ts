@@ -249,6 +249,9 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   if (!selectedBenchmark) {
     throw new Error(`Unknown benchmark: ${input.benchmarkKey}`);
   }
+  const selectedTask = input.taskKey
+    ? selectedBenchmark.tasks.find((task) => task.key === input.taskKey)
+    : undefined;
   if (input.taskKey && !selectedBenchmark.tasks.some((task) => task.key === input.taskKey)) {
     throw new Error(`Unknown task '${input.taskKey}' in benchmark '${input.benchmarkKey}'`);
   }
@@ -342,6 +345,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     runKey: input.runKey,
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey ?? null,
+    suiteMetadata: selectedBenchmark.metadata,
+    taskMetadata: selectedTask?.metadata ?? null,
     model,
     judgeMode: judge.mode,
     scores,

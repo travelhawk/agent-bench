@@ -2,7 +2,19 @@
 
 import { startTransition, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import type { AgentRecord, BenchmarkSuiteRecord, RunEvaluationResult, RunMode, RunRecord, RunResultPayload, WorkbenchSnapshot } from "../src/types";
+import type {
+  AgentRecord,
+  BatchRunResult,
+  BenchmarkEvaluatorMode,
+  BenchmarkInteractionMode,
+  BenchmarkResolution,
+  BenchmarkSuiteRecord,
+  BenchmarkTaskRecord,
+  RunMode,
+  RunRecord,
+  RunResultPayload,
+  WorkbenchSnapshot
+} from "../src/types";
 
 type ViewMode = "lab" | "history" | "benchmarks";
 
@@ -13,7 +25,31 @@ interface BenchmarkFormState {
   title: string;
   description: string;
   expectedOutcome: string;
+  resolution: BenchmarkResolution;
+  interaction: BenchmarkInteractionMode;
+  evaluator: BenchmarkEvaluatorMode;
+  difficulty: "low" | "medium" | "high";
+  domain: string;
+  tags: string;
+  requiresIsolation: boolean;
+  requiresNetwork: boolean;
 }
+
+const MAX_BATCH_RUNS = 48;
+const RESOLUTION_OPTIONS: BenchmarkResolution[] = ["atomic", "workflow", "campaign", "swarm"];
+const INTERACTION_OPTIONS: BenchmarkInteractionMode[] = ["artifact", "terminal", "browser", "tool-use", "computer-use", "multi-agent"];
+const EVALUATOR_OPTIONS: BenchmarkEvaluatorMode[] = ["state", "artifact", "trace", "judge", "hybrid"];
+const DIFFICULTY_OPTIONS = ["low", "medium", "high"] as const;
+const UTC_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+  timeZone: "UTC"
+});
 
 const STORAGE_KEYS = {
   selectedAgents: "agent-bench:selected-agents",
@@ -29,7 +65,31 @@ function formatMoney(value: number): string {
 }
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleString();
+  return `${UTC_DATE_FORMATTER.format(new Date(value))} UTC`;
+}
+
+function humanizeToken(value: string): string {
+  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function taskStructureChips(task: BenchmarkTaskRecord): string[] {
+  return [
+    humanizeToken(task.metadata.resolution),
+    humanizeToken(task.metadata.interaction),
+    `${humanizeToken(task.metadata.evaluator)} eval`,
+    `${humanizeToken(task.metadata.difficulty)} difficulty`,
+    ...(task.metadata.requiresIsolation ? ["Isolated"] : []),
+    ...(task.metadata.requiresNetwork ? ["Networked"] : []),
+    ...task.metadata.tags.map((tag) => `#${tag}`)
+  ];
+}
+
+function suiteChips(benchmark: BenchmarkSuiteRecord): string[] {
+  return [
+    humanizeToken(benchmark.metadata.resolution),
+    humanizeToken(benchmark.metadata.domain),
+    ...benchmark.metadata.tags.map((tag) => `#${tag}`)
+  ];
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -123,7 +183,15 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     key: "",
     title: "",
     description: "",
-    expectedOutcome: ""
+    expectedOutcome: "",
+    resolution: "workflow",
+    interaction: "tool-use",
+    evaluator: "hybrid",
+    difficulty: "medium",
+    domain: "general",
+    tags: "",
+    requiresIsolation: true,
+    requiresNetwork: false
   });
 
   useEffect(() => {
@@ -168,6 +236,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     : [];
   const selectedAgents = snapshot.agents.filter((agent) => selectedAgentPaths.includes(agent.path));
   const totalRuns = selectedAgents.length * plannedTasks.length;
+  const batchOverflow = totalRuns > MAX_BATCH_RUNS;
   const recentRuns = snapshot.runs.slice(0, 8);
   const historyRuns = snapshot.runs;
 
@@ -255,10 +324,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     setRunStatus(`Launching ${totalRuns} run(s)...`);
 
     try {
-      const response = await mutateJson<{
-        runs: RunEvaluationResult[];
-        queueSize: number;
-      }>("/api/run/batch", "POST", {
+      const response = await mutateJson<BatchRunResult>("/api/run/batch", "POST", {
         agents: selectedAgents.map((agent) => agent.path),
         benchmarkKey,
         taskKey: runMode === "single-task" ? taskKey : undefined,
@@ -267,7 +333,12 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
         providerApiKey: providerApiKey || undefined
       });
 
-      setRunStatus(`Completed ${response.queueSize} run(s).`);
+      const firstFailure = response.failures[0]?.message;
+      if (response.failedRuns > 0) {
+        setRunStatus(`Completed ${response.completedRuns}/${response.queueSize} run(s). ${response.failedRuns} failed.${firstFailure ? ` First failure: ${firstFailure}` : ""}`);
+      } else {
+        setRunStatus(`Completed ${response.queueSize} run(s).`);
+      }
       await refreshSnapshot();
       if (response.runs[0]) {
         await openRun(response.runs[0].run.runKey);
@@ -289,7 +360,15 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
         key: "",
         title: "",
         description: "",
-        expectedOutcome: ""
+        expectedOutcome: "",
+        resolution: "workflow",
+        interaction: "tool-use",
+        evaluator: "hybrid",
+        difficulty: "medium",
+        domain: "general",
+        tags: "",
+        requiresIsolation: true,
+        requiresNetwork: false
       });
       setBenchmarkStatus("Benchmark created.");
       await refreshSnapshot();
@@ -467,6 +546,11 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                 <div className="summary-band">
                   <strong>{selectedBenchmark?.title ?? "No benchmark"}</strong>
                   <span>{selectedBenchmark?.description ?? "Select a benchmark suite."}</span>
+                  {selectedBenchmark && (
+                    <div className="chip-row">
+                      {suiteChips(selectedBenchmark).map((chip) => <span className="mini-chip" key={chip}>{chip}</span>)}
+                    </div>
+                  )}
                 </div>
 
                 <div className="suite-pills">
@@ -478,7 +562,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                       onClick={() => setBenchmarkKey(benchmark.key)}
                     >
                       <span>{benchmark.title}</span>
-                      <span>{benchmark.tasks.length} tasks</span>
+                      <span>{benchmark.tasks.length} tasks • {humanizeToken(benchmark.metadata.resolution)}</span>
                     </button>
                   ))}
                 </div>
@@ -501,6 +585,9 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                         </span>
                       </div>
                       <p>{task.description}</p>
+                      <div className="chip-row">
+                        {taskStructureChips(task).map((chip) => <span className="mini-chip" key={`${task.key}-${chip}`}>{chip}</span>)}
+                      </div>
                       <div className="playlist-outcome">{task.expectedOutcome}</div>
                     </button>
                   ))}
@@ -535,10 +622,10 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                   </div>
                 </div>
 
-                <button type="button" className="primary-action" disabled={totalRuns === 0} onClick={runBatchAction}>
+                <button type="button" className="primary-action" disabled={totalRuns === 0 || batchOverflow} onClick={runBatchAction}>
                   Run selected agents
                 </button>
-                <p className="status-line">{runStatus}</p>
+                <p className="status-line">{batchOverflow ? `Batch exceeds the ${MAX_BATCH_RUNS}-run limit. Narrow the selection.` : runStatus}</p>
               </article>
             </section>
 
@@ -686,6 +773,66 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                   <textarea value={benchmarkForm.expectedOutcome} onChange={(event) => setBenchmarkForm((current) => ({ ...current, expectedOutcome: event.target.value }))} placeholder="What proves that the task is complete?" />
                 </label>
 
+                <label className="field">
+                  <span>Resolution</span>
+                  <select value={benchmarkForm.resolution} onChange={(event) => setBenchmarkForm((current) => ({ ...current, resolution: event.target.value as BenchmarkResolution }))}>
+                    {RESOLUTION_OPTIONS.map((option) => <option key={option} value={option}>{humanizeToken(option)}</option>)}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Domain</span>
+                  <input value={benchmarkForm.domain} onChange={(event) => setBenchmarkForm((current) => ({ ...current, domain: event.target.value }))} placeholder="software-engineering" />
+                </label>
+
+                <label className="field field-span-2">
+                  <span>Tags</span>
+                  <input value={benchmarkForm.tags} onChange={(event) => setBenchmarkForm((current) => ({ ...current, tags: event.target.value }))} placeholder="coding, regression, tool-use" />
+                </label>
+
+                {benchmarkForm.type === "task" && (
+                  <>
+                    <label className="field">
+                      <span>Interaction</span>
+                      <select value={benchmarkForm.interaction} onChange={(event) => setBenchmarkForm((current) => ({ ...current, interaction: event.target.value as BenchmarkInteractionMode }))}>
+                        {INTERACTION_OPTIONS.map((option) => <option key={option} value={option}>{humanizeToken(option)}</option>)}
+                      </select>
+                    </label>
+
+                    <label className="field">
+                      <span>Evaluator</span>
+                      <select value={benchmarkForm.evaluator} onChange={(event) => setBenchmarkForm((current) => ({ ...current, evaluator: event.target.value as BenchmarkEvaluatorMode }))}>
+                        {EVALUATOR_OPTIONS.map((option) => <option key={option} value={option}>{humanizeToken(option)}</option>)}
+                      </select>
+                    </label>
+
+                    <label className="field">
+                      <span>Difficulty</span>
+                      <select value={benchmarkForm.difficulty} onChange={(event) => setBenchmarkForm((current) => ({ ...current, difficulty: event.target.value as "low" | "medium" | "high" }))}>
+                        {DIFFICULTY_OPTIONS.map((option) => <option key={option} value={option}>{humanizeToken(option)}</option>)}
+                      </select>
+                    </label>
+
+                    <label className="field field-checkbox">
+                      <span>Requires isolation</span>
+                      <input
+                        type="checkbox"
+                        checked={benchmarkForm.requiresIsolation}
+                        onChange={(event) => setBenchmarkForm((current) => ({ ...current, requiresIsolation: event.target.checked }))}
+                      />
+                    </label>
+
+                    <label className="field field-checkbox">
+                      <span>Requires network</span>
+                      <input
+                        type="checkbox"
+                        checked={benchmarkForm.requiresNetwork}
+                        onChange={(event) => setBenchmarkForm((current) => ({ ...current, requiresNetwork: event.target.checked }))}
+                      />
+                    </label>
+                  </>
+                )}
+
                 <button type="submit" className="primary-action">Add benchmark</button>
                 <p className="status-line">{benchmarkStatus}</p>
               </form>
@@ -701,11 +848,17 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                       <span className="status-chip">{benchmark.tasks.length} tasks</span>
                     </div>
                     <p className="library-copy">{benchmark.description}</p>
+                    <div className="chip-row">
+                      {suiteChips(benchmark).map((chip) => <span className="mini-chip" key={`${benchmark.key}-${chip}`}>{chip}</span>)}
+                    </div>
                     <div className="library-stack">
                       {benchmark.tasks.map((task) => (
                         <div className="library-task" key={task.key}>
                           <strong>{task.title} ({task.key})</strong>
                           <p>{task.description}</p>
+                          <div className="chip-row">
+                            {taskStructureChips(task).map((chip) => <span className="mini-chip" key={`${task.key}-${chip}`}>{chip}</span>)}
+                          </div>
                           <span>{task.expectedOutcome}</span>
                         </div>
                       ))}

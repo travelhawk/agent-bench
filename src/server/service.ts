@@ -1,12 +1,15 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { inspectAgentFile, listAgentFiles } from "../agents/files";
+import { normalizeSuiteMetadataInput, normalizeTaskMetadataInput } from "../benchmarks/metadata";
 import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesFromFiles } from "../benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
 import { createDb, initializeSchema } from "../db/schema";
 import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns } from "../db/store";
 import {
   AgentRecord,
+  BatchRunFailure,
+  BatchRunResult,
   BenchmarkSuiteRecord,
   BenchmarkTaskRecord,
   RunEvaluationResult,
@@ -16,6 +19,7 @@ import {
   WorkbenchSnapshot
 } from "../types";
 import { ensureProjectDirs, getArtifactsRoot, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath } from "./config";
+import { assertBatchCapacity, INPUT_LIMITS, normalizeTagList, readBoundedString, resolveBatchAgents, sanitizeKey } from "./validation";
 
 interface ServiceContext {
   workspaceRoot: string;
@@ -31,6 +35,14 @@ interface CreateBenchmarkInput {
   description: string;
   expectedOutcome?: string;
   benchmarkKey?: string;
+  resolution?: string;
+  interaction?: string;
+  evaluator?: string;
+  difficulty?: string;
+  domain?: string;
+  tags?: string[] | string;
+  requiresIsolation?: boolean;
+  requiresNetwork?: boolean;
   type: "suite" | "task";
 }
 
@@ -50,6 +62,12 @@ interface BatchRunInput {
   providerApiKey?: string;
   runMode?: RunMode;
   agents: string[];
+}
+
+interface BatchRunJob {
+  benchmarkKey: string;
+  taskKey: string;
+  agentPath: string;
 }
 
 function withContext<T>(fn: (context: ServiceContext) => Promise<T> | T, dbPathInput?: string): Promise<T> {
@@ -103,6 +121,28 @@ export function resolveTaskPlan(benchmarks: BenchmarkSuiteRecord[], benchmarkKey
   }
 
   return benchmark.tasks;
+}
+
+export async function executeBatchPlan<T>(
+  jobs: BatchRunJob[],
+  executeJob: (job: BatchRunJob) => Promise<T>
+): Promise<{ results: T[]; failures: BatchRunFailure[] }> {
+  const results: T[] = [];
+  const failures: BatchRunFailure[] = [];
+
+  for (const job of jobs) {
+    try {
+      results.push(await executeJob(job));
+    } catch (error: unknown) {
+      failures.push({
+        agentPath: job.agentPath,
+        taskKey: job.taskKey,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  return { results, failures };
 }
 
 async function executeRun(context: ServiceContext, input: {
@@ -162,29 +202,50 @@ export function inspectAgent(agentPath: string, dbPathInput?: string): Promise<A
 
 export function createBenchmark(input: CreateBenchmarkInput, dbPathInput?: string): Promise<BenchmarkSuiteRecord | BenchmarkTaskRecord> {
   return withContext((context) => {
-    const normalizedKey = input.key.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
+    const normalizedKey = sanitizeKey(readBoundedString(input.key, "key", INPUT_LIMITS.maxKeyLength, true)!);
     if (!normalizedKey) {
       throw new Error("Benchmark key must contain letters or numbers.");
     }
 
+    const title = readBoundedString(input.title, "title", INPUT_LIMITS.maxTitleLength, true)!;
+    const description = readBoundedString(input.description, "description", INPUT_LIMITS.maxDescriptionLength, true)!;
+    const tags = normalizeTagList(input.tags);
+
     if (input.type === "task") {
-      if (!input.benchmarkKey || !input.expectedOutcome) {
+      const benchmarkKey = readBoundedString(input.benchmarkKey, "benchmarkKey", INPUT_LIMITS.maxKeyLength, true);
+      const expectedOutcome = readBoundedString(input.expectedOutcome, "expectedOutcome", INPUT_LIMITS.maxExpectedOutcomeLength, true);
+
+      if (!benchmarkKey || !expectedOutcome) {
         throw new Error("benchmarkKey and expectedOutcome are required for tasks.");
       }
 
       return createBenchmarkTaskFile(context.benchmarksDir, {
-        benchmarkKey: input.benchmarkKey,
+        benchmarkKey,
         key: normalizedKey,
-        title: input.title,
-        description: input.description,
-        expectedOutcome: input.expectedOutcome
+        title,
+        description,
+        expectedOutcome,
+        metadata: normalizeTaskMetadataInput({
+          resolution: input.resolution,
+          interaction: input.interaction,
+          evaluator: input.evaluator,
+          difficulty: input.difficulty,
+          tags,
+          requiresIsolation: input.requiresIsolation,
+          requiresNetwork: input.requiresNetwork
+        })
       });
     }
 
     return createBenchmarkSuiteFile(context.benchmarksDir, {
       key: normalizedKey,
-      title: input.title,
-      description: input.description
+      title,
+      description,
+      metadata: normalizeSuiteMetadataInput({
+        resolution: input.resolution,
+        domain: readBoundedString(input.domain, "domain", INPUT_LIMITS.maxDomainLength) ?? undefined,
+        tags
+      })
     });
   }, dbPathInput);
 }
@@ -192,10 +253,11 @@ export function createBenchmark(input: CreateBenchmarkInput, dbPathInput?: strin
 export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise<RunEvaluationResult> {
   return withContext(async (context) => {
     const benchmarkKey = input.benchmarkKey ?? "core-engineering";
-    const agentPath = readOptionalString(input.agentPath)
-      ? path.resolve(context.workspaceRoot, String(input.agentPath).trim())
+    const agentPathInput = readOptionalString(input.agentPath);
+    const agentPath = agentPathInput
+      ? path.resolve(context.workspaceRoot, inspectAgentFile(context.workspaceRoot, agentPathInput).path)
       : undefined;
-    const agentMarkdown = readOptionalString(input.agentMarkdown);
+    const agentMarkdown = readBoundedString(input.agentMarkdown, "agentMarkdown", INPUT_LIMITS.maxAgentMarkdownLength);
 
     if (!agentPath && !agentMarkdown) {
       throw new Error("Provide either agentPath or agentMarkdown.");
@@ -206,52 +268,49 @@ export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise
       taskKey: readOptionalString(input.taskKey),
       agentPath,
       agentMarkdown,
-      model: readOptionalString(input.model),
-      providerApiKey: readOptionalString(input.providerApiKey)
+      model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
+      providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength)
     });
   }, dbPathInput);
 }
 
-export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<{
-  runMode: RunMode;
-  benchmarkKey: string;
-  taskPlan: string[];
-  queueSize: number;
-  runs: RunEvaluationResult[];
-}> {
+export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<BatchRunResult> {
   return withContext(async (context) => {
     const benchmarkKey = input.benchmarkKey ?? "core-engineering";
     const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
     const runMode = resolveRunMode(input.runMode);
     const tasks = resolveTaskPlan(benchmarks, benchmarkKey, runMode, readOptionalString(input.taskKey));
-    const agentPaths = input.agents
-      .filter((value) => typeof value === "string" && value.trim().length > 0)
-      .map((value) => path.resolve(context.workspaceRoot, value.trim()));
+    const agents = resolveBatchAgents(context.workspaceRoot, input.agents);
+    const agentPaths = agents.map((agent) => path.resolve(context.workspaceRoot, agent.path));
 
     if (agentPaths.length === 0) {
       throw new Error("Select at least one agent to run.");
     }
 
-    const runs: RunEvaluationResult[] = [];
+    assertBatchCapacity(agentPaths.length, tasks.length);
 
-    for (const agentPath of agentPaths) {
-      for (const task of tasks) {
-        runs.push(await executeRun(context, {
-          benchmarkKey,
-          taskKey: task.key,
-          agentPath,
-          model: readOptionalString(input.model),
-          providerApiKey: readOptionalString(input.providerApiKey)
-        }));
-      }
-    }
+    const jobs = agentPaths.flatMap((agentPath) => tasks.map((task) => ({
+      benchmarkKey,
+      taskKey: task.key,
+      agentPath
+    })));
+    const { results, failures } = await executeBatchPlan(jobs, (job) => executeRun(context, {
+      benchmarkKey: job.benchmarkKey,
+      taskKey: job.taskKey,
+      agentPath: job.agentPath,
+      model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
+      providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength)
+    }));
 
     return {
       runMode,
       benchmarkKey,
       taskPlan: tasks.map((task) => task.key),
-      queueSize: runs.length,
-      runs
+      queueSize: jobs.length,
+      completedRuns: results.length,
+      failedRuns: failures.length,
+      runs: results,
+      failures
     };
   }, dbPathInput);
 }

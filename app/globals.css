@@ -398,6 +398,13 @@ pre {
   font-size: 0.84rem;
 }
 
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
 .playlist-card p,
 .library-task p {
   margin: 0.75rem 0;
@@ -419,6 +426,17 @@ pre {
   background: rgba(255, 255, 255, 0.05);
   font-size: 0.78rem;
   color: #dbe5f3;
+}
+
+.field-checkbox {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-checkbox input {
+  width: auto;
+  accent-color: #ff9d4d;
 }
 
 .status-chip-active {

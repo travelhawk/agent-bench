@@ -4,6 +4,14 @@ Local-first full-stack benchmarking workbench for AI agents.
 
 `agent-bench` now combines a CLI, a Next.js workbench, SQLite persistence, benchmark markdown files, and artifact snapshots so you can load agents, queue eval playlists, and inspect runs without needing a hosted evaluation platform first.
 
+## What Changed Since v0.3.0
+
+- Hardened API input handling so JSON routes reject invalid or non-object payloads with explicit client errors.
+- Batch execution now tolerates per-run failures and reports partial results instead of aborting the whole queue on the first runtime error.
+- Benchmark metadata now covers resolution, interaction surface, evaluator mode, difficulty, and environment constraints.
+- Added seeded higher-resolution suites for agentic workflows plus browser/computer-use interaction surfaces.
+- Added research-backed benchmark notes in `docs/AGENTIC_TEST_RESEARCH.md`.
+
 ## What Changed In v0.3.0
 
 - Migrated the UI into a Next.js full-stack app with App Router pages and API routes.
@@ -102,6 +110,11 @@ Key: <benchmark-key>
 
 ## Description
 <what this suite covers>
+
+## Metadata
+Resolution: workflow
+Domain: software-engineering
+Tags: coding, regression
 ```
 
 `tasks/<task-key>.md`
@@ -116,7 +129,29 @@ Key: <task-key>
 
 ## Expected Outcome
 <what counts as complete>
+
+## Metadata
+Resolution: atomic
+Interaction: terminal
+Evaluator: hybrid
+Difficulty: medium
+Tags: react, tests
+Requires Isolation: yes
+Requires Network: no
 ```
+
+Metadata meanings:
+
+- `Resolution`: `atomic`, `workflow`, `campaign`, or `swarm`
+- `Interaction`: `artifact`, `terminal`, `browser`, `tool-use`, `computer-use`, or `multi-agent`
+- `Evaluator`: `state`, `artifact`, `trace`, `judge`, or `hybrid`
+- `Difficulty`: `low`, `medium`, or `high`
+
+The repo now ships three benchmark shapes by default:
+
+- `core-engineering` for fast deterministic regressions
+- `agentic-workflows` for higher-resolution workflow, campaign, and superagent-style tests
+- `interaction-surfaces` for browser, computer-use, and mixed tool-routing scenarios
 
 ## Agent Definitions
 
@@ -138,11 +173,13 @@ Important:
 ## Current Limits
 
 - The scoring/runtime pipeline is still an MVP and can fall back to deterministic local judging.
-- The UI now supports multi-agent batch execution, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
+- The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
+- Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
 
 ## Troubleshooting
 
 - If the Next.js app fails to start after dependency changes, run `pnpm install` again so native packages like `better-sqlite3` are rebuilt.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
 - Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.
+- See `docs/AGENTIC_TEST_RESEARCH.md` for the current research-backed test taxonomy and why the benchmark metadata is structured this way.
