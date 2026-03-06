@@ -104,6 +104,7 @@ HTTP API:
 - On hosts without macOS seatbelt, sandboxed runs now prefer Docker and run with a read-only rootfs plus explicit writable mounts for the task workspace and artifacts.
 - Browser fixtures can opt into `Provider: process` when a host browser is required; that tradeoff is explicit in the task metadata rather than hidden in fallback code.
 - Windows execution now uses `where` for binary discovery, keeps Docker container commands on a POSIX shell even when the host is Windows, and avoids shell-expanded `node --test` globs in favor of quoted patterns that Node resolves itself.
+- `auto` sandbox selection now requires both a ready Docker daemon and a locally available configured image before switching away from `process` on non-macOS hosts; explicit `Provider: docker` still opts into container execution directly.
 - Runner environments are scrubbed before launch; the sandbox only receives a small safe host env plus explicit `AGENT_BENCH_*` variables.
 
 ## Decisions & Assumptions

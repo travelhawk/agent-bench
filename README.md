@@ -9,7 +9,7 @@ Local-first full-stack benchmarking workbench for AI agents.
 - Added the first real sandbox execution path for fixture-backed benchmark tasks plus markdown agents that declare a `Runner:` command.
 - Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
 - On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
-- On hosts without macOS seatbelt, the runtime now prefers Docker when the daemon is available.
+- On hosts without macOS seatbelt, `auto` mode now chooses Docker only when the daemon is ready and the configured image already exists locally; otherwise it falls back to `process`.
 - Hardened Windows execution paths by using `where` for binary lookup, keeping Docker container shells on `/bin/sh`, and replacing shell-expanded test globs with Node-owned quoted patterns.
 - Browser and computer-use tasks in `interaction-surfaces` now ship real fixture directories and verifier commands instead of metadata-only placeholders.
 - The sample workspace now includes runnable browser and computer-use example agents under `./examples/sample-workspace`.
@@ -156,7 +156,7 @@ Runner contract:
 - task and agent material are written into the run artifacts and exposed as `AGENT_BENCH_TASK_FILE` and `AGENT_BENCH_AGENT_FILE`
 - run metadata is exposed through `AGENT_BENCH_RUN_KEY`, `AGENT_BENCH_BENCHMARK_KEY`, `AGENT_BENCH_TASK_KEY`, and `AGENT_BENCH_ARTIFACTS_DIR`
 - `Provider:` can be `auto`, `process`, `macos-seatbelt`, or `docker`
-- in `auto` mode, macOS prefers `sandbox-exec`; other hosts prefer Docker when available
+- in `auto` mode, macOS prefers `sandbox-exec`; other hosts only auto-select Docker when the daemon is ready and the configured image is already present locally
 - on Windows hosts without Docker, sandboxed runs fall back to the host `process` provider and keep the same runner/verifier contract
 - browser tasks can explicitly choose `Provider: process` when a host browser is required and the stronger sandbox would break launch stability
 

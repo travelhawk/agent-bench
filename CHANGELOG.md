@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Hardened Windows execution by switching command discovery to `where`, keeping Docker shell execution POSIX inside Linux containers, and removing shell-dependent test invocation paths
+- Hardened sandbox auto-selection so Linux and Windows hosts only auto-pick Docker when the daemon is ready and the configured image already exists locally
 - Added a GitHub Actions CI matrix for `ubuntu-latest`, `macos-latest`, and `windows-latest`
 - Added a Docker sandbox provider so non-macOS hosts can use a stronger containerized execution path when Docker is available
 - Added executable `browser-support-escalation` and `computer-use-incident-drill` fixtures with verifier commands under `interaction-surfaces`

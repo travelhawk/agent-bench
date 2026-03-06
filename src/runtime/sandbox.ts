@@ -62,6 +62,7 @@ const SAFE_ENV_KEYS = [
 ] as const;
 
 let dockerAvailableCache: boolean | undefined;
+const dockerImageAvailabilityCache = new Map<string, boolean>();
 
 export function resolveCommandLookupSpec(command: string, platform: NodeJS.Platform = process.platform): { bin: string; args: string[] } {
   if (platform === "win32") {
@@ -116,6 +117,33 @@ function dockerDaemonAvailable(): boolean {
   return dockerAvailableCache;
 }
 
+function resolveDockerImage(): string {
+  return (process.env[SANDBOX_DOCKER_IMAGE_ENV] ?? DEFAULT_DOCKER_IMAGE).trim() || DEFAULT_DOCKER_IMAGE;
+}
+
+function dockerImageAvailable(image = resolveDockerImage()): boolean {
+  const cached = dockerImageAvailabilityCache.get(image);
+  if (cached !== undefined) return cached;
+
+  const dockerBinary = resolveCommandPath("docker");
+  if (!dockerBinary) {
+    dockerImageAvailabilityCache.set(image, false);
+    return false;
+  }
+
+  const result = spawnSync(dockerBinary, ["image", "inspect", image], {
+    stdio: "ignore",
+    timeout: 3000
+  });
+  const available = result.status === 0;
+  dockerImageAvailabilityCache.set(image, available);
+  return available;
+}
+
+function dockerAutoAvailable(): boolean {
+  return dockerDaemonAvailable() && dockerImageAvailable();
+}
+
 export function resolveSandboxProvider(preferred?: string): RuntimeSandboxProvider {
   const raw = (preferred ?? process.env[SANDBOX_PROVIDER_ENV] ?? "auto").trim().toLowerCase();
   if (raw === "process") return "process";
@@ -129,7 +157,7 @@ export function resolveSandboxProvider(preferred?: string): RuntimeSandboxProvid
   if (process.platform === "darwin" && commandExists("sandbox-exec")) {
     return "macos-seatbelt";
   }
-  if (dockerDaemonAvailable()) {
+  if (dockerAutoAvailable()) {
     return "docker";
   }
 
@@ -371,7 +399,7 @@ function buildDockerInvocation(input: {
     throw new Error("Docker binary not found for sandbox execution.");
   }
 
-  const image = (process.env[SANDBOX_DOCKER_IMAGE_ENV] ?? DEFAULT_DOCKER_IMAGE).trim() || DEFAULT_DOCKER_IMAGE;
+  const image = resolveDockerImage();
   const args = [
     "run",
     "--rm",

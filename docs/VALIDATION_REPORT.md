@@ -92,7 +92,7 @@ Covered tests:
 ## Notes
 
 - macOS seatbelt isolation is still the default on this machine for non-browser tasks.
-- Outside macOS seatbelt, the runtime now prefers Docker when the daemon is available.
+- Outside macOS seatbelt, `auto` mode now only switches to Docker when the daemon is ready and the configured image is already present locally.
 - Windows-compatible execution paths are now hardened locally and the repo includes a GitHub Actions matrix for `windows-latest`, `macos-latest`, and `ubuntu-latest`.
 - Browser tasks can override the provider to `process`; the seeded browser fixture does this because Chromium headless crashed under `sandbox-exec` during validation.
 - Runner environments are intentionally scrubbed; only a safe host env plus explicit `AGENT_BENCH_*` variables are forwarded into the sandbox.
