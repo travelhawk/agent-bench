@@ -47,9 +47,9 @@ jobs:
       - name: Build app
         run: pnpm run build
 
-      - name: Install Playwright browsers
+      - name: Setup Chrome
         if: matrix.os == 'ubuntu-latest'
-        run: pnpm exec playwright install --with-deps chromium
+        uses: browser-actions/setup-chrome@v1
 
       - name: Run E2E tests
         if: matrix.os == 'ubuntu-latest'

@@ -58,11 +58,7 @@ Build the production app and CLI:
 pnpm run build
 ```
 
-If you want to run the sample browser operator, install the local Playwright browser once:
-
-```bash
-pnpm exec playwright install chromium
-```
+If you want to run the sample browser operator, ensure Google Chrome is installed locally.
 
 Run the end-to-end UI regression suite locally:
 

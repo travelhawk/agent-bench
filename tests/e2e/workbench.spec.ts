@@ -6,8 +6,8 @@ test("core workbench UI flows render and navigate", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Agent Test Lab" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Load Agents" })).toBeVisible();
 
-  const runMode = page.getByLabel("Run mode");
-  const challenge = page.getByLabel("Challenge");
+  const runMode = page.getByRole("combobox", { name: "Run mode" });
+  const challenge = page.getByRole("combobox", { name: "Challenge" });
 
   await expect(runMode).toHaveValue("benchmark-cycle");
   await expect(challenge).toBeDisabled();
