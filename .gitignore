@@ -9,3 +9,4 @@ npm-debug.log*
 .zenflow
 .env.local
 .env
+next-env.d.ts
