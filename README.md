@@ -64,6 +64,12 @@ If you want to run the sample browser operator, install the local Playwright bro
 pnpm exec playwright install chromium
 ```
 
+Run the end-to-end UI regression suite locally:
+
+```bash
+pnpm run test:e2e
+```
+
 Use the CLI directly:
 
 ```bash
