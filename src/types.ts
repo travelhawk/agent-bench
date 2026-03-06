@@ -43,9 +43,11 @@ export interface RuntimeEvaluationRequest {
   runKey: string;
   agentPath?: string;
   agentMarkdown?: string;
+  agentRunnerCommand?: string;
   benchmarkKey: string;
   taskKey?: string;
   artifactsRoot: string;
+  benchmarksDir?: string;
   benchmarks: BenchmarkSuiteRecord[];
   model?: string;
   gatewayApiKey?: string;
@@ -56,6 +58,8 @@ export interface AgentRecord {
   name: string;
   path: string;
   summary: string;
+  executionMode: "review-only" | "sandbox";
+  runnerCommand?: string;
   source: "discovered" | "manual";
   status: "ready";
 }
@@ -81,12 +85,19 @@ export interface BenchmarkTaskMetadata {
   requiresNetwork: boolean;
 }
 
+export interface BenchmarkTaskSandbox {
+  fixtureDir?: string;
+  verifyCommand?: string;
+  timeoutMs: number;
+}
+
 export interface BenchmarkTaskRecord {
   key: string;
   title: string;
   description: string;
   expectedOutcome: string;
   metadata: BenchmarkTaskMetadata;
+  sandbox: BenchmarkTaskSandbox | null;
 }
 
 export interface BenchmarkSuiteRecord {

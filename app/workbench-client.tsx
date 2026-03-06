@@ -35,6 +35,15 @@ interface BenchmarkFormState {
   requiresNetwork: boolean;
 }
 
+interface RunSummaryView {
+  executionMode?: string;
+  reviewMode?: string;
+  sandbox?: { provider?: string; networkAccess?: string };
+  latencyMs?: number;
+  costUsd?: number;
+  scores?: { total?: number; tests?: number; judge?: number; performance?: number };
+}
+
 const MAX_BATCH_RUNS = 48;
 const RESOLUTION_OPTIONS: BenchmarkResolution[] = ["atomic", "workflow", "campaign", "swarm"];
 const INTERACTION_OPTIONS: BenchmarkInteractionMode[] = ["artifact", "terminal", "browser", "tool-use", "computer-use", "multi-agent"];
@@ -78,6 +87,7 @@ function taskStructureChips(task: BenchmarkTaskRecord): string[] {
     humanizeToken(task.metadata.interaction),
     `${humanizeToken(task.metadata.evaluator)} eval`,
     `${humanizeToken(task.metadata.difficulty)} difficulty`,
+    ...(task.sandbox ? ["Sandboxed"] : []),
     ...(task.metadata.requiresIsolation ? ["Isolated"] : []),
     ...(task.metadata.requiresNetwork ? ["Networked"] : []),
     ...task.metadata.tags.map((tag) => `#${tag}`)
@@ -162,6 +172,10 @@ function RunCard({
   );
 }
 
+function readRunSummary(summary: RunResultPayload["summary"]): RunSummaryView | null {
+  return (summary ?? null) as RunSummaryView | null;
+}
+
 export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: WorkbenchSnapshot }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [view, setView] = useState<ViewMode>("lab");
@@ -239,6 +253,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const batchOverflow = totalRuns > MAX_BATCH_RUNS;
   const recentRuns = snapshot.runs.slice(0, 8);
   const historyRuns = snapshot.runs;
+  const detailSummary = detail ? readRunSummary(detail.summary) : null;
 
   useEffect(() => {
     if (!selectedBenchmark) return;
@@ -520,6 +535,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                         </div>
                         <div className="agent-meta">
                           <span>{agent.path}</span>
+                          <span>{agent.executionMode === "sandbox" ? "Sandbox ready" : "Review only"}</span>
                           <span>{agent.source === "manual" ? "Added manually" : "Discovered"}</span>
                         </div>
                       </button>
@@ -677,12 +693,17 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                     <div className="run-detail-content">
                       <div className="detail-title">{detail.run.runKey} • {detail.run.agentName} • {detail.run.suiteName}</div>
                       <div className="detail-grid">
-                        <div className="detail-cell">Total <strong>{detail.run.score.toFixed(2)}</strong></div>
-                        <div className="detail-cell">Readiness <strong>{detail.run.testsScore.toFixed(2)}</strong></div>
-                        <div className="detail-cell">Review <strong>{detail.run.llmScore.toFixed(2)}</strong></div>
-                        <div className="detail-cell">Performance <strong>{detail.run.perfScore.toFixed(2)}</strong></div>
+                        <div className="detail-cell">Total <strong>{(detailSummary?.scores?.total ?? detail.run.score).toFixed(2)}</strong></div>
+                        <div className="detail-cell">Readiness <strong>{(detailSummary?.scores?.tests ?? detail.run.testsScore).toFixed(2)}</strong></div>
+                        <div className="detail-cell">Review <strong>{(detailSummary?.scores?.judge ?? detail.run.llmScore).toFixed(2)}</strong></div>
+                        <div className="detail-cell">Performance <strong>{(detailSummary?.scores?.performance ?? detail.run.perfScore).toFixed(2)}</strong></div>
                         <div className="detail-cell">Duration <strong>{(detail.run.durationMs / 1000).toFixed(2)}s</strong></div>
-                        <div className="detail-cell">Cost <strong>{detail.run.costUsd.toFixed(4)}</strong></div>
+                        <div className="detail-cell">Latency <strong>{Number(detailSummary?.latencyMs ?? detail.run.latencyMs)}ms</strong></div>
+                        <div className="detail-cell">Cost <strong>{Number(detailSummary?.costUsd ?? detail.run.costUsd).toFixed(4)}</strong></div>
+                        <div className="detail-cell">Execution <strong>{detailSummary?.executionMode ?? "review-only"}</strong></div>
+                        <div className="detail-cell">Sandbox <strong>{detailSummary?.sandbox?.provider ?? "n/a"}</strong></div>
+                        <div className="detail-cell">Network <strong>{detailSummary?.sandbox?.networkAccess ?? "n/a"}</strong></div>
+                        <div className="detail-cell">Review mode <strong>{detailSummary?.reviewMode ?? "unknown"}</strong></div>
                       </div>
                       <a href={detail.reportUrl} target="_blank" rel="noreferrer">
                         <img src={detail.reportUrl} alt={`Run report ${detail.run.runKey}`} className="detail-image" />

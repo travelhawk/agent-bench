@@ -68,6 +68,7 @@ interface BatchRunJob {
   benchmarkKey: string;
   taskKey: string;
   agentPath: string;
+  agentRunnerCommand?: string;
 }
 
 function withContext<T>(fn: (context: ServiceContext) => Promise<T> | T, dbPathInput?: string): Promise<T> {
@@ -150,6 +151,7 @@ async function executeRun(context: ServiceContext, input: {
   taskKey?: string;
   agentPath?: string;
   agentMarkdown?: string;
+  agentRunnerCommand?: string;
   model?: string;
   providerApiKey?: string;
 }): Promise<RunEvaluationResult> {
@@ -159,9 +161,11 @@ async function executeRun(context: ServiceContext, input: {
     runKey: newRunKey(),
     agentPath: input.agentPath,
     agentMarkdown: input.agentMarkdown,
+    agentRunnerCommand: input.agentRunnerCommand,
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
     artifactsRoot: context.artifactsRoot,
+    benchmarksDir: context.benchmarksDir,
     benchmarks,
     model: input.model,
     gatewayApiKey: input.providerApiKey
@@ -254,8 +258,11 @@ export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise
   return withContext(async (context) => {
     const benchmarkKey = input.benchmarkKey ?? "core-engineering";
     const agentPathInput = readOptionalString(input.agentPath);
-    const agentPath = agentPathInput
-      ? path.resolve(context.workspaceRoot, inspectAgentFile(context.workspaceRoot, agentPathInput).path)
+    const agentRecord = agentPathInput
+      ? inspectAgentFile(context.workspaceRoot, agentPathInput)
+      : undefined;
+    const agentPath = agentRecord
+      ? path.resolve(context.workspaceRoot, agentRecord.path)
       : undefined;
     const agentMarkdown = readBoundedString(input.agentMarkdown, "agentMarkdown", INPUT_LIMITS.maxAgentMarkdownLength);
 
@@ -268,6 +275,7 @@ export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise
       taskKey: readOptionalString(input.taskKey),
       agentPath,
       agentMarkdown,
+      agentRunnerCommand: agentRecord?.runnerCommand,
       model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
       providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength)
     });
@@ -281,23 +289,23 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
     const runMode = resolveRunMode(input.runMode);
     const tasks = resolveTaskPlan(benchmarks, benchmarkKey, runMode, readOptionalString(input.taskKey));
     const agents = resolveBatchAgents(context.workspaceRoot, input.agents);
-    const agentPaths = agents.map((agent) => path.resolve(context.workspaceRoot, agent.path));
-
-    if (agentPaths.length === 0) {
+    if (agents.length === 0) {
       throw new Error("Select at least one agent to run.");
     }
 
-    assertBatchCapacity(agentPaths.length, tasks.length);
+    assertBatchCapacity(agents.length, tasks.length);
 
-    const jobs = agentPaths.flatMap((agentPath) => tasks.map((task) => ({
+    const jobs = agents.flatMap((agent) => tasks.map((task) => ({
       benchmarkKey,
       taskKey: task.key,
-      agentPath
+      agentPath: path.resolve(context.workspaceRoot, agent.path),
+      agentRunnerCommand: agent.runnerCommand
     })));
     const { results, failures } = await executeBatchPlan(jobs, (job) => executeRun(context, {
       benchmarkKey: job.benchmarkKey,
       taskKey: job.taskKey,
       agentPath: job.agentPath,
+      agentRunnerCommand: job.agentRunnerCommand,
       model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
       providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength)
     }));

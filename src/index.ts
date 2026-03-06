@@ -3,6 +3,7 @@ import "dotenv/config";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
+import { readAgentRunnerCommand } from "./agents/files";
 import { listBenchmarkSuitesFromFiles } from "./benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "./core/runner";
 import { createDb, initializeSchema } from "./db/schema";
@@ -57,14 +58,20 @@ program
     const db = ensureDbReady(dbPath);
 
     const bestBefore = getBestScore(db);
-    const benchmarks = listBenchmarkSuitesFromFiles(resolveBenchmarksDir(cwd));
+    const benchmarksDir = resolveBenchmarksDir(cwd);
+    const benchmarks = listBenchmarkSuitesFromFiles(benchmarksDir);
     const runKey = newRunKey();
+    const resolvedAgentPath = path.resolve(cwd, opts.agent);
+    const agentRunnerCommand = readAgentRunnerCommand(resolvedAgentPath);
+
     const runInput = await runEvaluationInRuntime({
       runKey,
-      agentPath: path.resolve(cwd, opts.agent),
+      agentPath: resolvedAgentPath,
+      agentRunnerCommand,
       benchmarkKey: opts.benchmark,
       taskKey: opts.task,
       artifactsRoot: dirs.artifacts,
+      benchmarksDir,
       benchmarks,
       model: opts.model
     });

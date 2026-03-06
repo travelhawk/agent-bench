@@ -10,6 +10,8 @@ import {
 } from "./metadata";
 import { BenchmarkSuiteRecord, BenchmarkTaskRecord } from "../types";
 
+const DEFAULT_SANDBOX_TIMEOUT_MS = 120000;
+
 const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
   {
     key: "core-engineering",
@@ -34,7 +36,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["api", "schemas", "contracts"],
           requiresIsolation: true,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       },
       {
         key: "fix-react-bug",
@@ -49,6 +52,11 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["react", "bugfix", "tests"],
           requiresIsolation: true,
           requiresNetwork: false
+        },
+        sandbox: {
+          fixtureDir: "fixtures/fix-react-bug",
+          verifyCommand: "node --test tests/*.test.js",
+          timeoutMs: 120000
         }
       },
       {
@@ -64,7 +72,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["reasoning", "consistency"],
           requiresIsolation: false,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       },
       {
         key: "sql-refactor",
@@ -79,7 +88,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["sql", "optimization", "correctness"],
           requiresIsolation: true,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       }
     ]
   },
@@ -106,7 +116,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["research", "synthesis", "citations"],
           requiresIsolation: false,
           requiresNetwork: true
-        }
+        },
+        sandbox: null
       },
       {
         key: "release-war-room",
@@ -121,7 +132,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["release", "debugging", "handoff"],
           requiresIsolation: true,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       },
       {
         key: "superagent-handoff-mesh",
@@ -136,7 +148,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["multi-agent", "delegation", "orchestration"],
           requiresIsolation: true,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       }
     ]
   },
@@ -163,7 +176,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["browser", "forms", "state"],
           requiresIsolation: true,
           requiresNetwork: true
-        }
+        },
+        sandbox: null
       },
       {
         key: "computer-use-incident-drill",
@@ -178,7 +192,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["computer-use", "incident-response", "recovery"],
           requiresIsolation: true,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       },
       {
         key: "tool-router-triage",
@@ -193,7 +208,8 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           tags: ["triage", "tool-routing", "ops"],
           requiresIsolation: true,
           requiresNetwork: false
-        }
+        },
+        sandbox: null
       }
     ]
   }
@@ -213,6 +229,47 @@ function suiteMetaPath(benchmarksDir: string, suiteKey: string): string {
 
 function taskPath(benchmarksDir: string, suiteKey: string, taskKey: string): string {
   return path.join(suiteDir(benchmarksDir, suiteKey), "tasks", `${taskKey}.md`);
+}
+
+function parseTaskSandbox(section: string): BenchmarkTaskRecord["sandbox"] {
+  if (!section.trim()) return null;
+
+  const lines = section
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const map = new Map<string, string>();
+
+  lines.forEach((line) => {
+    const index = line.indexOf(":");
+    if (index === -1) return;
+    map.set(line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim());
+  });
+
+  const timeoutRaw = Number(map.get("timeout ms") ?? DEFAULT_SANDBOX_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? Math.round(timeoutRaw) : DEFAULT_SANDBOX_TIMEOUT_MS;
+  const fixtureDirRaw = map.get("fixture dir")?.trim();
+  const verifyCommandRaw = map.get("verify command")?.trim();
+  const fixtureDir = fixtureDirRaw && fixtureDirRaw.toLowerCase() !== "none" ? fixtureDirRaw : undefined;
+  const verifyCommand = verifyCommandRaw && verifyCommandRaw.toLowerCase() !== "none" ? verifyCommandRaw : undefined;
+
+  if (!fixtureDir && !verifyCommand) return null;
+  return {
+    fixtureDir: fixtureDir || undefined,
+    verifyCommand: verifyCommand || undefined,
+    timeoutMs
+  };
+}
+
+function sandboxToMarkdown(sandbox: BenchmarkTaskRecord["sandbox"]): string[] {
+  if (!sandbox) return [];
+  return [
+    "## Sandbox",
+    `Fixture Dir: ${sandbox.fixtureDir ?? "none"}`,
+    `Verify Command: ${sandbox.verifyCommand ?? "none"}`,
+    `Timeout Ms: ${sandbox.timeoutMs}`,
+    ""
+  ];
 }
 
 function suiteToMarkdown(suite: BenchmarkSuiteRecord): string {
@@ -240,6 +297,7 @@ function taskToMarkdown(task: BenchmarkTaskRecord): string {
     "## Expected Outcome",
     task.expectedOutcome.trim(),
     "",
+    ...sandboxToMarkdown(task.sandbox),
     ...taskMetadataToMarkdown(normalizeTaskMetadataInput(task.metadata))
   ].join("\n");
 }
@@ -268,6 +326,7 @@ function parseTaskMarkdown(content: string, fallbackKey: string): BenchmarkTaskR
   const keyMatch = content.match(/^Key:\s*(.+)$/m);
   const description = extractSection(content, "Task");
   const expectedOutcome = extractSection(content, "Expected Outcome");
+  const sandbox = parseTaskSandbox(extractSection(content, "Sandbox"));
   const metadata = parseTaskMetadata(extractSection(content, "Metadata"));
 
   const key = normalizeKey(keyMatch?.[1]?.trim() || fallbackKey);
@@ -276,7 +335,8 @@ function parseTaskMarkdown(content: string, fallbackKey: string): BenchmarkTaskR
     title: titleMatch?.[1]?.trim() || key,
     description,
     expectedOutcome,
-    metadata
+    metadata,
+    sandbox
   };
 }
 
@@ -306,11 +366,11 @@ function migrateLegacyFlatBenchmarkFiles(benchmarksDir: string): void {
       key: legacySuiteKey,
       title: "Legacy Imported",
       description: "Auto-imported benchmark tasks from the previous flat benchmark format.",
-      metadata: {
-        resolution: "atomic",
-        domain: "legacy-import",
-        tags: ["imported", "legacy"]
-      },
+        metadata: {
+          resolution: "atomic",
+          domain: "legacy-import",
+          tags: ["imported", "legacy"]
+        },
       tasks: []
     }), "utf8");
   }
@@ -397,10 +457,10 @@ export function createBenchmarkSuiteFile(benchmarksDir: string, input: {
   mkdirSync(path.join(baseDir, "tasks"), { recursive: true });
   const suite: BenchmarkSuiteRecord = {
     key,
-    title: input.title.trim(),
-    description: input.description.trim(),
-    metadata: normalizeSuiteMetadataInput(input.metadata),
-    tasks: []
+      title: input.title.trim(),
+      description: input.description.trim(),
+      metadata: normalizeSuiteMetadataInput(input.metadata),
+      tasks: []
   };
   writeFileSync(suiteMetaPath(benchmarksDir, key), suiteToMarkdown(suite), "utf8");
   return suite;
@@ -413,6 +473,7 @@ export function createBenchmarkTaskFile(benchmarksDir: string, input: {
   description: string;
   expectedOutcome: string;
   metadata?: Partial<BenchmarkTaskRecord["metadata"]>;
+  sandbox?: BenchmarkTaskRecord["sandbox"];
 }): BenchmarkTaskRecord {
   ensureBenchmarkFiles(benchmarksDir);
   const benchmarkKey = normalizeKey(input.benchmarkKey);
@@ -436,7 +497,8 @@ export function createBenchmarkTaskFile(benchmarksDir: string, input: {
     title: input.title.trim(),
     description: input.description.trim(),
     expectedOutcome: input.expectedOutcome.trim(),
-    metadata: normalizeTaskMetadataInput(input.metadata)
+    metadata: normalizeTaskMetadataInput(input.metadata),
+    sandbox: input.sandbox ?? null
   };
   writeFileSync(filePath, taskToMarkdown(task), "utf8");
   return task;

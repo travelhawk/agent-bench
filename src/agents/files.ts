@@ -21,6 +21,16 @@ function summarizeAgent(content: string): string {
   return (firstLine || "Agent definition ready for benchmark runs.").slice(0, 140);
 }
 
+function extractRunnerCommand(content: string): string | undefined {
+  const match = content.match(/^Runner(?: Command)?:\s*(.+)$/mi);
+  return match?.[1]?.trim() || undefined;
+}
+
+export function readAgentRunnerCommand(filePath: string): string | undefined {
+  if (!existsSync(filePath)) return undefined;
+  return extractRunnerCommand(readFileSync(filePath, "utf8"));
+}
+
 function isAgentMarkdownFile(workspaceRoot: string, absolutePath: string): boolean {
   const relativePath = path.relative(workspaceRoot, absolutePath);
   const segments = relativePath.split(path.sep);
@@ -38,12 +48,15 @@ function buildAgentRecord(workspaceRoot: string, absolutePath: string, source: A
   const relativePath = path.relative(workspaceRoot, absolutePath);
   const content = readFileSync(absolutePath, "utf8");
   const fallbackName = path.basename(relativePath, path.extname(relativePath));
+  const runnerCommand = extractRunnerCommand(content);
 
   return {
     key: toAgentKey(relativePath),
     name: content.match(/^#\s+(.+)$/m)?.[1]?.trim() || fallbackName,
     path: relativePath,
     summary: summarizeAgent(content),
+    executionMode: runnerCommand ? "sandbox" : "review-only",
+    runnerCommand,
     source,
     status: "ready"
   };

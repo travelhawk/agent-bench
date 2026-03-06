@@ -6,6 +6,10 @@ Local-first full-stack benchmarking workbench for AI agents.
 
 ## What Changed Since v0.3.0
 
+- Added the first real sandbox execution path for fixture-backed benchmark tasks plus markdown agents that declare a `Runner:` command.
+- Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
+- On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
+- Runner environments are now scrubbed by default and only receive a small safe host env plus explicit `AGENT_BENCH_*` runtime variables.
 - Hardened API input handling so JSON routes reject invalid or non-object payloads with explicit client errors.
 - Batch execution now tolerates per-run failures and reports partial results instead of aborting the whole queue on the first runtime error.
 - Replaced hash-based local fallback scores with deterministic rules-based review tied to actual agent/task fit.
@@ -92,16 +96,69 @@ You can also paste a key directly into the UI for the current browser session. T
 
 Without a key, `agent-bench` still works using deterministic rules-based review driven by the agent spec and benchmark metadata.
 
+Sandboxed runners also receive:
+
+- `AGENT_BENCH_PROVIDER_API_KEY` when you launch a run with a provider key
+- `AGENT_BENCH_PROVIDER_MODEL` when you choose a model in the UI or CLI
+
+## Sandboxed Execution
+
+`agent-bench` now supports real per-run sandbox execution when both sides of the contract exist:
+
+- the agent markdown includes a `Runner:` command
+- the benchmark task includes a `## Sandbox` section with a fixture and optional verify command
+
+Agent example:
+
+```md
+# Local Sandbox Coder
+
+Runner: node ./runner.js
+```
+
+Task example:
+
+```md
+# Fix React Bug
+
+Key: fix-react-bug
+
+## Task
+Repair a failing React component behavior in an isolated repo.
+
+## Expected Outcome
+Return a patch and tests that make the component deterministic and pass all checks.
+
+## Sandbox
+Fixture Dir: fixtures/fix-react-bug
+Verify Command: node --test tests/*.test.js
+Timeout Ms: 120000
+```
+
+Runner contract:
+
+- the runner starts from the agent file directory, not from the task workspace
+- the writable task repo is exposed as `AGENT_BENCH_WORKSPACE`
+- task and agent material are written into the run artifacts and exposed as `AGENT_BENCH_TASK_FILE` and `AGENT_BENCH_AGENT_FILE`
+- run metadata is exposed through `AGENT_BENCH_RUN_KEY`, `AGENT_BENCH_BENCHMARK_KEY`, `AGENT_BENCH_TASK_KEY`, and `AGENT_BENCH_ARTIFACTS_DIR`
+- on macOS, the runner and verifier are wrapped in `sandbox-exec`; writes are limited to the task workspace plus run artifacts, and network is disabled unless the task metadata says it is required
+
 ## What A Run Means Today
 
-Current runs are honest spec-level evaluations:
+Current runs now come in two honest modes:
 
-- `agent-bench` scores how well an agent definition appears to fit the selected benchmark task.
-- With `AI_GATEWAY_API_KEY`, the review score comes from the configured model.
-- Without a key, the review score comes from a deterministic rules rubric.
-- Generated artifacts are evaluation reports, not screenshots of a real browser or sandbox session.
+- Review-only runs:
+  - score how well an agent definition appears to fit the selected benchmark task
+  - use the configured model for review when `AI_GATEWAY_API_KEY` is present
+  - otherwise use the deterministic rules rubric
+- Sandboxed runs:
+  - copy the task fixture into a fresh run workspace
+  - execute the agent runner and optional verify command
+  - use real runner and verifier outcomes as the readiness/test score
+  - still combine that execution evidence with review scoring for the final weighted score
+- Generated artifacts are run reports plus execution files like the copied workspace, task brief, and sandbox profile files. They are not fake browser screenshots.
 
-This means the workbench is reliable about what it measures today, but it does not yet claim full sandboxed agent execution.
+This means the workbench now performs real sandboxed execution for tasks that opt into the fixture/runner contract, while the broader benchmark library still contains review-only tasks as well.
 
 ## Benchmarks
 
@@ -144,6 +201,11 @@ Key: <task-key>
 ## Expected Outcome
 <what counts as complete>
 
+## Sandbox
+Fixture Dir: fixtures/<task-name>
+Verify Command: node --test tests/*.test.js
+Timeout Ms: 120000
+
 ## Metadata
 Resolution: atomic
 Interaction: terminal
@@ -160,6 +222,7 @@ Metadata meanings:
 - `Interaction`: `artifact`, `terminal`, `browser`, `tool-use`, `computer-use`, or `multi-agent`
 - `Evaluator`: `state`, `artifact`, `trace`, `judge`, or `hybrid`
 - `Difficulty`: `low`, `medium`, or `high`
+- `Sandbox`: optional fixture-backed runtime contract for real execution
 
 The repo now ships three benchmark shapes by default:
 
@@ -176,6 +239,7 @@ Important:
 - `./agents` is gitignored for local work.
 - Keep real agent definitions local unless you explicitly want them versioned elsewhere.
 - The repository examples now live under `./examples/sample-workspace` so they do not appear as loaded runtime agents.
+- Agents without `Runner:` stay in review-only mode; agents with `Runner:` become sandbox-capable when paired with a sandboxed task.
 
 ## Defaults
 
@@ -187,7 +251,9 @@ Important:
 
 ## Current Limits
 
-- The scoring/runtime pipeline now performs deterministic task-fit review rather than pretending to execute agents end-to-end.
+- Full isolation is currently strongest on macOS, where `sandbox-exec` is available. Other platforms currently fall back to workspace-isolated process execution until more providers are added.
+- The runtime contract is command-based. `agent-bench` does not yet provide a universal in-process tool protocol for arbitrary agent frameworks.
+- Browser, computer-use, and multi-agent suites are structurally modeled, but they only become truly executable when they are backed by concrete fixtures and verification commands.
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
 - Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
@@ -197,4 +263,6 @@ Important:
 - If the Next.js app fails to start after dependency changes, run `pnpm install` again so native packages like `better-sqlite3` are rebuilt.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
 - Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.
+- If a runner needs to consume the configured model or provider key, read `AGENT_BENCH_PROVIDER_MODEL` and `AGENT_BENCH_PROVIDER_API_KEY` from the runner process.
+- If you need to debug a failing sandbox on macOS, inspect the per-run `runner.sb` and `verifier.sb` files in the artifacts directory.
 - See `docs/AGENTIC_TEST_RESEARCH.md` for the current research-backed test taxonomy and why the benchmark metadata is structured this way.

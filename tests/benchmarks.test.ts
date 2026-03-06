@@ -62,6 +62,11 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
         tags: ["delegation", "orchestration"],
         requiresIsolation: true,
         requiresNetwork: false
+      },
+      sandbox: {
+        fixtureDir: "fixtures/superagent-handoff",
+        verifyCommand: "node verify.js",
+        timeoutMs: 60000
       }
     });
 
@@ -73,6 +78,8 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
     assert.equal(suite.tasks[0].metadata.interaction, "multi-agent");
     assert.equal(suite.tasks[0].metadata.evaluator, "trace");
     assert.equal(suite.tasks[0].metadata.difficulty, "high");
+    assert.equal(suite.tasks[0].sandbox?.fixtureDir, "fixtures/superagent-handoff");
+    assert.equal(suite.tasks[0].sandbox?.verifyCommand, "node verify.js");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -90,6 +97,13 @@ test("default seeded benchmarks cover browser and computer-use surfaces", () => 
     assert.equal(surfaceSuite.metadata.domain, "operator-systems");
     assert.ok(surfaceSuite.tasks.some((task) => task.metadata.interaction === "browser"));
     assert.ok(surfaceSuite.tasks.some((task) => task.metadata.interaction === "computer-use"));
+    assert.equal(
+      suites
+        .find((entry) => entry.key === "core-engineering")
+        ?.tasks.find((task) => task.key === "fix-react-bug")
+        ?.sandbox?.verifyCommand,
+      "node --test tests/*.test.js"
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

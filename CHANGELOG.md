@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added real fixture-backed sandbox execution for tasks with `## Sandbox` metadata and agents that declare a `Runner:` command
+- Added a new macOS sandbox provider based on `sandbox-exec` with write restrictions to the task workspace and run artifacts
+- Scrubbed runner environments by default and exposed explicit runtime vars like `AGENT_BENCH_WORKSPACE`, `AGENT_BENCH_PROVIDER_API_KEY`, and `AGENT_BENCH_PROVIDER_MODEL`
+- Added regression coverage for relative runner commands and seatbelt-blocked escape attempts outside the task workspace
 - Replaced hash-based fallback scoring with deterministic rules-based review tied to real agent/task signals
 - Replaced pseudo-screenshot artifacts with generated run reports and added legacy fallback for older run artifacts
 - Moved repository example agents out of `./agents` into `./examples/sample-workspace` so fresh checkouts no longer auto-load sample agents

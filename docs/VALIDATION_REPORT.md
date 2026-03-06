@@ -6,7 +6,7 @@ Status: PASS
 
 ## Scope
 
-Validation covered the full-stack workbench plus the latest reliability pass: rules-based runtime review, generated run reports, benchmark metadata, richer seeded suites, JSON route validation, partial-failure batch execution, example-workspace cleanup, updated docs, and regression tests.
+Validation covered the full-stack workbench plus the latest sandbox execution pass: real fixture-backed runner execution, macOS seatbelt isolation, scrubbed runner environments, generated run reports, benchmark metadata, richer seeded suites, JSON route validation, partial-failure batch execution, example-workspace cleanup, updated docs, and regression tests.
 
 ## Checks Performed
 
@@ -14,22 +14,22 @@ Validation covered the full-stack workbench plus the latest reliability pass: ru
 
 - `./node_modules/.bin/tsc -p tsconfig.cli.json --pretty false`
   - Result: pass
-  - Environment: clean validation mirror under `/tmp/agent-bench-option-c`
+  - Environment: current working tree
 
 - `./node_modules/.bin/tsc -p tsconfig.json --pretty false`
   - Result: pass
-  - Environment: clean validation mirror under `/tmp/agent-bench-option-c`
+  - Environment: current working tree
 
 - `pnpm run build`
   - Result: pass
-  - Environment: clean validation mirror under `/tmp/agent-bench-option-c`
+  - Environment: current working tree
   - Notes: verified `next build --webpack` plus CLI build
 
 ### Tests
 
 - `pnpm test`
   - Result: pass
-  - Tests passed: 17/17
+  - Tests passed: 20/20
 
 Covered tests:
 
@@ -40,6 +40,8 @@ Covered tests:
 - seeded suites now cover browser and computer-use interaction surfaces
 - batch execution logic continues after a single job failure and reports that failure separately
 - runtime evaluation writes report artifacts without relying on a dist-only child-process path
+- sandboxed runtime execution succeeds against the seeded `fix-react-bug` fixture using a real runner command
+- macOS seatbelt sandbox blocks writes outside the task workspace during runner execution
 - LLM judge parsing still works
 - LLM judge empty response handling still fails correctly
 - weighted scoring stays on the 60/30/10 split
@@ -47,40 +49,37 @@ Covered tests:
 
 ### Runtime Smoke
 
-- `AGENT_BENCH_DB_PATH=/tmp/agent-bench-option-c/validation-fresh-2.db ./node_modules/.bin/next start --port 4177`
+- `node dist/src/index.js run --agent ./agents/local/coder.md --benchmark core-engineering --task fix-react-bug --db /tmp/agent-bench-sandbox-smoke/runs.db`
   - Result: pass
-  - Environment: clean validation mirror under `/tmp/agent-bench-option-c`
-
-- Browser smoke on `http://127.0.0.1:4177`
-  - Result: pass
+  - Environment: isolated temp workspace under `/tmp`
   - Verified:
-    - workbench home page renders
-    - no browser console errors or hydration mismatch appeared on load
-    - a fresh DB starts with zero runs and one real local agent under `./agents`
-    - repository examples are not auto-loaded from the runtime agent path
-    - clicking `Run selected agents` completes a 3-run benchmark cycle for that local agent
-    - recent run cards, inspector details, and generated report artifacts render correctly
-    - the latest log reflects `rules` review mode instead of fake fallback scoring
+    - a local markdown agent with `Runner: node ./runner.js` is executed from its own agent directory
+    - the benchmark fixture is copied into a fresh per-run workspace
+    - the runner patches the workspace and the verify command passes inside that workspace
+    - the run summary records `executionMode: sandbox`
+    - the run summary records `provider: macos-seatbelt`
+    - the run summary records `networkAccess: disabled` for the seeded `fix-react-bug` task
+    - the per-run artifacts contain `runner.sb`, `verifier.sb`, `task-brief.md`, `agent.md`, `workspace/`, `summary.json`, `session.log`, and `report.svg`
 
 ## Notes
 
-- In the original iCloud-backed working directory on this machine, `next build` can hang idle inside the filesystem layer. The same code path completes in a clean `/tmp` mirror, so this is treated as an environment-specific workspace issue rather than an application failure.
-- Native dependencies were rebuilt successfully with `pnpm rebuild better-sqlite3 sharp` before the final smoke checks.
+- macOS seatbelt isolation is now used automatically when `sandbox-exec` is available. Other platforms currently fall back to process-level workspace isolation.
+- Runner environments are intentionally scrubbed; only a safe host env plus explicit `AGENT_BENCH_*` variables are forwarded into the sandbox.
 - Artifact serving keeps a compatibility fallback for older runs that still reference `screenshot.svg`, but all new runs now emit `report.svg`.
 
 ## Reproduction Commands
 
 ```bash
-rm -rf /tmp/agent-bench-option-c
-mkdir -p /tmp/agent-bench-option-c
-rsync -a --exclude '.git' --exclude 'node_modules' --exclude '.next' ./ /tmp/agent-bench-option-c/
-cd /tmp/agent-bench-option-c
-pnpm install
-mkdir -p agents/local
-printf '# local-coder\n\nRole: implementation and verification agent.\n\nBehavior:\n- Plan the task before editing files.\n- Use terminal and repo tools when the benchmark requires code changes.\n- Verify outcomes with tests, checks, or artifact inspection before reporting completion.\n- Call out risks, rollback steps, and missing evidence when confidence is low.\n' > agents/local/coder.md
+mkdir -p /tmp/agent-bench-sandbox-smoke/agents/local
+mkdir -p /tmp/agent-bench-sandbox-smoke/benchmarks
+cp -R ./benchmarks/core-engineering /tmp/agent-bench-sandbox-smoke/benchmarks/core-engineering
+printf '# Local Sandbox Coder\nRunner: node ./runner.js\n' > /tmp/agent-bench-sandbox-smoke/agents/local/coder.md
+printf "const fs = require('node:fs');\nconst path = require('node:path');\nconst target = path.join(process.env.AGENT_BENCH_WORKSPACE, 'Counter.js');\nconst next = fs.readFileSync(target, 'utf8').replace('next = current + 1;\\n  next = current + 1;', 'next = current + 1;\\n  next = next + 1;');\nfs.writeFileSync(target, next);\n" > /tmp/agent-bench-sandbox-smoke/agents/local/runner.js
+cd /Users/denniswestermann/Library/Mobile\ Documents/com~apple~CloudDocs/Desktop/Coding\ Projekte/Agent_Branche/agent-bench
 ./node_modules/.bin/tsc -p tsconfig.cli.json --pretty false
 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
 pnpm test
 pnpm run build
-AGENT_BENCH_DB_PATH=/tmp/agent-bench-option-c/validation-fresh-2.db ./node_modules/.bin/next start --port 4177
+cd /tmp/agent-bench-sandbox-smoke
+node /Users/denniswestermann/Library/Mobile\ Documents/com~apple~CloudDocs/Desktop/Coding\ Projekte/Agent_Branche/agent-bench/dist/src/index.js run --agent ./agents/local/coder.md --benchmark core-engineering --task fix-react-bug --db ./runs.db
 ```

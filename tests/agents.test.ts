@@ -42,3 +42,20 @@ test("inspectAgentFile rejects files outside the agents workspace", () => {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("inspectAgentFile exposes sandbox runner configuration when declared", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-agents-"));
+
+  try {
+    const agentPath = path.join(workspace, "agents", "sandbox", "coder.md");
+    mkdirSync(path.dirname(agentPath), { recursive: true });
+    writeFileSync(agentPath, "# Sandbox Coder\nRunner: node ./scripts/run-agent.js\n");
+
+    const agent = inspectAgentFile(workspace, "./agents/sandbox/coder.md");
+
+    assert.equal(agent.executionMode, "sandbox");
+    assert.equal(agent.runnerCommand, "node ./scripts/run-agent.js");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});

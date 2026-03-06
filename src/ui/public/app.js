@@ -184,6 +184,7 @@ function agentCard(agent) {
       </div>
       <div class="agent-meta">
         <span>${escapeHtml(agent.path)}</span>
+        <span>${agent.executionMode === "sandbox" ? "Sandbox ready" : "Review only"}</span>
         <span>${agent.source === "manual" ? "Added manually" : "Discovered"}</span>
       </div>
     </button>
@@ -466,6 +467,9 @@ async function openRunDetails(runKey) {
       `Duration <strong>${(data.run.durationMs / 1000).toFixed(2)}s</strong>`,
       `Latency <strong>${Number(summary.latencyMs ?? data.run.latencyMs)}ms</strong>`,
       `Cost <strong>${Number(summary.costUsd ?? data.run.costUsd).toFixed(4)}</strong>`,
+      `Execution <strong>${escapeHtml(summary.executionMode || "review-only")}</strong>`,
+      `Sandbox <strong>${escapeHtml(summary.sandbox?.provider || "n/a")}</strong>`,
+      `Network <strong>${escapeHtml(summary.sandbox?.networkAccess || "n/a")}</strong>`,
       `Review mode <strong>${escapeHtml(summary.reviewMode || "unknown")}</strong>`
     ].map((entry) => `<div class="detail-cell">${entry}</div>`).join("");
     screenshot.src = data.reportUrl;

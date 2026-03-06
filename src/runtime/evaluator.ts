@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { generateText } from "ai";
 import { computeWeightedScore, performanceScoreFromMetrics } from "../core/scoring";
 import { BenchmarkSuiteRecord, BenchmarkTaskRecord, RunInput, RuntimeEvaluationRequest } from "../types";
+import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
 
 const DEFAULT_MODEL = "openai/gpt-4.1-mini";
 const DEFAULT_COST_PER_1K_TOKENS_USD = 0.003;
@@ -43,6 +44,21 @@ interface RulesAssessment {
   matchedSignals: string[];
   missingSignals: string[];
   reason: string;
+}
+
+interface SandboxExecutionResult {
+  mode: "review-only" | "sandbox";
+  testsScore: number;
+  matchedSignals: string[];
+  missingSignals: string[];
+  reason: string;
+  workspaceDir?: string;
+  taskBriefPath?: string;
+  provider?: SandboxCommandResult["provider"];
+  networkAccess?: SandboxCommandResult["networkAccess"];
+  runner?: SandboxCommandResult;
+  verifier?: SandboxCommandResult;
+  durationMs: number;
 }
 
 type JudgeCacheMap = Record<string, JudgeCacheEntry>;
@@ -235,6 +251,171 @@ function saveJudgeCache(cachePath: string, cache: JudgeCacheMap): void {
   writeFileSync(cachePath, JSON.stringify(cache, null, 2));
 }
 
+function resolveTaskFixtureDir(benchmarksDir: string | undefined, benchmarkKey: string, task: BenchmarkTaskRecord): string | null {
+  if (!benchmarksDir) return null;
+  if (!task.sandbox?.fixtureDir) return null;
+  return path.join(benchmarksDir, benchmarkKey, task.sandbox.fixtureDir);
+}
+
+function buildTaskBrief(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskRecord): string {
+  return [
+    `# ${task.title}`,
+    "",
+    `Benchmark: ${benchmark.key}`,
+    `Task: ${task.key}`,
+    "",
+    "## Description",
+    task.description,
+    "",
+    "## Expected Outcome",
+    task.expectedOutcome,
+    "",
+    "## Metadata",
+    `Resolution: ${task.metadata.resolution}`,
+    `Interaction: ${task.metadata.interaction}`,
+    `Evaluator: ${task.metadata.evaluator}`,
+    `Difficulty: ${task.metadata.difficulty}`,
+    `Tags: ${task.metadata.tags.join(", ") || "none"}`,
+    `Requires Isolation: ${task.metadata.requiresIsolation ? "yes" : "no"}`,
+    `Requires Network: ${task.metadata.requiresNetwork ? "yes" : "no"}`,
+    task.sandbox?.verifyCommand ? `Verify Command: ${task.sandbox.verifyCommand}` : "Verify Command: none",
+    ""
+  ].join("\n");
+}
+
+function summarizeSandboxExecution(runner: SandboxCommandResult, verifier?: SandboxCommandResult): Pick<SandboxExecutionResult, "testsScore" | "matchedSignals" | "missingSignals" | "reason"> {
+  const matchedSignals: string[] = [];
+  const missingSignals: string[] = [];
+  let testsScore = 0;
+
+  if (runner.exitCode === 0) {
+    testsScore += 4.5;
+    matchedSignals.push("agent runner exited successfully");
+  } else {
+    missingSignals.push(runner.timedOut ? "agent runner timed out" : "agent runner failed");
+  }
+
+  if (verifier) {
+    if (verifier.exitCode === 0) {
+      testsScore += 5.5;
+      matchedSignals.push(`verify command passed: ${verifier.command}`);
+    } else {
+      missingSignals.push(verifier.timedOut ? "verify command timed out" : `verify command failed: ${verifier.command}`);
+    }
+  } else if (runner.exitCode === 0) {
+    testsScore += 2.5;
+    matchedSignals.push("no verify command configured; using runner exit status only");
+  }
+
+  if (runner.stdout || runner.stderr) {
+    matchedSignals.push("runner produced execution logs");
+  }
+
+  const reason = verifier
+    ? verifier.exitCode === 0
+      ? "Sandbox execution and verification both completed successfully."
+      : "Sandbox execution finished, but verification failed."
+    : runner.exitCode === 0
+      ? "Sandbox execution completed without a separate verification command."
+      : "Sandbox execution failed before verification could pass.";
+
+  return {
+    testsScore: clampScore(testsScore),
+    matchedSignals: matchedSignals.slice(0, 6),
+    missingSignals: missingSignals.slice(0, 6),
+    reason
+  };
+}
+
+async function maybeRunSandboxExecution(input: {
+  runKey: string;
+  artifactsPath: string;
+  benchmark: BenchmarkSuiteRecord;
+  task?: BenchmarkTaskRecord;
+  benchmarksDir?: string;
+  agentPath?: string;
+  agentPathLabel: string;
+  agentMarkdown: string;
+  agentRunnerCommand?: string;
+  model?: string;
+  providerApiKey?: string;
+}): Promise<SandboxExecutionResult> {
+  if (!input.task?.sandbox || !input.agentRunnerCommand) {
+    return {
+      mode: "review-only",
+      testsScore: 0,
+      matchedSignals: [],
+      missingSignals: [],
+      reason: "Sandbox execution not configured for this run.",
+      durationMs: 0
+    };
+  }
+
+  const fixtureDir = resolveTaskFixtureDir(input.benchmarksDir, input.benchmark.key, input.task);
+  if (!fixtureDir || !existsSync(fixtureDir)) {
+    throw new Error(`Sandbox fixture not found for ${input.benchmark.key}/${input.task.key}.`);
+  }
+
+  const workspaceDir = path.join(input.artifactsPath, "workspace");
+  const taskBriefPath = path.join(input.artifactsPath, "task-brief.md");
+  const agentFilePath = path.join(input.artifactsPath, "agent.md");
+  const agentDir = input.agentPath ? path.dirname(input.agentPath) : workspaceDir;
+  const allowNetwork = input.task.metadata.requiresNetwork;
+  cpSync(fixtureDir, workspaceDir, { recursive: true });
+  writeFileSync(taskBriefPath, buildTaskBrief(input.benchmark, input.task), "utf8");
+  writeFileSync(agentFilePath, input.agentMarkdown, "utf8");
+
+  const commandEnv: Record<string, string> = {
+    AGENT_BENCH_RUN_KEY: input.runKey,
+    AGENT_BENCH_WORKSPACE: workspaceDir,
+    AGENT_BENCH_TASK_FILE: taskBriefPath,
+    AGENT_BENCH_AGENT_FILE: agentFilePath,
+    AGENT_BENCH_AGENT_DIR: agentDir,
+    AGENT_BENCH_ARTIFACTS_DIR: input.artifactsPath,
+    AGENT_BENCH_BENCHMARK_KEY: input.benchmark.key,
+    AGENT_BENCH_TASK_KEY: input.task.key,
+    AGENT_BENCH_SANDBOX_NETWORK: allowNetwork ? "enabled" : "disabled"
+  };
+  const timeoutMs = input.task.sandbox.timeoutMs;
+  const runner = await runSandboxedCommand({
+    command: input.agentRunnerCommand,
+    cwd: agentDir,
+    workspaceDir,
+    artifactsDir: input.artifactsPath,
+    timeoutMs,
+    allowNetwork,
+    label: "runner",
+    env: commandEnv as unknown as NodeJS.ProcessEnv,
+    providerApiKey: input.providerApiKey,
+    model: input.model
+  });
+  const verifier = runner.exitCode === 0 && input.task.sandbox.verifyCommand
+    ? await runSandboxedCommand({
+      command: input.task.sandbox.verifyCommand,
+      cwd: workspaceDir,
+      workspaceDir,
+      artifactsDir: input.artifactsPath,
+      timeoutMs,
+      allowNetwork,
+      label: "verifier",
+      env: commandEnv as unknown as NodeJS.ProcessEnv
+    })
+    : undefined;
+  const summary = summarizeSandboxExecution(runner, verifier);
+
+  return {
+    mode: "sandbox",
+    provider: runner.provider,
+    networkAccess: runner.networkAccess,
+    workspaceDir,
+    taskBriefPath,
+    runner,
+    verifier,
+    durationMs: runner.durationMs + (verifier?.durationMs ?? 0),
+    ...summary
+  };
+}
+
 function buildRulesAssessment(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskRecord | undefined, agentMd: string): RulesAssessment {
   const agentText = normalizeText(agentMd);
   const resolution = task?.metadata.resolution ?? benchmark.metadata.resolution;
@@ -379,6 +560,7 @@ function buildRunReportSvg(input: {
   review: number;
   performance: number;
   reviewMode: string;
+  executionDetail: string;
   matchedSignals: string[];
   missingSignals: string[];
 }): string {
@@ -398,7 +580,8 @@ function buildRunReportSvg(input: {
     `<text x=\"64\" y=\"162\" fill=\"#cbd5e1\" font-size=\"20\" font-family=\"Manrope, Arial\">Benchmark: ${escapeXml(input.benchmarkKey)}</text>`,
     `<text x=\"64\" y=\"192\" fill=\"#cbd5e1\" font-size=\"20\" font-family=\"Manrope, Arial\">Task: ${escapeXml(input.taskKey ?? "all")}</text>`,
     `<text x=\"64\" y=\"222\" fill=\"#cbd5e1\" font-size=\"20\" font-family=\"Manrope, Arial\">Agent: ${escapeXml(input.agentName)}</text>`,
-    `<text x=\"64\" y=\"252\" fill=\"#94a3b8\" font-size=\"18\" font-family=\"Manrope, Arial\">Review mode: ${escapeXml(input.reviewMode)}</text>`,
+    `<text x=\"64\" y=\"252\" fill=\"#94a3b8\" font-size=\"18\" font-family=\"Manrope, Arial\">Execution: ${escapeXml(input.executionDetail)}</text>`,
+    `<text x=\"64\" y=\"280\" fill=\"#94a3b8\" font-size=\"18\" font-family=\"Manrope, Arial\">Review mode: ${escapeXml(input.reviewMode)}</text>`,
     "<rect x=\"64\" y=\"288\" width=\"1152\" height=\"126\" rx=\"20\" fill=\"#0b1224\" stroke=\"#334155\"/>",
     `<text x=\"100\" y=\"360\" fill=\"#34d399\" font-size=\"56\" font-family=\"Manrope, Arial\">Total ${input.total.toFixed(2)}</text>`,
     `<text x=\"100\" y=\"402\" fill=\"#93c5fd\" font-size=\"28\" font-family=\"Manrope, Arial\">Readiness ${input.readiness.toFixed(2)}</text>`,
@@ -435,12 +618,59 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const agentVersion = /v\d+/i.test(agentName) ? agentName.match(/v\d+/i)![0] : "v1";
   const taskContext = buildTaskContext(input.benchmarks, input.benchmarkKey, input.taskKey);
   const assessment = buildRulesAssessment(selectedBenchmark, selectedTask, material.agentMd);
-  const readinessScore = assessment.readinessScore;
-
   const model = input.model ?? process.env.AGENT_BENCH_JUDGE_MODEL ?? DEFAULT_MODEL;
+  const artifactsPath = path.join(input.artifactsRoot, input.runKey);
+  mkdirSync(artifactsPath, { recursive: true });
+  const sandbox = await maybeRunSandboxExecution({
+    runKey: input.runKey,
+    artifactsPath,
+    benchmark: selectedBenchmark,
+    task: selectedTask,
+    benchmarksDir: input.benchmarksDir,
+    agentPath: input.agentPath,
+    agentPathLabel: material.agentPathLabel,
+    agentMarkdown: material.agentMd,
+    agentRunnerCommand: input.agentRunnerCommand,
+    model,
+    providerApiKey: input.gatewayApiKey
+  });
+  const readinessScore = sandbox.mode === "sandbox" ? sandbox.testsScore : assessment.readinessScore;
+
   const apiKey = input.gatewayApiKey?.trim() || process.env.AI_GATEWAY_API_KEY;
   const cacheEnabled = getJudgeCacheEnabled();
-  const judgePromptContent = `Task Context:\n${taskContext}\n\nRules Assessment:\n${JSON.stringify(assessment, null, 2)}\n\nAgent Markdown:\n${material.agentMd}`;
+  const judgePromptContent = [
+    `Task Context:\n${taskContext}`,
+    `Rules Assessment:\n${JSON.stringify(assessment, null, 2)}`,
+    `Sandbox Execution:\n${JSON.stringify({
+      mode: sandbox.mode,
+      testsScore: sandbox.testsScore,
+      reason: sandbox.reason,
+      runner: sandbox.runner
+        ? {
+          provider: sandbox.runner.provider,
+          cwd: sandbox.runner.cwd,
+          exitCode: sandbox.runner.exitCode,
+          durationMs: sandbox.runner.durationMs,
+          timedOut: sandbox.runner.timedOut,
+          stdout: sandbox.runner.stdout,
+          stderr: sandbox.runner.stderr
+        }
+        : null,
+      verifier: sandbox.verifier
+        ? {
+          provider: sandbox.verifier.provider,
+          cwd: sandbox.verifier.cwd,
+          command: sandbox.verifier.command,
+          exitCode: sandbox.verifier.exitCode,
+          durationMs: sandbox.verifier.durationMs,
+          timedOut: sandbox.verifier.timedOut,
+          stdout: sandbox.verifier.stdout,
+          stderr: sandbox.verifier.stderr
+        }
+        : null
+    }, null, 2)}`,
+    `Agent Markdown:\n${material.agentMd}`
+  ].join("\n\n");
   const fingerprint = makeJudgeFingerprint({
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
@@ -485,29 +715,39 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       }
     }
   } else {
+    const rulesReviewReason = sandbox.mode === "sandbox" ? `${assessment.reason} ${sandbox.reason}`.trim() : assessment.reason;
+    const rulesReviewScore = clampScore(assessment.reviewScore + (sandbox.mode === "sandbox" && sandbox.verifier?.exitCode === 0 ? 0.6 : 0));
     judge = {
-      score: assessment.reviewScore,
+      score: rulesReviewScore,
       latencyMs: 1,
       totalTokens: 0,
-      rawText: JSON.stringify({ score: assessment.reviewScore, reason: assessment.reason }),
-      reason: assessment.reason,
+      rawText: JSON.stringify({ score: rulesReviewScore, reason: rulesReviewReason }),
+      reason: rulesReviewReason,
       mode: "rules"
     };
   }
 
   const costUsd = estimateCostUsd(judge.totalTokens);
-  const latencyMs = judge.latencyMs;
+  const latencyMs = sandbox.mode === "sandbox" ? Math.max(sandbox.durationMs, judge.latencyMs) : judge.latencyMs;
   const durationMs = Date.now() - started;
   const perfScore = performanceScoreFromMetrics(latencyMs, costUsd);
   const scores = computeWeightedScore(readinessScore, judge.score, perfScore);
-
-  const artifactsPath = path.join(input.artifactsRoot, input.runKey);
-  mkdirSync(artifactsPath, { recursive: true });
+  const matchedSignals = [
+    ...assessment.matchedSignals,
+    ...sandbox.matchedSignals
+  ].slice(0, 8);
+  const missingSignals = [
+    ...assessment.missingSignals,
+    ...sandbox.missingSignals
+  ].slice(0, 8);
   const logText = [
     `Run key: ${input.runKey}`,
     `Benchmark: ${input.benchmarkKey}`,
     `Task: ${input.taskKey ?? "all"}`,
     `Agent: ${material.agentPathLabel}`,
+    `Execution mode: ${sandbox.mode}`,
+    `Sandbox provider: ${sandbox.provider ?? "n/a"}`,
+    `Network access: ${sandbox.networkAccess ?? "n/a"}`,
     `Review mode: ${judge.mode}`,
     `Model: ${model}`,
     `Readiness score: ${readinessScore}`,
@@ -515,8 +755,10 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Performance score: ${perfScore}`,
     `Latency: ${latencyMs}ms`,
     `Cost: $${costUsd.toFixed(4)}`,
-    `Matched signals: ${assessment.matchedSignals.join("; ") || "none"}`,
-    `Open gaps: ${assessment.missingSignals.join("; ") || "none"}`,
+    `Matched signals: ${matchedSignals.join("; ") || "none"}`,
+    `Open gaps: ${missingSignals.join("; ") || "none"}`,
+    sandbox.runner ? `Runner exit: ${sandbox.runner.exitCode ?? "null"} (${sandbox.runner.durationMs}ms) @ ${sandbox.runner.cwd}` : "Runner exit: n/a",
+    sandbox.verifier ? `Verify exit: ${sandbox.verifier.exitCode ?? "null"} (${sandbox.verifier.durationMs}ms) @ ${sandbox.verifier.cwd}` : "Verify exit: n/a",
     `Review reason: ${judge.reason}`,
     `Review response: ${judge.rawText}`
   ].join("\n");
@@ -528,6 +770,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     suiteMetadata: selectedBenchmark.metadata,
     taskMetadata: selectedTask?.metadata ?? null,
     model,
+    executionMode: sandbox.mode,
     reviewMode: judge.mode,
     scoreLabels: {
       tests: "task-fit",
@@ -536,6 +779,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     },
     scores,
     assessment,
+    sandbox,
     latencyMs,
     costUsd,
     durationMs,
@@ -552,9 +796,12 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     readiness: scores.tests,
     review: scores.judge,
     performance: scores.performance,
+    executionDetail: sandbox.mode === "sandbox"
+      ? `${sandbox.provider ?? "sandbox"} | network ${sandbox.networkAccess ?? "n/a"}`
+      : "review-only",
     reviewMode: judge.mode,
-    matchedSignals: assessment.matchedSignals,
-    missingSignals: assessment.missingSignals
+    matchedSignals,
+    missingSignals
   }));
 
   return {

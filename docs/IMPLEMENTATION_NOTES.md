@@ -11,13 +11,13 @@ Date: 2026-03-05
 
 ## Risks
 
-- Full sandboxed code execution is a large feature; this MVP currently simulates run execution while keeping the persistence/API model ready for real sandbox integration.
+- The first real sandboxed code-execution path now exists for fixture-backed tasks plus markdown agents with `Runner:` commands, but the provider story is still incomplete across platforms.
 - LLM-judge integration requires provider keys and a stable API contract; this MVP keeps weighted scoring and a replaceable scoring pipeline.
 - Diff viewer and full run explorer are broader than a single-pass MVP; current implementation focuses on dashboard + run history/compare commands as the first vertical slice.
 
 ## Open Questions
 
-- Which sandbox runtime should be the default (Docker, Firecracker, or Node VM wrappers)?
+- Which provider should become the cross-platform default after macOS seatbelt: Docker, Linux namespaces/bubblewrap, or a remote runner?
 - Which LLM provider and rubric schema should be canonical for judge scoring?
 - What artifact retention policy is expected by default for local dev machines?
 
@@ -45,7 +45,7 @@ Option B was chosen for minimal complexity while still meeting PRD dashboard vis
 ## Diagram (Text)
 
 User -> `agent-bench` CLI (Commander)
-CLI -> Runner (simulate now, sandbox later)
+CLI -> Runner (sandbox when configured, review-only otherwise)
 Runner -> Scoring Engine (60/30/10 weighted)
 Runner -> Artifact Writer (`.agent-bench/artifacts/run-*`)
 CLI -> SQLite Store (`.agent-bench/data.db`)
@@ -99,10 +99,11 @@ HTTP API:
 
 ## Security Notes
 
-- Current implementation does not execute arbitrary agent code in-process; runner is simulated.
-- Future sandbox integration should isolate filesystem/network per run and enforce resource limits.
+- The current implementation does not execute arbitrary agent code in-process; sandboxed runs launch external commands against a copied task fixture.
+- On macOS, sandboxed runs use `sandbox-exec` to limit writes to the task workspace and run artifacts while denying network unless a task explicitly requires it.
+- Runner environments are scrubbed before launch; the sandbox only receives a small safe host env plus explicit `AGENT_BENCH_*` variables.
 
 ## Decisions & Assumptions
 
-- Assumption: first deliverable should be a production-like scaffold that is runnable and extensible rather than complete sandbox/LLM integration.
-- Decision: prioritize PRD dashboard parity and persistence/scoring contract as stable foundation.
+- Assumption: the first real execution contract should be simple and inspectable, so task fixtures + runner commands + verify commands were chosen over framework-specific agent adapters.
+- Decision: prioritize local-first reproducibility and honest reporting over pretending every benchmark task is already executable end-to-end.
