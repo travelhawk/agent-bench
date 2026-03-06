@@ -2,8 +2,8 @@
 
 ## Unreleased
 
+- Fixed CI unit test invocation by adding a compiled-test launcher script (`node scripts/run-node-tests.cjs`) so test discovery no longer treats `dist/tests` as a module path
 - Made Playwright E2E launch use an explicit Chrome executable path (`CHROME_BIN`/common Linux paths) to avoid missing-browser failures in CI
-- Fixed CLI test execution to use Node test discovery (`node --test dist/tests`) and updated fixture verify commands to avoid shell-specific globs
 - Added a Playwright E2E suite for core workbench UI flows and wired it into GitHub CI on Ubuntu so pull requests must pass it
 - Hardened Windows execution by switching command discovery to `where`, keeping Docker shell execution POSIX inside Linux containers, and removing shell-dependent test invocation paths
 - Hardened sandbox auto-selection so Linux and Windows hosts only auto-pick Docker when the daemon is ready and the configured image already exists locally
