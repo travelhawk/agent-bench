@@ -73,3 +73,33 @@ export interface BenchmarkSuiteRecord {
   description: string;
   tasks: BenchmarkTaskRecord[];
 }
+
+export type RunMode = "single-task" | "benchmark-cycle";
+
+export interface WorkbenchSummary {
+  totalRuns: number;
+  avgScore: number;
+  totalCost: number;
+  activeBenchmarks: number;
+  availableAgents: number;
+}
+
+export interface WorkbenchSnapshot {
+  summary: WorkbenchSummary;
+  runs: RunRecord[];
+  benchmarks: BenchmarkSuiteRecord[];
+  agents: AgentRecord[];
+  latestLogText: string;
+}
+
+export interface RunEvaluationResult {
+  run: RunRecord;
+  bestBefore: number | null;
+  regressed: boolean;
+}
+
+export interface RunResultPayload {
+  run: RunRecord;
+  summary: Record<string, unknown> | null;
+  screenshotUrl: string;
+}

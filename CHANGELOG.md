@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 - 2026-03-06
+
+- Migrated the workbench into a Next.js full-stack app with App Router pages and API routes
+- Replaced the old static UI shell with a server-backed Test Lab, Run History, and Benchmark Library experience
+- Added full-stack workbench services for snapshot loading, batch execution, run details, artifact streaming, and benchmark authoring
+- Removed the runtime dependency on a dist-only evaluator subprocess path so batch runs now work inside the Next server
+- Standardized the repo on `pnpm`, removed `package-lock.json`, and updated validation/docs for the full-stack release
+
 ## 0.2.1 - 2026-03-05
 
 - Stopped tracking the repository sample `agents/` workspace so local agent definitions remain gitignored by default

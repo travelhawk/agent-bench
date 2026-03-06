@@ -1,20 +1,22 @@
 {
   "name": "agent-bench",
-  "version": "0.2.1",
-  "description": "CLI and web dashboard for benchmarking AI agents",
+  "version": "0.3.0",
+  "description": "CLI and full-stack workbench for benchmarking AI agents",
   "type": "commonjs",
+  "packageManager": "pnpm@10.27.0",
   "main": "dist/src/index.js",
   "bin": {
     "agent-bench": "dist/src/index.js"
   },
   "scripts": {
-    "build": "npm run build:css && tsc -p tsconfig.json",
-    "build:css": "tailwindcss -i src/ui/styles/input.css -o src/ui/public/styles.css --minify",
-    "dev": "tsc -w -p tsconfig.json",
-    "prepare": "npm run build",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "build": "pnpm run build:app && pnpm run build:cli",
+    "build:app": "next build --webpack",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "dev": "next dev",
+    "prepare": "pnpm run build:cli",
+    "test": "pnpm run build:cli && node --test dist/tests/*.test.js",
     "start": "node dist/src/index.js",
-    "ui": "node dist/src/index.js ui"
+    "ui": "next dev --port 4173"
   },
   "keywords": [
     "benchmark",
@@ -28,13 +30,22 @@
     "better-sqlite3": "^11.8.1",
     "commander": "^13.1.0",
     "dotenv": "^17.3.1",
-    "express": "^4.21.2"
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/express": "^4.17.21",
     "@types/node": "^22.13.10",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "sharp"
+    ]
   }
 }

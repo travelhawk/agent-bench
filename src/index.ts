@@ -1,34 +1,17 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { mkdirSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
 import { listBenchmarkSuitesFromFiles } from "./benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "./core/runner";
 import { createDb, initializeSchema } from "./db/schema";
+import { ensureProjectDirs, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath } from "./server/config";
 import { getBestScore, getRunByKey, insertRun, listRuns } from "./db/store";
 import { startUi } from "./ui/server";
 
 const program = new Command();
-const cwd = process.cwd();
-
-function resolveDbPath(input?: string): string {
-  if (input) return path.resolve(cwd, input);
-  return path.join(os.homedir(), ".agent-bench", "data.db");
-}
-
-function ensureProjectDirs(dbPath: string): { root: string; artifacts: string } {
-  const root = path.dirname(dbPath);
-  const artifacts = path.join(root, "artifacts");
-  mkdirSync(root, { recursive: true });
-  mkdirSync(artifacts, { recursive: true });
-  return { root, artifacts };
-}
-
-function resolveBenchmarksDir(): string {
-  return path.join(cwd, "benchmarks");
-}
+const cwd = getWorkspaceRoot();
 
 function ensureDbReady(dbPath: string) {
   mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -40,7 +23,7 @@ function ensureDbReady(dbPath: string) {
 program
   .name("agent-bench")
   .description("Benchmark AI agent configurations with reproducible scoring")
-  .version("0.2.1");
+  .version("0.3.0");
 
 program
   .command("init")
@@ -48,7 +31,7 @@ program
   .option("--local", "Initialize using local defaults", true)
   .option("--db <path>", "Custom sqlite path")
   .action((opts) => {
-    const dbPath = resolveDbPath(opts.db);
+    const dbPath = resolveDbPath(cwd, opts.db);
     const dirs = ensureProjectDirs(dbPath);
     ensureDbReady(dbPath);
 
@@ -69,12 +52,12 @@ program
   .option("--model <provider/model>", "Vercel AI Gateway model identifier")
   .option("--db <path>", "Custom sqlite path")
   .action(async (opts) => {
-    const dbPath = resolveDbPath(opts.db);
+    const dbPath = resolveDbPath(cwd, opts.db);
     const dirs = ensureProjectDirs(dbPath);
     const db = ensureDbReady(dbPath);
 
     const bestBefore = getBestScore(db);
-    const benchmarks = listBenchmarkSuitesFromFiles(resolveBenchmarksDir());
+    const benchmarks = listBenchmarkSuitesFromFiles(resolveBenchmarksDir(cwd));
     const runKey = newRunKey();
     const runInput = await runEvaluationInRuntime({
       runKey,
@@ -104,7 +87,7 @@ program
   .option("--limit <n>", "Number of runs", "10")
   .option("--db <path>", "Custom sqlite path")
   .action((opts) => {
-    const dbPath = resolveDbPath(opts.db);
+    const dbPath = resolveDbPath(cwd, opts.db);
     const db = ensureDbReady(dbPath);
     const limit = Number(opts.limit);
     const runs = listRuns(db, Number.isFinite(limit) ? limit : 10);
@@ -122,7 +105,7 @@ program
   .requiredOption("--right <runKey>", "Right run key")
   .option("--db <path>", "Custom sqlite path")
   .action((opts) => {
-    const dbPath = resolveDbPath(opts.db);
+    const dbPath = resolveDbPath(cwd, opts.db);
     const db = ensureDbReady(dbPath);
     const left = getRunByKey(db, opts.left);
     const right = getRunByKey(db, opts.right);
@@ -146,7 +129,7 @@ program
   .option("--port <n>", "Server port", "4173")
   .option("--db <path>", "Custom sqlite path")
   .action((opts) => {
-    const dbPath = resolveDbPath(opts.db);
+    const dbPath = resolveDbPath(cwd, opts.db);
     ensureDbReady(dbPath);
     startUi(dbPath, Number(opts.port));
   });

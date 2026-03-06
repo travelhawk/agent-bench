@@ -1,42 +1,50 @@
 # agent-bench
 
-Local-first benchmarking workbench for AI agents.
+Local-first full-stack benchmarking workbench for AI agents.
 
-`agent-bench` combines a CLI, a lightweight web UI, SQLite persistence, benchmark markdown files, and artifact snapshots so you can iterate on agent definitions without needing a hosted evaluation platform first.
+`agent-bench` now combines a CLI, a Next.js workbench, SQLite persistence, benchmark markdown files, and artifact snapshots so you can load agents, queue eval playlists, and inspect runs without needing a hosted evaluation platform first.
 
-## What Changed In v0.2.0
+## What Changed In v0.3.0
 
-- The UI is now workbench-first instead of dashboard-first.
-- You can configure provider access directly in the browser session.
-- Agent definitions are discovered from `./agents` and can be queued visually.
-- The UI can run one challenge or an entire benchmark cycle across multiple agents.
-- Research and product architecture notes now live in:
+- Migrated the UI into a Next.js full-stack app with App Router pages and API routes.
+- The Test Lab now runs real server-backed batch flows instead of a static dashboard shell.
+- Provider setup, agent loading, benchmark authoring, history, and artifact access all go through the same application surface.
+- The runtime path no longer depends on `dist`-only evaluator scripts, so batch runs work from both the CLI and the Next server.
+- Research, architecture, and validation notes live in:
   - `docs/RESEARCH_BRIEF.md`
   - `docs/ARCHITECTURE_SPEC.md`
+  - `docs/VALIDATION_REPORT.md`
 
 ## Quick Start
 
-Install from this repo:
+Install dependencies:
 
 ```bash
-npm install -g .
+pnpm install
 ```
 
-Run the CLI:
+Start the local workbench:
 
 ```bash
-agent-bench run
-agent-bench history
-agent-bench compare --left <run-key> --right <run-key>
-```
-
-Start the workbench UI:
-
-```bash
-agent-bench ui
+pnpm exec agent-bench init
+pnpm exec agent-bench ui
 ```
 
 By default the UI starts on `http://localhost:4173`.
+
+Build the production app and CLI:
+
+```bash
+pnpm run build
+```
+
+Use the CLI directly:
+
+```bash
+pnpm exec agent-bench run
+pnpm exec agent-bench history
+pnpm exec agent-bench compare --left <run-key> --right <run-key>
+```
 
 ## The Recommended Flow
 
@@ -47,6 +55,15 @@ By default the UI starts on `http://localhost:4173`.
    - one challenge
    - the full benchmark cycle for a suite
 5. Launch the batch and inspect the resulting runs, logs, and artifacts.
+6. Switch to Run History or the Benchmark Library when you want to review runs or author new suites/tasks.
+
+## Full-Stack Surface
+
+- `/` renders the Test Lab shell and current workbench state.
+- `/api/workbench` returns the current dashboard snapshot.
+- `/api/run/batch` executes multi-agent runs for either one task or a full benchmark cycle.
+- `/api/run/[runKey]/result` returns the persisted run summary used by the inspector.
+- `/api/artifacts/[runKey]/[file]` serves screenshots and result files.
 
 ## Provider Setup
 
@@ -116,9 +133,16 @@ Important:
 - Artifact path: `$HOME/.agent-bench/artifacts/`
 - Judge model: `openai/gpt-4.1-mini`
 - Benchmarks folder: `./benchmarks`
+- Workbench port: `4173`
 
 ## Current Limits
 
 - The scoring/runtime pipeline is still an MVP and can fall back to deterministic local judging.
-- The UI now supports multi-agent batch execution, but trace-level grading and artifact diffs are still future work.
+- The UI now supports multi-agent batch execution, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
+
+## Troubleshooting
+
+- If the Next.js app fails to start after dependency changes, run `pnpm install` again so native packages like `better-sqlite3` are rebuilt.
+- If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
+- Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.
