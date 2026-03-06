@@ -218,7 +218,7 @@ function playlistCard(task) {
 }
 
 function runCard(run, extraBadge) {
-  const screenshotUrl = `/artifacts/${run.runKey}/screenshot.svg`;
+  const reportUrl = `/artifacts/${run.runKey}/report.svg`;
   return `
     <article class="run-card">
       <div class="run-card-top">
@@ -235,12 +235,12 @@ function runCard(run, extraBadge) {
         </div>
       </div>
       <div class="metric-strip">
-        <span>Tests ${run.testsScore.toFixed(2)}</span>
-        <span>Judge ${run.llmScore.toFixed(2)}</span>
-        <span>Perf ${run.perfScore.toFixed(2)}</span>
+        <span>Readiness ${run.testsScore.toFixed(2)}</span>
+        <span>Review ${run.llmScore.toFixed(2)}</span>
+        <span>Performance ${run.perfScore.toFixed(2)}</span>
       </div>
-      <a href="${screenshotUrl}" target="_blank" rel="noreferrer">
-        <img src="${screenshotUrl}" alt="Run screenshot ${escapeHtml(run.runKey)}" class="run-image" />
+      <a href="${reportUrl}" target="_blank" rel="noreferrer">
+        <img src="${reportUrl}" alt="Run report ${escapeHtml(run.runKey)}" class="run-image" />
       </a>
       <div class="action-row">
         <button type="button" class="text-link open-run" data-run-key="${escapeHtml(run.runKey)}">Open</button>
@@ -460,16 +460,16 @@ async function openRunDetails(runKey) {
     title.textContent = `${data.run.runKey} • ${data.run.agentName} • ${data.run.suiteName}`;
     matrix.innerHTML = [
       `Total <strong>${(summary.scores?.total ?? data.run.score).toFixed(2)}</strong>`,
-      `Tests <strong>${(summary.scores?.tests ?? data.run.testsScore).toFixed(2)}</strong>`,
-      `Judge <strong>${(summary.scores?.judge ?? data.run.llmScore).toFixed(2)}</strong>`,
+      `Readiness <strong>${(summary.scores?.tests ?? data.run.testsScore).toFixed(2)}</strong>`,
+      `Review <strong>${(summary.scores?.judge ?? data.run.llmScore).toFixed(2)}</strong>`,
       `Performance <strong>${(summary.scores?.performance ?? data.run.perfScore).toFixed(2)}</strong>`,
       `Duration <strong>${(data.run.durationMs / 1000).toFixed(2)}s</strong>`,
       `Latency <strong>${Number(summary.latencyMs ?? data.run.latencyMs)}ms</strong>`,
       `Cost <strong>${Number(summary.costUsd ?? data.run.costUsd).toFixed(4)}</strong>`,
-      `Judge mode <strong>${escapeHtml(summary.judgeMode || "unknown")}</strong>`
+      `Review mode <strong>${escapeHtml(summary.reviewMode || "unknown")}</strong>`
     ].map((entry) => `<div class="detail-cell">${entry}</div>`).join("");
-    screenshot.src = data.screenshotUrl;
-    screenshotLink.href = data.screenshotUrl;
+    screenshot.src = data.reportUrl;
+    screenshotLink.href = data.reportUrl;
   } catch (error) {
     title.textContent = `Failed to load run details: ${error.message}`;
   }

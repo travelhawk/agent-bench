@@ -66,10 +66,10 @@
             <div class="config-grid">
               <label class="field">
                 <span>Gateway API key</span>
-                <input id="provider-api-key-input" type="password" placeholder="Optional for live judging" />
+                <input id="provider-api-key-input" type="password" placeholder="Optional for model-based review" />
               </label>
               <label class="field">
-                <span>Judge model</span>
+                <span>Review model</span>
                 <input id="model-input" placeholder="openai/gpt-4.1-mini" />
               </label>
               <label class="field">
@@ -170,12 +170,12 @@
                     <h2>Run details</h2>
                   </div>
                 </div>
-                <div id="run-detail-empty" class="empty-state">Open any run card to inspect its score breakdown and artifact preview.</div>
+                <div id="run-detail-empty" class="empty-state">Open any run card to inspect its score breakdown and generated run report.</div>
                 <div id="run-detail-content" class="hidden run-detail-content">
                   <div id="run-detail-title" class="detail-title"></div>
                   <div id="run-detail-matrix" class="detail-grid"></div>
                   <a id="run-detail-screenshot-link" href="#" target="_blank" rel="noreferrer">
-                    <img id="run-detail-screenshot" class="detail-image" alt="Run detail screenshot" />
+                    <img id="run-detail-screenshot" class="detail-image" alt="Run detail report" />
                   </a>
                 </div>
               </article>

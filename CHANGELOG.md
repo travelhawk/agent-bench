@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Replaced hash-based fallback scoring with deterministic rules-based review tied to real agent/task signals
+- Replaced pseudo-screenshot artifacts with generated run reports and added legacy fallback for older run artifacts
+- Moved repository example agents out of `./agents` into `./examples/sample-workspace` so fresh checkouts no longer auto-load sample agents
 - Added benchmark metadata for resolution, interaction surface, evaluator mode, difficulty, tags, and environment constraints
 - Added a second seeded suite for higher-resolution agentic workflow and superagent-style tests
 - Added a third seeded suite for browser, computer-use, and tool-routing benchmark surfaces

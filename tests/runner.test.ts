@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -33,7 +33,14 @@ test("runEvaluationInRuntime writes artifacts without requiring a dist-only eval
     assert.equal(result.suiteName, "core-engineering/fix-react-bug");
     assert.ok(existsSync(path.join(runArtifactsDir, "summary.json")));
     assert.ok(existsSync(path.join(runArtifactsDir, "session.log")));
-    assert.ok(existsSync(path.join(runArtifactsDir, "screenshot.svg")));
+    assert.ok(existsSync(path.join(runArtifactsDir, "report.svg")));
+
+    const summary = JSON.parse(readFileSync(path.join(runArtifactsDir, "summary.json"), "utf8")) as {
+      reviewMode?: string;
+      assessment?: { matchedSignals?: string[] };
+    };
+    assert.equal(summary.reviewMode, "rules");
+    assert.ok(Array.isArray(summary.assessment?.matchedSignals));
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

@@ -144,13 +144,13 @@ function RunCard({
         </div>
       </div>
       <div className="metric-strip">
-        <span>Tests {run.testsScore.toFixed(2)}</span>
-        <span>Judge {run.llmScore.toFixed(2)}</span>
-        <span>Perf {run.perfScore.toFixed(2)}</span>
+        <span>Readiness {run.testsScore.toFixed(2)}</span>
+        <span>Review {run.llmScore.toFixed(2)}</span>
+        <span>Performance {run.perfScore.toFixed(2)}</span>
       </div>
       <img
-        src={`/api/artifacts/${run.runKey}/screenshot.svg`}
-        alt={`Run screenshot ${run.runKey}`}
+        src={`/api/artifacts/${run.runKey}/report.svg`}
+        alt={`Run report ${run.runKey}`}
         className="run-image"
       />
       <div className="action-row">
@@ -383,7 +383,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
         <div className="brand-lockup">
           <div className="brand-mark">AB</div>
           <div>
-            <div className="eyebrow">Option C full stack</div>
+            <div className="eyebrow">Local-first eval workbench</div>
             <div className="brand-title">agent-bench</div>
           </div>
         </div>
@@ -412,7 +412,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
             <h1>Agent Test Lab</h1>
             <p>
               Configure a provider, queue agents, run a benchmark cycle, and inspect runs through server-backed
-              APIs instead of a static dashboard shell.
+              APIs with persisted reports, logs, and benchmark metadata.
             </p>
           </div>
 
@@ -452,10 +452,10 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
               <div className="config-grid">
                 <label className="field">
                   <span>Gateway API key</span>
-                  <input value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} placeholder="Optional for live judging" />
+                  <input value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} placeholder="Optional for model-based review" />
                 </label>
                 <label className="field">
-                  <span>Judge model</span>
+                  <span>Review model</span>
                   <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="openai/gpt-4.1-mini" />
                 </label>
                 <label className="field">
@@ -678,17 +678,17 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                       <div className="detail-title">{detail.run.runKey} • {detail.run.agentName} • {detail.run.suiteName}</div>
                       <div className="detail-grid">
                         <div className="detail-cell">Total <strong>{detail.run.score.toFixed(2)}</strong></div>
-                        <div className="detail-cell">Tests <strong>{detail.run.testsScore.toFixed(2)}</strong></div>
-                        <div className="detail-cell">Judge <strong>{detail.run.llmScore.toFixed(2)}</strong></div>
+                        <div className="detail-cell">Readiness <strong>{detail.run.testsScore.toFixed(2)}</strong></div>
+                        <div className="detail-cell">Review <strong>{detail.run.llmScore.toFixed(2)}</strong></div>
                         <div className="detail-cell">Performance <strong>{detail.run.perfScore.toFixed(2)}</strong></div>
                         <div className="detail-cell">Duration <strong>{(detail.run.durationMs / 1000).toFixed(2)}s</strong></div>
                         <div className="detail-cell">Cost <strong>{detail.run.costUsd.toFixed(4)}</strong></div>
                       </div>
-                      <a href={detail.screenshotUrl} target="_blank" rel="noreferrer">
-                        <img src={detail.screenshotUrl} alt={`Run screenshot ${detail.run.runKey}`} className="detail-image" />
+                      <a href={detail.reportUrl} target="_blank" rel="noreferrer">
+                        <img src={detail.reportUrl} alt={`Run report ${detail.run.runKey}`} className="detail-image" />
                       </a>
                     </div>
-                  ) : <div className="empty-state">Open any run card to inspect its score breakdown and artifact preview.</div>}
+                  ) : <div className="empty-state">Open any run card to inspect its score breakdown and generated run report.</div>}
                 </article>
               </div>
             </section>

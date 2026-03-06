@@ -141,5 +141,5 @@ export interface BatchRunResult {
 export interface RunResultPayload {
   run: RunRecord;
   summary: Record<string, unknown> | null;
-  screenshotUrl: string;
+  reportUrl: string;
 }

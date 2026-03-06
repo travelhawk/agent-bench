@@ -191,7 +191,7 @@ export function getWorkbenchSnapshot(dbPathInput?: string): Promise<WorkbenchSna
       runs,
       benchmarks,
       agents,
-      latestLogText: runs[0]?.logText ?? "No runs yet. Execute `agent-bench run` first."
+      latestLogText: runs[0]?.logText ?? "No runs yet. Start an evaluation from the Test Lab."
     };
   }, dbPathInput);
 }
@@ -326,11 +326,16 @@ export function getRunResult(runKey: string, dbPathInput?: string): Promise<RunR
     const summary = existsSync(summaryPath)
       ? JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, unknown>
       : null;
+    const reportFile = typeof summary?.reportFile === "string"
+      ? summary.reportFile
+      : typeof summary?.screenshotFile === "string"
+        ? summary.screenshotFile
+        : "report.svg";
 
     return {
       run,
       summary,
-      screenshotUrl: `/api/artifacts/${run.runKey}/screenshot.svg`
+      reportUrl: `/api/artifacts/${run.runKey}/${reportFile}`
     };
   }, dbPathInput);
 }
@@ -360,7 +365,10 @@ export function readArtifact(runKey: string, fileName: string, dbPathInput?: str
     }
 
     const safeName = path.basename(fileName);
-    const artifactPath = path.join(run.artifactsPath, safeName);
+    const requestedPath = path.join(run.artifactsPath, safeName);
+    const artifactPath = !existsSync(requestedPath) && safeName === "report.svg"
+      ? path.join(run.artifactsPath, "screenshot.svg")
+      : requestedPath;
     if (!existsSync(artifactPath)) {
       throw new Error("Artifact not found.");
     }

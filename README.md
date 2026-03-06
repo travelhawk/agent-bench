@@ -8,14 +8,17 @@ Local-first full-stack benchmarking workbench for AI agents.
 
 - Hardened API input handling so JSON routes reject invalid or non-object payloads with explicit client errors.
 - Batch execution now tolerates per-run failures and reports partial results instead of aborting the whole queue on the first runtime error.
+- Replaced hash-based local fallback scores with deterministic rules-based review tied to actual agent/task fit.
+- Replaced pseudo-screenshot artifacts with generated run reports that describe the real evaluation signals.
 - Benchmark metadata now covers resolution, interaction surface, evaluator mode, difficulty, and environment constraints.
 - Added seeded higher-resolution suites for agentic workflows plus browser/computer-use interaction surfaces.
+- Moved the sample workspace out of `./agents` into `./examples/sample-workspace` so a fresh checkout no longer auto-loads example agents as real inputs.
 - Added research-backed benchmark notes in `docs/AGENTIC_TEST_RESEARCH.md`.
 
 ## What Changed In v0.3.0
 
 - Migrated the UI into a Next.js full-stack app with App Router pages and API routes.
-- The Test Lab now runs real server-backed batch flows instead of a static dashboard shell.
+- The Test Lab now runs real server-backed batch flows with persisted logs and report artifacts.
 - Provider setup, agent loading, benchmark authoring, history, and artifact access all go through the same application surface.
 - The runtime path no longer depends on `dist`-only evaluator scripts, so batch runs work from both the CLI and the Next server.
 - Research, architecture, and validation notes live in:
@@ -71,11 +74,11 @@ pnpm exec agent-bench compare --left <run-key> --right <run-key>
 - `/api/workbench` returns the current dashboard snapshot.
 - `/api/run/batch` executes multi-agent runs for either one task or a full benchmark cycle.
 - `/api/run/[runKey]/result` returns the persisted run summary used by the inspector.
-- `/api/artifacts/[runKey]/[file]` serves screenshots and result files.
+- `/api/artifacts/[runKey]/[file]` serves generated run reports and result files.
 
 ## Provider Setup
 
-If you want live LLM judging through Vercel AI Gateway, create a local env file and set your key:
+If you want model-based review through Vercel AI Gateway, create a local env file and set your key:
 
 ```bash
 cp .env.sample .env
@@ -87,7 +90,18 @@ export AI_GATEWAY_API_KEY="your_key"
 
 You can also paste a key directly into the UI for the current browser session. That session key is not written to SQLite or run artifacts.
 
-Without a key, `agent-bench` still works using deterministic local fallback judging.
+Without a key, `agent-bench` still works using deterministic rules-based review driven by the agent spec and benchmark metadata.
+
+## What A Run Means Today
+
+Current runs are honest spec-level evaluations:
+
+- `agent-bench` scores how well an agent definition appears to fit the selected benchmark task.
+- With `AI_GATEWAY_API_KEY`, the review score comes from the configured model.
+- Without a key, the review score comes from a deterministic rules rubric.
+- Generated artifacts are evaluation reports, not screenshots of a real browser or sandbox session.
+
+This means the workbench is reliable about what it measures today, but it does not yet claim full sandboxed agent execution.
 
 ## Benchmarks
 
@@ -161,18 +175,19 @@ Important:
 
 - `./agents` is gitignored for local work.
 - Keep real agent definitions local unless you explicitly want them versioned elsewhere.
+- The repository examples now live under `./examples/sample-workspace` so they do not appear as loaded runtime agents.
 
 ## Defaults
 
 - DB path: `$HOME/.agent-bench/data.db`
 - Artifact path: `$HOME/.agent-bench/artifacts/`
-- Judge model: `openai/gpt-4.1-mini`
+- Review model: `openai/gpt-4.1-mini`
 - Benchmarks folder: `./benchmarks`
 - Workbench port: `4173`
 
 ## Current Limits
 
-- The scoring/runtime pipeline is still an MVP and can fall back to deterministic local judging.
+- The scoring/runtime pipeline now performs deterministic task-fit review rather than pretending to execute agents end-to-end.
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
 - Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
