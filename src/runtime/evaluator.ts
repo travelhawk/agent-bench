@@ -278,6 +278,7 @@ function buildTaskBrief(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskReco
     `Tags: ${task.metadata.tags.join(", ") || "none"}`,
     `Requires Isolation: ${task.metadata.requiresIsolation ? "yes" : "no"}`,
     `Requires Network: ${task.metadata.requiresNetwork ? "yes" : "no"}`,
+    `Sandbox Provider: ${task.sandbox?.provider ?? "auto"}`,
     task.sandbox?.verifyCommand ? `Verify Command: ${task.sandbox.verifyCommand}` : "Verify Command: none",
     ""
   ].join("\n");
@@ -377,14 +378,19 @@ async function maybeRunSandboxExecution(input: {
     AGENT_BENCH_SANDBOX_NETWORK: allowNetwork ? "enabled" : "disabled"
   };
   const timeoutMs = input.task.sandbox.timeoutMs;
+  const provider = input.task.sandbox.provider && input.task.sandbox.provider !== "auto"
+    ? input.task.sandbox.provider
+    : undefined;
   const runner = await runSandboxedCommand({
     command: input.agentRunnerCommand,
     cwd: agentDir,
     workspaceDir,
     artifactsDir: input.artifactsPath,
+    readOnlyDirs: [agentDir],
     timeoutMs,
     allowNetwork,
     label: "runner",
+    provider,
     env: commandEnv as unknown as NodeJS.ProcessEnv,
     providerApiKey: input.providerApiKey,
     model: input.model
@@ -395,9 +401,11 @@ async function maybeRunSandboxExecution(input: {
       cwd: workspaceDir,
       workspaceDir,
       artifactsDir: input.artifactsPath,
+      readOnlyDirs: [agentDir],
       timeoutMs,
       allowNetwork,
       label: "verifier",
+      provider,
       env: commandEnv as unknown as NodeJS.ProcessEnv
     })
     : undefined;
@@ -773,7 +781,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     executionMode: sandbox.mode,
     reviewMode: judge.mode,
     scoreLabels: {
-      tests: "task-fit",
+      tests: sandbox.mode === "sandbox" ? "execution" : "task-fit",
       judge: "review",
       performance: "performance"
     },

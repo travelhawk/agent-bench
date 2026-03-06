@@ -1,0 +1,4 @@
+2026-03-06T07:12:08Z worker-cache-1 WARN token cache replay detected for shard=east-2
+2026-03-06T07:12:09Z worker-cache-1 WARN stale refresh token reused after expiry window
+2026-03-06T07:12:11Z session-edge ERROR refresh path blocked waiting on token-cache sync
+2026-03-06T07:12:14Z session-edge INFO mitigation candidate: disable stale token reuse + restart cache worker

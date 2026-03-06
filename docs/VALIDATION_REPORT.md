@@ -6,7 +6,7 @@ Status: PASS
 
 ## Scope
 
-Validation covered the full-stack workbench plus the latest sandbox execution pass: real fixture-backed runner execution, macOS seatbelt isolation, scrubbed runner environments, generated run reports, benchmark metadata, richer seeded suites, JSON route validation, partial-failure batch execution, example-workspace cleanup, updated docs, and regression tests.
+Validation covered the full-stack workbench plus the latest sandbox expansion pass: real fixture-backed runner execution, Docker-backed sandboxing outside macOS seatbelt, host-browser execution overrides for browser fixtures, scrubbed runner environments, generated run reports, benchmark metadata, richer seeded suites, example runner workspaces, updated docs, and regression tests.
 
 ## Checks Performed
 
@@ -29,7 +29,7 @@ Validation covered the full-stack workbench plus the latest sandbox execution pa
 
 - `pnpm test`
   - Result: pass
-  - Tests passed: 20/20
+  - Tests passed: 22/22
 
 Covered tests:
 
@@ -42,6 +42,8 @@ Covered tests:
 - runtime evaluation writes report artifacts without relying on a dist-only child-process path
 - sandboxed runtime execution succeeds against the seeded `fix-react-bug` fixture using a real runner command
 - macOS seatbelt sandbox blocks writes outside the task workspace during runner execution
+- the seeded computer-use fixture executes end-to-end and verifies its incident plan artifact
+- the Docker provider executes a real command inside a container and maps workspace paths back to the host
 - LLM judge parsing still works
 - LLM judge empty response handling still fails correctly
 - weighted scoring stays on the 60/30/10 split
@@ -61,9 +63,28 @@ Covered tests:
     - the run summary records `networkAccess: disabled` for the seeded `fix-react-bug` task
     - the per-run artifacts contain `runner.sb`, `verifier.sb`, `task-brief.md`, `agent.md`, `workspace/`, `summary.json`, `session.log`, and `report.svg`
 
+- `node dist/src/index.js run --agent ./examples/sample-workspace/agents/browser-operator.md --benchmark interaction-surfaces --task browser-support-escalation --db /tmp/agent-bench-browser-smoke/runs.db`
+  - Result: pass
+  - Environment: current working tree
+  - Verified:
+    - the browser fixture launches through the example Playwright runner
+    - the task uses `Provider: process` so the host browser can launch even on macOS where Chromium under `sandbox-exec` proved unstable
+    - the runner writes `result/browser-escalation.json` plus a browser screenshot artifact
+    - the verifier passes and the run summary records `provider: process` with `testsScore: 10`
+
+- `node dist/src/index.js run --agent ./examples/sample-workspace/agents/computer-operator.md --benchmark interaction-surfaces --task computer-use-incident-drill --db /tmp/agent-bench-computer-smoke/runs.db`
+  - Result: pass
+  - Environment: current working tree
+  - Verified:
+    - the computer-use fixture executes through the sample desktop-style runner
+    - the run stays on the stronger macOS seatbelt provider
+    - the verifier passes against the generated `result/incident-plan.json`
+
 ## Notes
 
-- macOS seatbelt isolation is now used automatically when `sandbox-exec` is available. Other platforms currently fall back to process-level workspace isolation.
+- macOS seatbelt isolation is still the default on this machine for non-browser tasks.
+- Outside macOS seatbelt, the runtime now prefers Docker when the daemon is available.
+- Browser tasks can override the provider to `process`; the seeded browser fixture does this because Chromium headless crashed under `sandbox-exec` during validation.
 - Runner environments are intentionally scrubbed; only a safe host env plus explicit `AGENT_BENCH_*` variables are forwarded into the sandbox.
 - Artifact serving keeps a compatibility fallback for older runs that still reference `screenshot.svg`, but all new runs now emit `report.svg`.
 
@@ -82,4 +103,8 @@ pnpm test
 pnpm run build
 cd /tmp/agent-bench-sandbox-smoke
 node /Users/denniswestermann/Library/Mobile\ Documents/com~apple~CloudDocs/Desktop/Coding\ Projekte/Agent_Branche/agent-bench/dist/src/index.js run --agent ./agents/local/coder.md --benchmark core-engineering --task fix-react-bug --db ./runs.db
+cd /Users/denniswestermann/Library/Mobile\ Documents/com~apple~CloudDocs/Desktop/Coding\ Projekte/Agent_Branche/agent-bench
+pnpm exec playwright install chromium
+node dist/src/index.js run --agent ./examples/sample-workspace/agents/browser-operator.md --benchmark interaction-surfaces --task browser-support-escalation --db /tmp/agent-bench-browser-smoke/runs.db
+node dist/src/index.js run --agent ./examples/sample-workspace/agents/computer-operator.md --benchmark interaction-surfaces --task computer-use-incident-drill --db /tmp/agent-bench-computer-smoke/runs.db
 ```

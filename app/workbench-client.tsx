@@ -87,7 +87,7 @@ function taskStructureChips(task: BenchmarkTaskRecord): string[] {
     humanizeToken(task.metadata.interaction),
     `${humanizeToken(task.metadata.evaluator)} eval`,
     `${humanizeToken(task.metadata.difficulty)} difficulty`,
-    ...(task.sandbox ? ["Sandboxed"] : []),
+    ...(task.sandbox ? [`Sandbox ${humanizeToken(task.sandbox.provider ?? "auto")}`] : []),
     ...(task.metadata.requiresIsolation ? ["Isolated"] : []),
     ...(task.metadata.requiresNetwork ? ["Networked"] : []),
     ...task.metadata.tags.map((tag) => `#${tag}`)

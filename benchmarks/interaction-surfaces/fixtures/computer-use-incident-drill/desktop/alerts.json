@@ -1,0 +1,10 @@
+{
+  "incidentId": "INC-442",
+  "service": "session-edge",
+  "severity": "sev-1",
+  "symptoms": [
+    "stale token reuse exceeds threshold",
+    "auth refresh latency spikes above 4.2s",
+    "customer logins intermittently fail during retry storms"
+  ]
+}

@@ -68,6 +68,7 @@ export type BenchmarkResolution = "atomic" | "workflow" | "campaign" | "swarm";
 export type BenchmarkInteractionMode = "artifact" | "terminal" | "browser" | "tool-use" | "computer-use" | "multi-agent";
 export type BenchmarkEvaluatorMode = "state" | "artifact" | "trace" | "judge" | "hybrid";
 export type BenchmarkDifficulty = "low" | "medium" | "high";
+export type BenchmarkSandboxProvider = "auto" | "process" | "macos-seatbelt" | "docker";
 
 export interface BenchmarkSuiteMetadata {
   resolution: BenchmarkResolution;
@@ -88,6 +89,7 @@ export interface BenchmarkTaskMetadata {
 export interface BenchmarkTaskSandbox {
   fixtureDir?: string;
   verifyCommand?: string;
+  provider?: BenchmarkSandboxProvider;
   timeoutMs: number;
 }
 

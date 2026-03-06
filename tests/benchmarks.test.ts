@@ -66,6 +66,7 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
       sandbox: {
         fixtureDir: "fixtures/superagent-handoff",
         verifyCommand: "node verify.js",
+        provider: "docker",
         timeoutMs: 60000
       }
     });
@@ -80,6 +81,7 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
     assert.equal(suite.tasks[0].metadata.difficulty, "high");
     assert.equal(suite.tasks[0].sandbox?.fixtureDir, "fixtures/superagent-handoff");
     assert.equal(suite.tasks[0].sandbox?.verifyCommand, "node verify.js");
+    assert.equal(suite.tasks[0].sandbox?.provider, "docker");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -97,6 +99,18 @@ test("default seeded benchmarks cover browser and computer-use surfaces", () => 
     assert.equal(surfaceSuite.metadata.domain, "operator-systems");
     assert.ok(surfaceSuite.tasks.some((task) => task.metadata.interaction === "browser"));
     assert.ok(surfaceSuite.tasks.some((task) => task.metadata.interaction === "computer-use"));
+    assert.equal(
+      surfaceSuite.tasks.find((task) => task.key === "browser-support-escalation")?.sandbox?.verifyCommand,
+      "node verify.js"
+    );
+    assert.equal(
+      surfaceSuite.tasks.find((task) => task.key === "browser-support-escalation")?.sandbox?.provider,
+      "process"
+    );
+    assert.equal(
+      surfaceSuite.tasks.find((task) => task.key === "computer-use-incident-drill")?.sandbox?.fixtureDir,
+      "fixtures/computer-use-incident-drill"
+    );
     assert.equal(
       suites
         .find((entry) => entry.key === "core-engineering")

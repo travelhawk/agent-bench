@@ -155,3 +155,63 @@ test("sandboxed runner cannot write outside the task workspace when seatbelt is 
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("runEvaluationInRuntime can execute the computer-use incident fixture", async () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+
+  try {
+    const agentPath = path.join(workspace, "agents", "sandbox", "agent.md");
+    const runnerScriptPath = path.join(path.dirname(agentPath), "runner.js");
+    const artifactsRoot = path.join(workspace, "artifacts");
+    const benchmarksDir = path.join(workspace, "benchmarks");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "interaction-surfaces");
+
+    mkdirSync(path.dirname(agentPath), { recursive: true });
+    mkdirSync(artifactsRoot, { recursive: true });
+    mkdirSync(benchmarksDir, { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "interaction-surfaces"), { recursive: true });
+    writeFileSync(agentPath, "# Agent\nRunner: node ./runner.js\n");
+    writeFileSync(runnerScriptPath, [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const workspace = process.env.AGENT_BENCH_WORKSPACE;",
+      "const alerts = JSON.parse(fs.readFileSync(path.join(workspace, 'desktop', 'alerts.json'), 'utf8'));",
+      "const terminalLog = fs.readFileSync(path.join(workspace, 'desktop', 'terminal.log'), 'utf8');",
+      "const runbook = fs.readFileSync(path.join(workspace, 'desktop', 'runbook.md'), 'utf8');",
+      "fs.mkdirSync(path.join(workspace, 'result'), { recursive: true });",
+      "fs.writeFileSync(path.join(workspace, 'result', 'incident-plan.json'), JSON.stringify({",
+      "  incidentId: alerts.incidentId,",
+      "  severity: alerts.severity,",
+      "  suspectedComponent: 'token-cache',",
+      "  immediateActions: ['Disable stale token reuse before worker restart.', 'Restart cache worker pool after the guardrail flag is off.'],",
+      "  evidence: ['alerts.json: ' + alerts.symptoms[0], 'terminal.log: ' + terminalLog.split(/\\\\r?\\\\n/)[2], 'runbook.md: ' + runbook.split(/\\\\r?\\\\n/)[1]]",
+      "}, null, 2));"
+    ].join("\n"));
+
+    const result = await runEvaluationInRuntime({
+      runKey: "run-computer-use",
+      agentPath,
+      agentRunnerCommand: "node ./runner.js",
+      benchmarkKey: "interaction-surfaces",
+      taskKey: "computer-use-incident-drill",
+      artifactsRoot,
+      benchmarksDir,
+      benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
+    });
+
+    const runArtifactsDir = path.join(artifactsRoot, "run-computer-use");
+    const summary = JSON.parse(readFileSync(path.join(runArtifactsDir, "summary.json"), "utf8")) as {
+      executionMode?: string;
+      sandbox?: { verifier?: { exitCode?: number } };
+      scores?: { tests?: number };
+    };
+
+    assert.equal(result.runKey, "run-computer-use");
+    assert.equal(summary.executionMode, "sandbox");
+    assert.equal(summary.sandbox?.verifier?.exitCode, 0);
+    assert.ok((summary.scores?.tests ?? 0) >= 9.5);
+    assert.ok(existsSync(path.join(runArtifactsDir, "workspace", "result", "incident-plan.json")));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});

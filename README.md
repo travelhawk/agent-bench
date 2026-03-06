@@ -9,6 +9,9 @@ Local-first full-stack benchmarking workbench for AI agents.
 - Added the first real sandbox execution path for fixture-backed benchmark tasks plus markdown agents that declare a `Runner:` command.
 - Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
 - On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
+- On hosts without macOS seatbelt, the runtime now prefers Docker when the daemon is available.
+- Browser and computer-use tasks in `interaction-surfaces` now ship real fixture directories and verifier commands instead of metadata-only placeholders.
+- The sample workspace now includes runnable browser and computer-use example agents under `./examples/sample-workspace`.
 - Runner environments are now scrubbed by default and only receive a small safe host env plus explicit `AGENT_BENCH_*` runtime variables.
 - Hardened API input handling so JSON routes reject invalid or non-object payloads with explicit client errors.
 - Batch execution now tolerates per-run failures and reports partial results instead of aborting the whole queue on the first runtime error.
@@ -51,6 +54,12 @@ Build the production app and CLI:
 
 ```bash
 pnpm run build
+```
+
+If you want to run the sample browser operator, install the local Playwright browser once:
+
+```bash
+pnpm exec playwright install chromium
 ```
 
 Use the CLI directly:
@@ -100,6 +109,8 @@ Sandboxed runners also receive:
 
 - `AGENT_BENCH_PROVIDER_API_KEY` when you launch a run with a provider key
 - `AGENT_BENCH_PROVIDER_MODEL` when you choose a model in the UI or CLI
+- `AGENT_BENCH_SANDBOX_PROVIDER` if you want to force `process`, `macos-seatbelt`, or `docker`
+- `AGENT_BENCH_SANDBOX_DOCKER_IMAGE` if you want Docker runs to use a specific image instead of the default Node image
 
 ## Sandboxed Execution
 
@@ -132,6 +143,7 @@ Return a patch and tests that make the component deterministic and pass all chec
 ## Sandbox
 Fixture Dir: fixtures/fix-react-bug
 Verify Command: node --test tests/*.test.js
+Provider: auto
 Timeout Ms: 120000
 ```
 
@@ -141,7 +153,9 @@ Runner contract:
 - the writable task repo is exposed as `AGENT_BENCH_WORKSPACE`
 - task and agent material are written into the run artifacts and exposed as `AGENT_BENCH_TASK_FILE` and `AGENT_BENCH_AGENT_FILE`
 - run metadata is exposed through `AGENT_BENCH_RUN_KEY`, `AGENT_BENCH_BENCHMARK_KEY`, `AGENT_BENCH_TASK_KEY`, and `AGENT_BENCH_ARTIFACTS_DIR`
-- on macOS, the runner and verifier are wrapped in `sandbox-exec`; writes are limited to the task workspace plus run artifacts, and network is disabled unless the task metadata says it is required
+- `Provider:` can be `auto`, `process`, `macos-seatbelt`, or `docker`
+- in `auto` mode, macOS prefers `sandbox-exec`; other hosts prefer Docker when available
+- browser tasks can explicitly choose `Provider: process` when a host browser is required and the stronger sandbox would break launch stability
 
 ## What A Run Means Today
 
@@ -204,6 +218,7 @@ Key: <task-key>
 ## Sandbox
 Fixture Dir: fixtures/<task-name>
 Verify Command: node --test tests/*.test.js
+Provider: auto
 Timeout Ms: 120000
 
 ## Metadata
@@ -230,6 +245,11 @@ The repo now ships three benchmark shapes by default:
 - `agentic-workflows` for higher-resolution workflow, campaign, and superagent-style tests
 - `interaction-surfaces` for browser, computer-use, and mixed tool-routing scenarios
 
+The `interaction-surfaces` suite now includes executable fixtures for:
+
+- `browser-support-escalation`
+- `computer-use-incident-drill`
+
 ## Agent Definitions
 
 The workbench scans `./agents` for markdown agent definitions and ignores task folders plus helper files like `AGENTS.md` and `README.md`.
@@ -240,6 +260,7 @@ Important:
 - Keep real agent definitions local unless you explicitly want them versioned elsewhere.
 - The repository examples now live under `./examples/sample-workspace` so they do not appear as loaded runtime agents.
 - Agents without `Runner:` stay in review-only mode; agents with `Runner:` become sandbox-capable when paired with a sandboxed task.
+- Example runnable sandbox agents live under `./examples/sample-workspace/agents`.
 
 ## Defaults
 
@@ -251,9 +272,10 @@ Important:
 
 ## Current Limits
 
-- Full isolation is currently strongest on macOS, where `sandbox-exec` is available. Other platforms currently fall back to workspace-isolated process execution until more providers are added.
+- Full isolation now has two stronger providers: `sandbox-exec` on macOS and Docker on hosts where the daemon is available.
+- Browser tasks currently default to `Provider: process` when they need a real host browser; that is intentional until a browser-capable container/runtime path is added.
 - The runtime contract is command-based. `agent-bench` does not yet provide a universal in-process tool protocol for arbitrary agent frameworks.
-- Browser, computer-use, and multi-agent suites are structurally modeled, but they only become truly executable when they are backed by concrete fixtures and verification commands.
+- Multi-agent suites are still structurally modeled, but they only become truly executable when they are backed by concrete fixtures and verification commands.
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
 - Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
@@ -265,4 +287,5 @@ Important:
 - Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.
 - If a runner needs to consume the configured model or provider key, read `AGENT_BENCH_PROVIDER_MODEL` and `AGENT_BENCH_PROVIDER_API_KEY` from the runner process.
 - If you need to debug a failing sandbox on macOS, inspect the per-run `runner.sb` and `verifier.sb` files in the artifacts directory.
+- If you want to exercise the browser sample runner, install Chromium once with `pnpm exec playwright install chromium`.
 - See `docs/AGENTIC_TEST_RESEARCH.md` for the current research-backed test taxonomy and why the benchmark metadata is structured this way.

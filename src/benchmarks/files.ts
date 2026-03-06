@@ -8,7 +8,7 @@ import {
   suiteMetadataToMarkdown,
   taskMetadataToMarkdown
 } from "./metadata";
-import { BenchmarkSuiteRecord, BenchmarkTaskRecord } from "../types";
+import { BenchmarkSandboxProvider, BenchmarkSuiteRecord, BenchmarkTaskRecord } from "../types";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 120000;
 
@@ -175,9 +175,14 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           difficulty: "medium",
           tags: ["browser", "forms", "state"],
           requiresIsolation: true,
-          requiresNetwork: true
+          requiresNetwork: false
         },
-        sandbox: null
+        sandbox: {
+          fixtureDir: "fixtures/browser-support-escalation",
+          verifyCommand: "node verify.js",
+          provider: "process",
+          timeoutMs: 120000
+        }
       },
       {
         key: "computer-use-incident-drill",
@@ -193,7 +198,11 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
           requiresIsolation: true,
           requiresNetwork: false
         },
-        sandbox: null
+        sandbox: {
+          fixtureDir: "fixtures/computer-use-incident-drill",
+          verifyCommand: "node verify.js",
+          timeoutMs: 120000
+        }
       },
       {
         key: "tool-router-triage",
@@ -250,13 +259,18 @@ function parseTaskSandbox(section: string): BenchmarkTaskRecord["sandbox"] {
   const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? Math.round(timeoutRaw) : DEFAULT_SANDBOX_TIMEOUT_MS;
   const fixtureDirRaw = map.get("fixture dir")?.trim();
   const verifyCommandRaw = map.get("verify command")?.trim();
+  const providerRaw = map.get("provider")?.trim().toLowerCase();
   const fixtureDir = fixtureDirRaw && fixtureDirRaw.toLowerCase() !== "none" ? fixtureDirRaw : undefined;
   const verifyCommand = verifyCommandRaw && verifyCommandRaw.toLowerCase() !== "none" ? verifyCommandRaw : undefined;
+  const provider = providerRaw && ["auto", "process", "macos-seatbelt", "docker"].includes(providerRaw)
+    ? providerRaw as BenchmarkSandboxProvider
+    : undefined;
 
   if (!fixtureDir && !verifyCommand) return null;
   return {
     fixtureDir: fixtureDir || undefined,
     verifyCommand: verifyCommand || undefined,
+    provider,
     timeoutMs
   };
 }
@@ -267,6 +281,7 @@ function sandboxToMarkdown(sandbox: BenchmarkTaskRecord["sandbox"]): string[] {
     "## Sandbox",
     `Fixture Dir: ${sandbox.fixtureDir ?? "none"}`,
     `Verify Command: ${sandbox.verifyCommand ?? "none"}`,
+    `Provider: ${sandbox.provider ?? "auto"}`,
     `Timeout Ms: ${sandbox.timeoutMs}`,
     ""
   ];

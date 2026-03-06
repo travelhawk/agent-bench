@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a Docker sandbox provider so non-macOS hosts can use a stronger containerized execution path when Docker is available
+- Added executable `browser-support-escalation` and `computer-use-incident-drill` fixtures with verifier commands under `interaction-surfaces`
+- Added sample runnable agents and runner scripts for browser and computer-use tasks under `examples/sample-workspace`
+- Added per-task sandbox provider overrides so browser fixtures can opt into host-process execution when a real browser is required
+- Added the repo-local `playwright` dev dependency for browser fixture runners
 - Added real fixture-backed sandbox execution for tasks with `## Sandbox` metadata and agents that declare a `Runner:` command
 - Added a new macOS sandbox provider based on `sandbox-exec` with write restrictions to the task workspace and run artifacts
 - Scrubbed runner environments by default and exposed explicit runtime vars like `AGENT_BENCH_WORKSPACE`, `AGENT_BENCH_PROVIDER_API_KEY`, and `AGENT_BENCH_PROVIDER_MODEL`

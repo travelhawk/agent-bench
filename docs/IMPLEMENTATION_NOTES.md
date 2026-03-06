@@ -11,13 +11,13 @@ Date: 2026-03-05
 
 ## Risks
 
-- The first real sandboxed code-execution path now exists for fixture-backed tasks plus markdown agents with `Runner:` commands, but the provider story is still incomplete across platforms.
+- The provider story is materially stronger now, but browser-capable isolation is still uneven: Docker covers non-macOS hosts better, while browser tasks may still need host-process execution.
 - LLM-judge integration requires provider keys and a stable API contract; this MVP keeps weighted scoring and a replaceable scoring pipeline.
 - Diff viewer and full run explorer are broader than a single-pass MVP; current implementation focuses on dashboard + run history/compare commands as the first vertical slice.
 
 ## Open Questions
 
-- Which provider should become the cross-platform default after macOS seatbelt: Docker, Linux namespaces/bubblewrap, or a remote runner?
+- Should browser fixtures move to a dedicated browser-capable container image, or stay on explicit host-process overrides?
 - Which LLM provider and rubric schema should be canonical for judge scoring?
 - What artifact retention policy is expected by default for local dev machines?
 
@@ -101,6 +101,8 @@ HTTP API:
 
 - The current implementation does not execute arbitrary agent code in-process; sandboxed runs launch external commands against a copied task fixture.
 - On macOS, sandboxed runs use `sandbox-exec` to limit writes to the task workspace and run artifacts while denying network unless a task explicitly requires it.
+- On hosts without macOS seatbelt, sandboxed runs now prefer Docker and run with a read-only rootfs plus explicit writable mounts for the task workspace and artifacts.
+- Browser fixtures can opt into `Provider: process` when a host browser is required; that tradeoff is explicit in the task metadata rather than hidden in fallback code.
 - Runner environments are scrubbed before launch; the sandbox only receives a small safe host env plus explicit `AGENT_BENCH_*` variables.
 
 ## Decisions & Assumptions

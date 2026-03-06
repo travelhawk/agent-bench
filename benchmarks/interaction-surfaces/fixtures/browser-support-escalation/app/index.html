@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Support Console</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: #f3efe6;
+        color: #1d2433;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(222, 186, 120, 0.24), transparent 24rem),
+          linear-gradient(180deg, #faf7f2 0%, #ece4d8 100%);
+      }
+
+      .shell {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 40px 24px 56px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 12px;
+        color: #8a5c1b;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 40px;
+      }
+
+      .subcopy {
+        margin: 0;
+        max-width: 760px;
+        color: #465066;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+
+      button {
+        border: 0;
+        background: #d2b67f;
+        color: #1d2433;
+        font: inherit;
+        font-weight: 600;
+        padding: 12px 18px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+
+      button[aria-pressed="true"] {
+        background: #1d2433;
+        color: #fff8eb;
+      }
+
+      .pane {
+        display: none;
+        background: rgba(255, 252, 246, 0.92);
+        border: 1px solid rgba(29, 36, 51, 0.08);
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: 0 18px 40px rgba(29, 36, 51, 0.08);
+      }
+
+      .pane[data-active="true"] {
+        display: block;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        padding: 16px;
+        background: #fff;
+        border-radius: 18px;
+        border: 1px solid rgba(29, 36, 51, 0.08);
+      }
+
+      .label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #7f6853;
+      }
+
+      .value {
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 20px;
+        color: #34405a;
+      }
+
+      .banner {
+        margin-top: 16px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        background: #fff5dd;
+        border: 1px solid rgba(138, 92, 27, 0.22);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Operator Surface</p>
+        <h1>Billing Escalation Console</h1>
+        <p class="subcopy">
+          Review the case, inspect the billing state, and produce a decision with a short operator note.
+          The decision must reflect the final recommendation shown in the billing screen.
+        </p>
+      </section>
+
+      <nav class="tabs" aria-label="Console views">
+        <button type="button" data-tab-target="overview" aria-pressed="true">Overview</button>
+        <button type="button" data-tab-target="timeline" aria-pressed="false">Timeline</button>
+        <button type="button" data-tab-target="billing" aria-pressed="false">Billing</button>
+      </nav>
+
+      <section class="pane" data-pane="overview" data-active="true">
+        <div class="grid">
+          <article class="card">
+            <span class="label">Case ID</span>
+            <span class="value" data-case-id>CASE-2048</span>
+          </article>
+          <article class="card">
+            <span class="label">Customer</span>
+            <span class="value">Aurora Labs</span>
+          </article>
+          <article class="card">
+            <span class="label">Status</span>
+            <span class="value">blocked during billing retry</span>
+          </article>
+          <article class="card">
+            <span class="label">Account Tier</span>
+            <span class="value">enterprise annual</span>
+          </article>
+        </div>
+        <div class="banner">
+          <strong>Operator goal:</strong> decide whether this case can be resolved locally or must move to engineering.
+        </div>
+      </section>
+
+      <section class="pane" data-pane="timeline" data-active="false">
+        <ul data-timeline>
+          <li>09:12 UTC: customer reports duplicate retry prompts during coupon redemption.</li>
+          <li>09:18 UTC: support confirmed the retry loop only appears after a failed coupon sync.</li>
+          <li>09:26 UTC: temporary refund is blocked until the retry state clears.</li>
+        </ul>
+      </section>
+
+      <section class="pane" data-pane="billing" data-active="false">
+        <div class="grid">
+          <article class="card">
+            <span class="label">Recommended decision</span>
+            <span class="value" data-decision>escalate-to-engineering</span>
+          </article>
+          <article class="card">
+            <span class="label">Priority</span>
+            <span class="value" data-priority>P1</span>
+          </article>
+          <article class="card">
+            <span class="label">Owner</span>
+            <span class="value" data-owner>revenue-platform</span>
+          </article>
+        </div>
+        <div class="banner" data-note-guidance>
+          Operator note must mention the coupon sync rollback and request a HAR capture from the customer before handoff.
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const buttons = Array.from(document.querySelectorAll("[data-tab-target]"));
+      const panes = Array.from(document.querySelectorAll("[data-pane]"));
+
+      function activate(tab) {
+        buttons.forEach((button) => {
+          const active = button.dataset.tabTarget === tab;
+          button.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+        panes.forEach((pane) => {
+          pane.dataset.active = pane.dataset.pane === tab ? "true" : "false";
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => activate(button.dataset.tabTarget));
+      });
+    </script>
+  </body>
+</html>

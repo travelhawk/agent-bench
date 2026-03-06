@@ -1,0 +1,4 @@
+Ticket: OP-7781
+Owner: identity-oncall
+Customer impact: active
+Escalation note: prepare recovery plan with immediate actions and evidence trail.
