@@ -1,4 +1,14 @@
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "playwright/test";
+
+const chromePathCandidates = [
+  process.env.CHROME_BIN,
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/opt/google/chrome/chrome"
+].filter((entry): entry is string => Boolean(entry));
+
+const chromeExecutablePath = chromePathCandidates.find((candidate) => existsSync(candidate));
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -9,7 +19,8 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:4173",
-    trace: "on-first-retry"
+    trace: "on-first-retry",
+    launchOptions: chromeExecutablePath ? { executablePath: chromeExecutablePath } : undefined
   },
   webServer: {
     command: "pnpm ui",
@@ -20,7 +31,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"], channel: "chrome" }
+      use: { ...devices["Desktop Chrome"] }
     }
   ]
 });

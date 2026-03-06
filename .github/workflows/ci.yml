@@ -49,8 +49,11 @@ jobs:
 
       - name: Setup Chrome
         if: matrix.os == 'ubuntu-latest'
+        id: chrome
         uses: browser-actions/setup-chrome@v1
 
       - name: Run E2E tests
         if: matrix.os == 'ubuntu-latest'
         run: pnpm run test:e2e
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}

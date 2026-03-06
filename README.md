@@ -59,6 +59,7 @@ pnpm run build
 ```
 
 If you want to run the sample browser operator, ensure Google Chrome is installed locally.
+If Chrome is installed in a non-standard path, set `CHROME_BIN` to that executable before running E2E tests.
 
 Run the end-to-end UI regression suite locally:
 
