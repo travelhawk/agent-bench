@@ -4,7 +4,34 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { runSandboxedCommand, supportsDockerSandbox } from "../src/runtime/sandbox";
+import {
+  resolveCommandLookupSpec,
+  resolveShellSpec,
+  runSandboxedCommand,
+  supportsDockerSandbox
+} from "../src/runtime/sandbox";
+
+test("resolveCommandLookupSpec uses where on Windows and which elsewhere", () => {
+  assert.deepEqual(resolveCommandLookupSpec("node", "win32"), {
+    bin: "where",
+    args: ["node"]
+  });
+  assert.deepEqual(resolveCommandLookupSpec("node", "linux"), {
+    bin: "which",
+    args: ["node"]
+  });
+});
+
+test("resolveShellSpec stays platform-aware for host runs and posix for containers", () => {
+  assert.deepEqual(resolveShellSpec("echo ok", "win32"), {
+    bin: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", "echo ok"]
+  });
+  assert.deepEqual(resolveShellSpec("echo ok", "linux"), {
+    bin: "/bin/sh",
+    args: ["-c", "echo ok"]
+  });
+});
 
 function supportsDockerPythonSmoke(): boolean {
   if (!supportsDockerSandbox()) return false;

@@ -55,7 +55,7 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         },
         sandbox: {
           fixtureDir: "fixtures/fix-react-bug",
-          verifyCommand: "node --test tests/*.test.js",
+          verifyCommand: "node --test \"tests/*.test.js\"",
           timeoutMs: 120000
         }
       },

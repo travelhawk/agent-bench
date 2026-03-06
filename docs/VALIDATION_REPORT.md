@@ -6,7 +6,7 @@ Status: PASS
 
 ## Scope
 
-Validation covered the full-stack workbench plus the latest sandbox expansion pass: real fixture-backed runner execution, Docker-backed sandboxing outside macOS seatbelt, host-browser execution overrides for browser fixtures, scrubbed runner environments, generated run reports, benchmark metadata, richer seeded suites, example runner workspaces, updated docs, and regression tests.
+Validation covered the full-stack workbench plus the latest sandbox expansion pass: real fixture-backed runner execution, Docker-backed sandboxing outside macOS seatbelt, host-browser execution overrides for browser fixtures, scrubbed runner environments, generated run reports, benchmark metadata, richer seeded suites, example runner workspaces, Windows-specific command-path hardening, updated docs, and regression tests.
 
 ## Checks Performed
 
@@ -29,7 +29,7 @@ Validation covered the full-stack workbench plus the latest sandbox expansion pa
 
 - `pnpm test`
   - Result: pass
-  - Tests passed: 22/22
+  - Tests passed: 24/24
 
 Covered tests:
 
@@ -44,6 +44,7 @@ Covered tests:
 - macOS seatbelt sandbox blocks writes outside the task workspace during runner execution
 - the seeded computer-use fixture executes end-to-end and verifies its incident plan artifact
 - the Docker provider executes a real command inside a container and maps workspace paths back to the host
+- Windows-specific command lookup uses `where` and shell resolution remains explicit across host and container execution
 - LLM judge parsing still works
 - LLM judge empty response handling still fails correctly
 - weighted scoring stays on the 60/30/10 split
@@ -80,10 +81,19 @@ Covered tests:
     - the run stays on the stronger macOS seatbelt provider
     - the verifier passes against the generated `result/incident-plan.json`
 
+- `AGENT_BENCH_SANDBOX_PROVIDER=process node dist/src/index.js run --agent /tmp/.../agents/local/coder.md --benchmark core-engineering --task fix-react-bug --db /tmp/.../runs.db`
+  - Result: pass
+  - Environment: current working tree with isolated temp workspace under `/tmp`
+  - Verified:
+    - the process-provider path executes the seeded `fix-react-bug` fixture without relying on macOS seatbelt or Docker
+    - the runner exits `0`, the verifier exits `0`, and the run summary records `provider: process`
+    - the quoted `node --test "tests/*.test.js"` verifier command succeeds without shell-expanded glob assumptions
+
 ## Notes
 
 - macOS seatbelt isolation is still the default on this machine for non-browser tasks.
 - Outside macOS seatbelt, the runtime now prefers Docker when the daemon is available.
+- Windows-compatible execution paths are now hardened locally and the repo includes a GitHub Actions matrix for `windows-latest`, `macos-latest`, and `ubuntu-latest`.
 - Browser tasks can override the provider to `process`; the seeded browser fixture does this because Chromium headless crashed under `sandbox-exec` during validation.
 - Runner environments are intentionally scrubbed; only a safe host env plus explicit `AGENT_BENCH_*` variables are forwarded into the sandbox.
 - Artifact serving keeps a compatibility fallback for older runs that still reference `screenshot.svg`, but all new runs now emit `report.svg`.

@@ -10,7 +10,7 @@ Return a patch and tests that make the component deterministic and pass all chec
 
 ## Sandbox
 Fixture Dir: fixtures/fix-react-bug
-Verify Command: node --test tests/*.test.js
+Verify Command: node --test "tests/*.test.js"
 Timeout Ms: 120000
 
 ## Metadata

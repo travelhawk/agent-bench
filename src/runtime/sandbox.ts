@@ -63,18 +63,36 @@ const SAFE_ENV_KEYS = [
 
 let dockerAvailableCache: boolean | undefined;
 
-function resolveCommandPath(command: string): string | null {
-  const result = spawnSync("which", [command], {
+export function resolveCommandLookupSpec(command: string, platform: NodeJS.Platform = process.platform): { bin: string; args: string[] } {
+  if (platform === "win32") {
+    return {
+      bin: "where",
+      args: [command]
+    };
+  }
+
+  return {
+    bin: "which",
+    args: [command]
+  };
+}
+
+function resolveCommandPath(command: string, platform: NodeJS.Platform = process.platform): string | null {
+  const lookup = resolveCommandLookupSpec(command, platform);
+  const result = spawnSync(lookup.bin, lookup.args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"]
   });
   if (result.status !== 0) return null;
-  const resolved = result.stdout.trim();
+  const resolved = result.stdout
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .find(Boolean);
   return resolved || null;
 }
 
-function commandExists(command: string): boolean {
-  return resolveCommandPath(command) !== null;
+function commandExists(command: string, platform: NodeJS.Platform = process.platform): boolean {
+  return resolveCommandPath(command, platform) !== null;
 }
 
 function dockerDaemonAvailable(): boolean {
@@ -84,7 +102,13 @@ function dockerDaemonAvailable(): boolean {
     return dockerAvailableCache;
   }
 
-  const result = spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+  const dockerBinary = resolveCommandPath("docker");
+  if (!dockerBinary) {
+    dockerAvailableCache = false;
+    return dockerAvailableCache;
+  }
+
+  const result = spawnSync(dockerBinary, ["info", "--format", "{{.ServerVersion}}"], {
     stdio: "ignore",
     timeout: 3000
   });
@@ -145,8 +169,8 @@ function buildSeatbeltProfile(input: {
   ].join("\n");
 }
 
-function shellSpec(command: string): { bin: string; args: string[] } {
-  if (process.platform === "win32") {
+export function resolveShellSpec(command: string, platform: NodeJS.Platform = process.platform): { bin: string; args: string[] } {
+  if (platform === "win32") {
     return {
       bin: process.env.ComSpec || "cmd.exe",
       args: ["/d", "/s", "/c", command]
@@ -183,7 +207,7 @@ function collectReadOnlyDirs(readOnlyDirs: string[], writableDirs: string[]): st
   readOnlyDirs.forEach((dir) => {
     if (!dir) return;
     const realDir = resolveRealDir(dir, false);
-    const alreadyWritable = writableSet.some((writableDir) => realDir === writableDir || realDir.startsWith(`${writableDir}${path.sep}`));
+    const alreadyWritable = writableSet.some((writableDir) => isSameOrNestedPath(realDir, writableDir));
     if (!alreadyWritable) {
       deduped.add(realDir);
     }
@@ -233,10 +257,21 @@ function normalizePathForMountLookup(inputPath: string): string {
   return path.resolve(inputPath);
 }
 
+function normalizePathKey(inputPath: string): string {
+  const normalized = normalizePathForMountLookup(inputPath);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isSameOrNestedPath(inputPath: string, rootPath: string): boolean {
+  const normalizedInput = normalizePathKey(inputPath);
+  const normalizedRoot = normalizePathKey(rootPath);
+  return normalizedInput === normalizedRoot || normalizedInput.startsWith(`${normalizedRoot}${path.sep}`);
+}
+
 function mapHostPathToContainer(inputPath: string, mounts: SandboxMount[]): string | null {
   const normalizedPath = normalizePathForMountLookup(inputPath);
   const match = mounts
-    .filter((mount) => normalizedPath === mount.hostPath || normalizedPath.startsWith(`${mount.hostPath}${path.sep}`))
+    .filter((mount) => isSameOrNestedPath(normalizedPath, mount.hostPath))
     .sort((left, right) => right.hostPath.length - left.hostPath.length)[0];
 
   if (!match) return null;
@@ -326,7 +361,7 @@ function buildDockerInvocation(input: {
   env: Record<string, string>;
   profilePath: string;
 }): { bin: string; args: string[] } {
-  const shell = shellSpec(input.command);
+  const shell = resolveShellSpec(input.command, "linux");
   const containerCwd = mapHostPathToContainer(input.cwd, input.mounts);
   if (!containerCwd) {
     throw new Error(`Docker sandbox cannot map cwd into the container: ${input.cwd}`);
@@ -434,7 +469,7 @@ export async function runSandboxedCommand(input: RunSandboxedCommandInput): Prom
       providerApiKey: input.providerApiKey,
       model: input.model
     });
-    const shell = shellSpec(input.command);
+    const shell = resolveShellSpec(input.command);
     bin = shell.bin;
     args = shell.args;
 

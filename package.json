@@ -14,7 +14,7 @@
     "build:cli": "tsc -p tsconfig.cli.json",
     "dev": "next dev",
     "prepare": "pnpm run build:cli",
-    "test": "pnpm run build:cli && node --test dist/tests/*.test.js",
+    "test": "pnpm run build:cli && node --test \"dist/tests/*.test.js\"",
     "start": "node dist/src/index.js",
     "ui": "next dev --port 4173"
   },

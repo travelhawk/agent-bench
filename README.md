@@ -10,9 +10,11 @@ Local-first full-stack benchmarking workbench for AI agents.
 - Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
 - On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
 - On hosts without macOS seatbelt, the runtime now prefers Docker when the daemon is available.
+- Hardened Windows execution paths by using `where` for binary lookup, keeping Docker container shells on `/bin/sh`, and replacing shell-expanded test globs with Node-owned quoted patterns.
 - Browser and computer-use tasks in `interaction-surfaces` now ship real fixture directories and verifier commands instead of metadata-only placeholders.
 - The sample workspace now includes runnable browser and computer-use example agents under `./examples/sample-workspace`.
 - Runner environments are now scrubbed by default and only receive a small safe host env plus explicit `AGENT_BENCH_*` runtime variables.
+- Added a GitHub Actions CI matrix so the branch is validated on `ubuntu-latest`, `macos-latest`, and `windows-latest`.
 - Hardened API input handling so JSON routes reject invalid or non-object payloads with explicit client errors.
 - Batch execution now tolerates per-run failures and reports partial results instead of aborting the whole queue on the first runtime error.
 - Replaced hash-based local fallback scores with deterministic rules-based review tied to actual agent/task fit.
@@ -142,7 +144,7 @@ Return a patch and tests that make the component deterministic and pass all chec
 
 ## Sandbox
 Fixture Dir: fixtures/fix-react-bug
-Verify Command: node --test tests/*.test.js
+Verify Command: node --test "tests/*.test.js"
 Provider: auto
 Timeout Ms: 120000
 ```
@@ -155,6 +157,7 @@ Runner contract:
 - run metadata is exposed through `AGENT_BENCH_RUN_KEY`, `AGENT_BENCH_BENCHMARK_KEY`, `AGENT_BENCH_TASK_KEY`, and `AGENT_BENCH_ARTIFACTS_DIR`
 - `Provider:` can be `auto`, `process`, `macos-seatbelt`, or `docker`
 - in `auto` mode, macOS prefers `sandbox-exec`; other hosts prefer Docker when available
+- on Windows hosts without Docker, sandboxed runs fall back to the host `process` provider and keep the same runner/verifier contract
 - browser tasks can explicitly choose `Provider: process` when a host browser is required and the stronger sandbox would break launch stability
 
 ## What A Run Means Today
@@ -217,7 +220,7 @@ Key: <task-key>
 
 ## Sandbox
 Fixture Dir: fixtures/<task-name>
-Verify Command: node --test tests/*.test.js
+Verify Command: node --test "tests/*.test.js"
 Provider: auto
 Timeout Ms: 120000
 
