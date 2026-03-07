@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed the seeded `fix-react-bug` sandbox verifier contract to use `node --test tests/*.test.js`, which restores cross-shell CI execution
+- Made the sandboxed runner regression patch line-ending agnostic so the fixture mutates correctly on both Windows and Unix-style checkouts
 - Fixed CI unit test invocation by adding a compiled-test launcher script (`node scripts/run-node-tests.cjs`) so test discovery no longer treats `dist/tests` as a module path
 - Made Playwright E2E launch use an explicit Chrome executable path (`CHROME_BIN`/common Linux paths) to avoid missing-browser failures in CI
 - Added a Playwright E2E suite for core workbench UI flows and wired it into GitHub CI on Ubuntu so pull requests must pass it

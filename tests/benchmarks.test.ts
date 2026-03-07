@@ -116,7 +116,7 @@ test("default seeded benchmarks cover browser and computer-use surfaces", () => 
         .find((entry) => entry.key === "core-engineering")
         ?.tasks.find((task) => task.key === "fix-react-bug")
         ?.sandbox?.verifyCommand,
-      "node --test \"tests/*.test.js\""
+      "node --test tests/*.test.js"
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
