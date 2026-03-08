@@ -1,6 +1,12 @@
 export type RunStatus = "completed" | "failed";
+export type ScoreConfidence = "high" | "medium" | "low";
+export type ScoreProfileKey = "hybrid" | "artifact" | "trace" | "judge" | "state";
 
 export interface ScoreBreakdown {
+  outcome: number;
+  process: number;
+  review: number;
+  efficiency: number;
   tests: number;
   judge: number;
   performance: number;
@@ -15,9 +21,16 @@ export interface RunRecord {
   suiteName: string;
   status: RunStatus;
   score: number;
+  outcomeScore: number;
+  processScore: number;
+  reviewScore: number;
+  efficiencyScore: number;
   testsScore: number;
   llmScore: number;
   perfScore: number;
+  scoreProfile: ScoreProfileKey;
+  scoreConfidence: ScoreConfidence;
+  failureReason: string | null;
   latencyMs: number;
   costUsd: number;
   durationMs: number;
@@ -31,7 +44,11 @@ export interface RunInput {
   agentName: string;
   agentVersion: string;
   suiteName: string;
+  status: RunStatus;
   scores: ScoreBreakdown;
+  scoreProfile: ScoreProfileKey;
+  scoreConfidence: ScoreConfidence;
+  failureReason?: string | null;
   latencyMs: number;
   costUsd: number;
   durationMs: number;
@@ -98,6 +115,11 @@ export interface BenchmarkTaskRecord {
   title: string;
   description: string;
   expectedOutcome: string;
+  whyThisTask: string;
+  inputs: string;
+  deliverableFormat: string;
+  successChecks: string[];
+  failureModes: string[];
   metadata: BenchmarkTaskMetadata;
   sandbox: BenchmarkTaskSandbox | null;
 }
@@ -138,6 +160,7 @@ export interface BatchRunFailure {
   agentPath: string;
   taskKey: string;
   message: string;
+  run?: RunEvaluationResult;
 }
 
 export interface BatchRunResult {

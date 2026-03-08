@@ -12,6 +12,11 @@ export async function POST(request: Request) {
       title?: string;
       description?: string;
       expectedOutcome?: string;
+      whyThisTask?: string;
+      inputs?: string;
+      deliverableFormat?: string;
+      successChecks?: string[];
+      failureModes?: string[];
       benchmarkKey?: string;
       resolution?: string;
       interaction?: string;
@@ -33,6 +38,11 @@ export async function POST(request: Request) {
       title: body.title.trim(),
       description: body.description.trim(),
       expectedOutcome: body.expectedOutcome?.trim(),
+      whyThisTask: body.whyThisTask?.trim(),
+      inputs: body.inputs?.trim(),
+      deliverableFormat: body.deliverableFormat?.trim(),
+      successChecks: body.successChecks,
+      failureModes: body.failureModes,
       benchmarkKey: body.benchmarkKey?.trim(),
       resolution: body.resolution,
       interaction: body.interaction,

@@ -54,6 +54,11 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
       title: "Superagent Handoff",
       description: "Coordinate specialists and merge outputs.",
       expectedOutcome: "Return a merged output plus delegation trace.",
+      whyThisTask: "Checks orchestrated delegation.",
+      inputs: "Use the supplied project brief.",
+      deliverableFormat: "Return sections for result and handoffs.",
+      successChecks: ["Each role is bounded.", "Conflicts are resolved."],
+      failureModes: ["No clear handoffs.", "Conflicts left unresolved."],
       metadata: {
         resolution: "swarm",
         interaction: "multi-agent",
@@ -79,6 +84,11 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
     assert.equal(suite.tasks[0].metadata.interaction, "multi-agent");
     assert.equal(suite.tasks[0].metadata.evaluator, "trace");
     assert.equal(suite.tasks[0].metadata.difficulty, "high");
+    assert.equal(suite.tasks[0].whyThisTask, "Checks orchestrated delegation.");
+    assert.equal(suite.tasks[0].inputs, "Use the supplied project brief.");
+    assert.equal(suite.tasks[0].deliverableFormat, "Return sections for result and handoffs.");
+    assert.deepEqual(suite.tasks[0].successChecks, ["Each role is bounded.", "Conflicts are resolved."]);
+    assert.deepEqual(suite.tasks[0].failureModes, ["No clear handoffs.", "Conflicts left unresolved."]);
     assert.equal(suite.tasks[0].sandbox?.fixtureDir, "fixtures/superagent-handoff");
     assert.equal(suite.tasks[0].sandbox?.verifyCommand, "node verify.js");
     assert.equal(suite.tasks[0].sandbox?.provider, "docker");
@@ -117,6 +127,12 @@ test("default seeded benchmarks cover browser and computer-use surfaces", () => 
         ?.tasks.find((task) => task.key === "fix-react-bug")
         ?.sandbox?.verifyCommand,
       "node --test \"tests/*.test.js\""
+    );
+    assert.ok(
+      (suites
+        .find((entry) => entry.key === "core-engineering")
+        ?.tasks.find((task) => task.key === "design-rest-api")
+        ?.deliverableFormat ?? "").includes("Endpoints")
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });

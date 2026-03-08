@@ -6,6 +6,12 @@ Local-first full-stack benchmarking workbench for AI agents.
 
 ## What Changed Since v0.3.0
 
+- Reframed the Test Lab around a guided local runner flow with explicit blocker states, next-step guidance, and post-run actions.
+- Persisted failed batch jobs as first-class run history entries with failure summaries, logs, and rerun support.
+- Replaced the old fixed score framing in the UI with evaluator-aware outcome/process/review/efficiency breakdowns plus confidence labels.
+- Extended benchmark tasks with structured sections for `Why This Task`, `Inputs`, `Deliverable Format`, `Success Checks`, and `Failure Modes`.
+- Upgraded the seeded benchmark tasks so the shipped suites are more specific and benchmark-grade by default.
+- Added run-detail evidence panels with objective checks, matched/missing signals, and recommended next actions.
 - Added the first real sandbox execution path for fixture-backed benchmark tasks plus markdown agents that declare a `Runner:` command.
 - Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
 - On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
@@ -75,13 +81,16 @@ pnpm exec agent-bench compare --left <run-key> --right <run-key>
 ## The Recommended Flow
 
 1. Open the Test Lab in the browser.
-2. Enter an optional gateway API key in the provider bar, or rely on `AI_GATEWAY_API_KEY` from your environment.
-3. Load one or more agent definitions from `./agents`.
-4. Choose either:
+2. Check the `Next action` panel first; it tells you whether the current run plan is blocked, ready, running, or completed with failures.
+3. Enter an optional gateway API key in the provider bar, or rely on `AI_GATEWAY_API_KEY` from your environment.
+4. Load one or more agent definitions from `./agents`.
+5. Choose either:
    - one challenge
    - the full benchmark cycle for a suite
-5. Launch the batch and inspect the resulting runs, logs, and artifacts.
-6. Switch to Run History or the Benchmark Library when you want to review runs or author new suites/tasks.
+6. Inspect the task contract before launching: signal quality, inputs, deliverable format, success checks, and failure modes.
+7. Launch the batch and inspect the resulting runs, logs, and artifacts.
+8. If any jobs fail, open the persisted failed runs and use `Rerun failed only` after fixing the blocker.
+9. Switch to Run History or the Benchmark Library when you want to review runs or refine suites/tasks.
 
 ## Full-Stack Surface
 
@@ -168,12 +177,15 @@ Current runs now come in two honest modes:
   - score how well an agent definition appears to fit the selected benchmark task
   - use the configured model for review when `AI_GATEWAY_API_KEY` is present
   - otherwise use the deterministic rules rubric
+  - are labeled as low or medium confidence guidance depending on how structured the benchmark contract is
 - Sandboxed runs:
   - copy the task fixture into a fresh run workspace
   - execute the agent runner and optional verify command
-  - use real runner and verifier outcomes as the readiness/test score
-  - still combine that execution evidence with review scoring for the final weighted score
+  - use real runner/verifier outcomes as the objective outcome signal
+  - expose objective checks, evidence summaries, and recommended next actions in the run detail payload
+  - are labeled high confidence when deterministic checks are present
 - Generated artifacts are run reports plus execution files like the copied workspace, task brief, and sandbox profile files. They are not fake browser screenshots.
+- Batch failures are now persisted as failed history rows instead of being hidden in a transient batch response only.
 
 This means the workbench now performs real sandboxed execution for tasks that opt into the fixture/runner contract, while the broader benchmark library still contains review-only tasks as well.
 
@@ -218,6 +230,21 @@ Key: <task-key>
 ## Expected Outcome
 <what counts as complete>
 
+## Why This Task
+<why this task is worth running>
+
+## Inputs
+<fixed inputs, fixtures, constraints, or source material>
+
+## Deliverable Format
+<required output structure>
+
+## Success Checks
+- <deterministic or reviewable success criteria>
+
+## Failure Modes
+- <likely failure case to watch for>
+
 ## Sandbox
 Fixture Dir: fixtures/<task-name>
 Verify Command: node --test "tests/*.test.js"
@@ -241,6 +268,7 @@ Metadata meanings:
 - `Evaluator`: `state`, `artifact`, `trace`, `judge`, or `hybrid`
 - `Difficulty`: `low`, `medium`, or `high`
 - `Sandbox`: optional fixture-backed runtime contract for real execution
+- Structured task sections are optional for backward compatibility, but strongly recommended because the workbench now uses them for guidance and confidence labeling
 
 The repo now ships three benchmark shapes by default:
 

@@ -2,8 +2,15 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { generateText } from "ai";
-import { computeWeightedScore, performanceScoreFromMetrics } from "../core/scoring";
-import { BenchmarkSuiteRecord, BenchmarkTaskRecord, RunInput, RuntimeEvaluationRequest } from "../types";
+import { computeWeightedScore, efficiencyScoreFromMetrics } from "../core/scoring";
+import {
+  BenchmarkSuiteRecord,
+  BenchmarkTaskRecord,
+  RunInput,
+  RuntimeEvaluationRequest,
+  ScoreConfidence,
+  ScoreProfileKey
+} from "../types";
 import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
 
 const DEFAULT_MODEL = "openai/gpt-4.1-mini";
@@ -39,19 +46,29 @@ interface JudgeCacheEntry {
 }
 
 interface RulesAssessment {
-  readinessScore: number;
+  outcomeScore: number;
+  processScore: number;
   reviewScore: number;
   matchedSignals: string[];
   missingSignals: string[];
   reason: string;
 }
 
+interface ObjectiveChecksSummary {
+  available: number;
+  passed: number;
+  deterministic: boolean;
+  items: string[];
+}
+
 interface SandboxExecutionResult {
   mode: "review-only" | "sandbox";
-  testsScore: number;
+  outcomeScore: number;
+  processScore: number;
   matchedSignals: string[];
   missingSignals: string[];
   reason: string;
+  objectiveChecks: ObjectiveChecksSummary;
   workspaceDir?: string;
   taskBriefPath?: string;
   provider?: SandboxCommandResult["provider"];
@@ -270,6 +287,21 @@ function buildTaskBrief(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskReco
     "## Expected Outcome",
     task.expectedOutcome,
     "",
+    ...(task.whyThisTask
+      ? ["## Why This Task", task.whyThisTask, ""]
+      : []),
+    ...(task.inputs
+      ? ["## Inputs", task.inputs, ""]
+      : []),
+    ...(task.deliverableFormat
+      ? ["## Deliverable Format", task.deliverableFormat, ""]
+      : []),
+    ...(task.successChecks.length > 0
+      ? ["## Success Checks", ...task.successChecks.map((entry) => `- ${entry}`), ""]
+      : []),
+    ...(task.failureModes.length > 0
+      ? ["## Failure Modes", ...task.failureModes.map((entry) => `- ${entry}`), ""]
+      : []),
     "## Metadata",
     `Resolution: ${task.metadata.resolution}`,
     `Interaction: ${task.metadata.interaction}`,
@@ -284,31 +316,50 @@ function buildTaskBrief(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskReco
   ].join("\n");
 }
 
-function summarizeSandboxExecution(runner: SandboxCommandResult, verifier?: SandboxCommandResult): Pick<SandboxExecutionResult, "testsScore" | "matchedSignals" | "missingSignals" | "reason"> {
+function summarizeSandboxExecution(
+  runner: SandboxCommandResult,
+  verifier?: SandboxCommandResult
+): Pick<SandboxExecutionResult, "outcomeScore" | "processScore" | "matchedSignals" | "missingSignals" | "reason" | "objectiveChecks"> {
   const matchedSignals: string[] = [];
   const missingSignals: string[] = [];
-  let testsScore = 0;
+  let outcomeScore = 0;
+  let processScore = 1.5;
+  const objectiveItems: string[] = [];
+  let availableChecks = 1;
+  let passedChecks = 0;
 
   if (runner.exitCode === 0) {
-    testsScore += 4.5;
+    outcomeScore += 4.5;
+    processScore += 3.5;
+    passedChecks += 1;
     matchedSignals.push("agent runner exited successfully");
+    objectiveItems.push("runner exit code 0");
   } else {
     missingSignals.push(runner.timedOut ? "agent runner timed out" : "agent runner failed");
+    objectiveItems.push("runner exit code non-zero");
   }
 
   if (verifier) {
+    availableChecks += 1;
     if (verifier.exitCode === 0) {
-      testsScore += 5.5;
+      outcomeScore += 5.5;
+      processScore += 2.5;
+      passedChecks += 1;
       matchedSignals.push(`verify command passed: ${verifier.command}`);
+      objectiveItems.push(`verifier passed: ${verifier.command}`);
     } else {
       missingSignals.push(verifier.timedOut ? "verify command timed out" : `verify command failed: ${verifier.command}`);
+      objectiveItems.push(`verifier failed: ${verifier.command}`);
     }
   } else if (runner.exitCode === 0) {
-    testsScore += 2.5;
+    outcomeScore += 2.5;
+    processScore += 1;
     matchedSignals.push("no verify command configured; using runner exit status only");
+    objectiveItems.push("no verifier configured");
   }
 
   if (runner.stdout || runner.stderr) {
+    processScore += 1;
     matchedSignals.push("runner produced execution logs");
   }
 
@@ -321,10 +372,17 @@ function summarizeSandboxExecution(runner: SandboxCommandResult, verifier?: Sand
       : "Sandbox execution failed before verification could pass.";
 
   return {
-    testsScore: clampScore(testsScore),
+    outcomeScore: clampScore(outcomeScore),
+    processScore: clampScore(processScore),
     matchedSignals: matchedSignals.slice(0, 6),
     missingSignals: missingSignals.slice(0, 6),
-    reason
+    reason,
+    objectiveChecks: {
+      available: availableChecks,
+      passed: passedChecks,
+      deterministic: true,
+      items: objectiveItems
+    }
   };
 }
 
@@ -344,10 +402,17 @@ async function maybeRunSandboxExecution(input: {
   if (!input.task?.sandbox || !input.agentRunnerCommand) {
     return {
       mode: "review-only",
-      testsScore: 0,
+      outcomeScore: 0,
+      processScore: 0,
       matchedSignals: [],
       missingSignals: [],
       reason: "Sandbox execution not configured for this run.",
+      objectiveChecks: {
+        available: 0,
+        passed: 0,
+        deterministic: false,
+        items: []
+      },
       durationMs: 0
     };
   }
@@ -452,92 +517,92 @@ function buildRulesAssessment(benchmark: BenchmarkSuiteRecord, task: BenchmarkTa
   const hasDetailedSpec = agentMd.trim().length >= 180;
   const matchedSignals: string[] = [];
   const missingSignals: string[] = [];
-
-  let readinessScore = 3.4;
+  let outcomeScore = 2.8;
+  let processScore = resolution === "atomic" ? 2.4 : 2.9;
   let reviewScore = 3.1;
 
-  function bonus(condition: boolean, readinessDelta: number, reviewDelta: number, matchedLabel: string): void {
+  function bonus(condition: boolean, target: "outcome" | "process" | "review", delta: number, matchedLabel: string): void {
     if (!condition) return;
-    readinessScore += readinessDelta;
-    reviewScore += reviewDelta;
+    if (target === "outcome") outcomeScore += delta;
+    if (target === "process") processScore += delta;
+    if (target === "review") reviewScore += delta;
     matchedSignals.push(matchedLabel);
   }
 
   function requirement(
     condition: boolean,
-    readinessDelta: number,
-    reviewDelta: number,
+    target: "outcome" | "process" | "review",
+    delta: number,
     matchedLabel: string,
     missingLabel: string
   ): void {
     if (condition) {
-      readinessScore += readinessDelta;
-      reviewScore += reviewDelta;
-      matchedSignals.push(matchedLabel);
+      bonus(true, target, delta, matchedLabel);
       return;
     }
 
-    readinessScore -= readinessDelta * 0.6;
-    reviewScore -= reviewDelta * 0.5;
+    if (target === "outcome") outcomeScore -= delta * 0.7;
+    if (target === "process") processScore -= delta * 0.7;
+    if (target === "review") reviewScore -= delta * 0.6;
     missingSignals.push(missingLabel);
   }
 
-  bonus(hasRole, 0.4, 0.7, "clear role or behavior contract");
-  bonus(hasStructuredMarkdown, 0.2, 0.5, "structured instructions");
-  bonus(hasDetailedSpec, 0.3, 0.4, "enough instruction detail for stable execution");
-  requirement(hasVerification, 0.8, 1.0, "explicit verification or acceptance checks", "verification or acceptance checks are missing");
-  bonus(hasSafety, 0.2, 0.8, "failure handling or rollback guidance");
-  requirement(hasDeliverable, 0.6, 0.5, "clear output expectations", "deliverable or output expectations are not explicit");
+  bonus(hasRole, "review", 0.8, "clear role or behavior contract");
+  bonus(hasStructuredMarkdown, "review", 0.5, "structured instructions");
+  bonus(hasDetailedSpec, "review", 0.5, "enough instruction detail for stable execution");
+  requirement(hasVerification, "outcome", 1.1, "explicit verification or acceptance checks", "verification or acceptance checks are missing");
+  bonus(hasSafety, "review", 0.8, "failure handling or rollback guidance");
+  requirement(hasDeliverable, "outcome", 0.8, "clear output expectations", "deliverable or output expectations are not explicit");
 
   if (resolution === "workflow") {
-    requirement(hasPlanning, 1.0, 0.5, "workflow planning signals", "workflow planning guidance is missing");
+    requirement(hasPlanning, "process", 1.2, "workflow planning signals", "workflow planning guidance is missing");
   } else if (resolution === "campaign") {
-    requirement(hasPlanning && hasSafety, 1.4, 0.7, "long-horizon planning and recovery signals", "campaign-level planning or recovery guidance is missing");
+    requirement(hasPlanning && hasSafety, "process", 1.5, "long-horizon planning and recovery signals", "campaign-level planning or recovery guidance is missing");
   } else if (resolution === "swarm") {
-    requirement(hasPlanning && hasDelegation, 1.8, 0.9, "multi-agent orchestration guidance", "swarm orchestration or handoff guidance is missing");
+    requirement(hasPlanning && hasDelegation, "process", 1.9, "multi-agent orchestration guidance", "swarm orchestration or handoff guidance is missing");
   } else {
-    bonus(hasVerification, 0.4, 0.3, "atomic task acceptance focus");
+    bonus(hasVerification, "outcome", 0.4, "atomic task acceptance focus");
   }
 
   if (interaction === "artifact") {
-    requirement(hasDeliverable || hasVerification, 1.0, 0.3, "artifact-oriented completion signals", "artifact completion criteria are not described");
+    requirement(hasDeliverable || hasVerification, "outcome", 1.0, "artifact-oriented completion signals", "artifact completion criteria are not described");
   }
   if (interaction === "terminal") {
-    requirement(hasTerminal, 1.5, 0.4, "terminal and repo operations capability", "terminal or repo operations are not described");
+    requirement(hasTerminal, "process", 1.4, "terminal and repo operations capability", "terminal or repo operations are not described");
   }
   if (interaction === "browser") {
-    requirement(hasBrowser, 1.8, 0.5, "browser workflow capability", "browser interaction capability is missing");
+    requirement(hasBrowser, "process", 1.8, "browser workflow capability", "browser interaction capability is missing");
   }
   if (interaction === "computer-use") {
-    requirement(hasComputer, 1.8, 0.5, "computer-use capability", "computer-use capability is missing");
+    requirement(hasComputer, "process", 1.8, "computer-use capability", "computer-use capability is missing");
   }
   if (interaction === "tool-use") {
-    requirement(hasToolUse || hasBrowser || hasTerminal, 1.4, 0.4, "tool invocation capability", "tool invocation capability is missing");
+    requirement(hasToolUse || hasBrowser || hasTerminal, "process", 1.5, "tool invocation capability", "tool invocation capability is missing");
   }
   if (interaction === "multi-agent") {
-    requirement(hasDelegation, 2.0, 0.7, "delegation and handoff capability", "delegation or handoff guidance is missing");
+    requirement(hasDelegation, "process", 2.0, "delegation and handoff capability", "delegation or handoff guidance is missing");
   }
 
   if (requiresNetwork) {
-    requirement(hasNetwork, 0.8, 0.2, "network or web access intent", "task requires network use but the agent spec does not mention web or API work");
+    requirement(hasNetwork, "process", 0.9, "network or web access intent", "task requires network use but the agent spec does not mention web or API work");
   }
   if (requiresIsolation) {
-    requirement(hasIsolation || hasTerminal, 0.8, 0.2, "workspace or isolation awareness", "task expects isolated workspace handling but the agent spec does not mention it");
+    requirement(hasIsolation || hasTerminal, "process", 0.8, "workspace or isolation awareness", "task expects isolated workspace handling but the agent spec does not mention it");
   }
 
   const matchedKeywords = taskTags.filter((tag) => normalizeKeyword(tag).some((keyword) => agentText.includes(keyword)));
   if (matchedKeywords.length > 0) {
-    readinessScore += Math.min(1.2, matchedKeywords.length * 0.3);
+    outcomeScore += Math.min(1.1, matchedKeywords.length * 0.3);
     reviewScore += Math.min(0.8, matchedKeywords.length * 0.2);
     matchedSignals.push(`task keywords present: ${matchedKeywords.slice(0, 4).join(", ")}`);
   } else if (taskTags.length > 0) {
-    readinessScore -= 0.7;
+    outcomeScore -= 0.7;
     reviewScore -= 0.4;
     missingSignals.push("task-specific keywords are not reflected in the agent spec");
   }
 
   if (difficulty === "high" && !hasDetailedSpec) {
-    readinessScore -= 0.8;
+    processScore -= 0.8;
     reviewScore -= 0.6;
     missingSignals.push("high-difficulty task but the agent instructions are still very thin");
   }
@@ -550,12 +615,65 @@ function buildRulesAssessment(benchmark: BenchmarkSuiteRecord, task: BenchmarkTa
   ].filter(Boolean).join(" ");
 
   return {
-    readinessScore: clampScore(readinessScore),
+    outcomeScore: clampScore(outcomeScore),
+    processScore: clampScore(processScore),
     reviewScore: clampScore(reviewScore),
     matchedSignals: matchedSignals.slice(0, 6),
     missingSignals: missingSignals.slice(0, 6),
     reason: reason || "Rules review found a basic but weak agent specification with limited task-specific evidence."
   };
+}
+
+function determineScoreProfile(task: BenchmarkTaskRecord | undefined, sandbox: SandboxExecutionResult): ScoreProfileKey {
+  if (sandbox.mode === "sandbox") {
+    return task?.metadata.evaluator === "trace" ? "trace" : "hybrid";
+  }
+
+  return task?.metadata.evaluator ?? "hybrid";
+}
+
+function determineScoreConfidence(task: BenchmarkTaskRecord | undefined, sandbox: SandboxExecutionResult): ScoreConfidence {
+  if (sandbox.mode === "sandbox" && sandbox.objectiveChecks.deterministic && sandbox.objectiveChecks.available > 0) {
+    return "high";
+  }
+
+  if (task && (task.whyThisTask || task.inputs || task.deliverableFormat || task.successChecks.length > 0 || task.failureModes.length > 0)) {
+    return "medium";
+  }
+
+  return "low";
+}
+
+function buildRecommendedNextActions(input: {
+  sandbox: SandboxExecutionResult;
+  scoreConfidence: ScoreConfidence;
+  matchedSignals: string[];
+  missingSignals: string[];
+  task?: BenchmarkTaskRecord;
+}): string[] {
+  const actions: string[] = [];
+
+  if (input.sandbox.mode === "sandbox" && input.sandbox.runner && input.sandbox.runner.exitCode !== 0) {
+    actions.push("Inspect the runner log and sandbox profile before rerunning.");
+  } else if (input.sandbox.mode === "sandbox" && input.sandbox.verifier && input.sandbox.verifier.exitCode !== 0) {
+    actions.push("Open the verifier output and fix the generated workspace state before rerunning.");
+  }
+
+  if (input.missingSignals.length > 0) {
+    actions.push(`Tighten the agent/task contract around: ${input.missingSignals.slice(0, 2).join("; ")}.`);
+  }
+
+  if (input.scoreConfidence === "low") {
+    actions.push("Treat this score as directional only; add a fixture or deterministic verifier for stronger evidence.");
+  } else if (input.scoreConfidence === "medium") {
+    actions.push("Promote this task to a deterministic benchmark by adding an executable verifier.");
+  }
+
+  if (actions.length === 0 && input.task) {
+    actions.push(`Inspect the highest-signal evidence for ${input.task.key} and compare it against the best prior run.`);
+  }
+
+  return actions.slice(0, 3);
 }
 
 function buildRunReportSvg(input: {
@@ -642,7 +760,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     model,
     providerApiKey: input.gatewayApiKey
   });
-  const readinessScore = sandbox.mode === "sandbox" ? sandbox.testsScore : assessment.readinessScore;
+  const outcomeScore = sandbox.mode === "sandbox" ? sandbox.outcomeScore : assessment.outcomeScore;
+  const processScore = sandbox.mode === "sandbox" && sandbox.processScore > 0 ? sandbox.processScore : assessment.processScore;
 
   const apiKey = input.gatewayApiKey?.trim() || process.env.AI_GATEWAY_API_KEY;
   const cacheEnabled = getJudgeCacheEnabled();
@@ -651,7 +770,9 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Rules Assessment:\n${JSON.stringify(assessment, null, 2)}`,
     `Sandbox Execution:\n${JSON.stringify({
       mode: sandbox.mode,
-      testsScore: sandbox.testsScore,
+      outcomeScore: sandbox.outcomeScore,
+      processScore: sandbox.processScore,
+      objectiveChecks: sandbox.objectiveChecks,
       reason: sandbox.reason,
       runner: sandbox.runner
         ? {
@@ -738,8 +859,22 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const costUsd = estimateCostUsd(judge.totalTokens);
   const latencyMs = sandbox.mode === "sandbox" ? Math.max(sandbox.durationMs, judge.latencyMs) : judge.latencyMs;
   const durationMs = Date.now() - started;
-  const perfScore = performanceScoreFromMetrics(latencyMs, costUsd);
-  const scores = computeWeightedScore(readinessScore, judge.score, perfScore);
+  const scoreProfile = determineScoreProfile(selectedTask, sandbox);
+  const scoreConfidence = determineScoreConfidence(selectedTask, sandbox);
+  const efficiencyScore = efficiencyScoreFromMetrics({
+    latencyMs,
+    costUsd,
+    difficulty: selectedTask?.metadata.difficulty ?? "medium",
+    timeoutMs: selectedTask?.sandbox?.timeoutMs,
+    requiresNetwork: selectedTask?.metadata.requiresNetwork
+  });
+  const scores = computeWeightedScore({
+    profile: scoreProfile,
+    outcome: outcomeScore,
+    process: processScore,
+    review: judge.score,
+    efficiency: efficiencyScore
+  });
   const matchedSignals = [
     ...assessment.matchedSignals,
     ...sandbox.matchedSignals
@@ -748,6 +883,13 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     ...assessment.missingSignals,
     ...sandbox.missingSignals
   ].slice(0, 8);
+  const recommendedNextActions = buildRecommendedNextActions({
+    sandbox,
+    scoreConfidence,
+    matchedSignals,
+    missingSignals,
+    task: selectedTask
+  });
   const logText = [
     `Run key: ${input.runKey}`,
     `Benchmark: ${input.benchmarkKey}`,
@@ -757,14 +899,19 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Sandbox provider: ${sandbox.provider ?? "n/a"}`,
     `Network access: ${sandbox.networkAccess ?? "n/a"}`,
     `Review mode: ${judge.mode}`,
+    `Score profile: ${scoreProfile}`,
+    `Score confidence: ${scoreConfidence}`,
     `Model: ${model}`,
-    `Readiness score: ${readinessScore}`,
+    `Outcome score: ${outcomeScore}`,
+    `Process score: ${processScore}`,
     `Review score: ${judge.score}`,
-    `Performance score: ${perfScore}`,
+    `Efficiency score: ${efficiencyScore}`,
     `Latency: ${latencyMs}ms`,
     `Cost: $${costUsd.toFixed(4)}`,
+    `Objective checks: ${sandbox.objectiveChecks.passed}/${sandbox.objectiveChecks.available}`,
     `Matched signals: ${matchedSignals.join("; ") || "none"}`,
     `Open gaps: ${missingSignals.join("; ") || "none"}`,
+    `Recommended next actions: ${recommendedNextActions.join(" | ") || "none"}`,
     sandbox.runner ? `Runner exit: ${sandbox.runner.exitCode ?? "null"} (${sandbox.runner.durationMs}ms) @ ${sandbox.runner.cwd}` : "Runner exit: n/a",
     sandbox.verifier ? `Verify exit: ${sandbox.verifier.exitCode ?? "null"} (${sandbox.verifier.durationMs}ms) @ ${sandbox.verifier.cwd}` : "Verify exit: n/a",
     `Review reason: ${judge.reason}`,
@@ -777,17 +924,40 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     taskKey: input.taskKey ?? null,
     suiteMetadata: selectedBenchmark.metadata,
     taskMetadata: selectedTask?.metadata ?? null,
+    taskContract: selectedTask ? {
+      whyThisTask: selectedTask.whyThisTask,
+      inputs: selectedTask.inputs,
+      deliverableFormat: selectedTask.deliverableFormat,
+      successChecks: selectedTask.successChecks,
+      failureModes: selectedTask.failureModes
+    } : null,
     model,
     executionMode: sandbox.mode,
     reviewMode: judge.mode,
+    scoreProfile,
+    scoreConfidence,
     scoreLabels: {
-      tests: sandbox.mode === "sandbox" ? "execution" : "task-fit",
-      judge: "review",
-      performance: "performance"
+      outcome: sandbox.mode === "sandbox" ? "execution outcome" : "task-fit outcome",
+      process: "workflow/process",
+      review: "review",
+      efficiency: "efficiency"
     },
     scores,
     assessment,
     sandbox,
+    objectiveChecks: sandbox.objectiveChecks,
+    evidence: {
+      matchedSignals,
+      missingSignals,
+      artifacts: [
+        "summary.json",
+        "session.log",
+        "report.svg",
+        ...(sandbox.taskBriefPath ? ["task-brief.md"] : []),
+        ...(sandbox.workspaceDir ? ["workspace/"] : [])
+      ]
+    },
+    recommendedNextActions,
     latencyMs,
     costUsd,
     durationMs,
@@ -801,9 +971,9 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     taskKey: input.taskKey,
     agentName,
     total: scores.total,
-    readiness: scores.tests,
-    review: scores.judge,
-    performance: scores.performance,
+    readiness: scores.outcome,
+    review: scores.review,
+    performance: scores.efficiency,
     executionDetail: sandbox.mode === "sandbox"
       ? `${sandbox.provider ?? "sandbox"} | network ${sandbox.networkAccess ?? "n/a"}`
       : "review-only",
@@ -817,7 +987,11 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     agentName,
     agentVersion,
     suiteName: input.taskKey ? `${input.benchmarkKey}/${input.taskKey}` : input.benchmarkKey,
+    status: "completed",
     scores,
+    scoreProfile,
+    scoreConfidence,
+    failureReason: null,
     latencyMs,
     costUsd,
     durationMs,

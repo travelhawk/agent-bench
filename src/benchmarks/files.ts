@@ -11,6 +11,8 @@ import {
 import { BenchmarkSandboxProvider, BenchmarkSuiteRecord, BenchmarkTaskRecord } from "../types";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 120000;
+const EMPTY_TASK_TEXT = "";
+const EMPTY_TASK_LIST: string[] = [];
 
 const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
   {
@@ -26,8 +28,21 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
       {
         key: "design-rest-api",
         title: "Design REST API",
-        description: "Produce routes and contracts for a small API specification task.",
-        expectedOutcome: "Deliver endpoint list, request/response schemas, and error model.",
+        description: "Design a deterministic REST API for a support ticket service using the provided entity model and policy constraints.",
+        expectedOutcome: "Deliver a complete API proposal with routes, schemas, validation rules, idempotency behavior, and error handling aligned to the supplied constraints.",
+        whyThisTask: "This checks whether an agent can turn a bounded product brief into a production-credible contract instead of returning generic CRUD boilerplate.",
+        inputs: "Use the task brief as the fixed input set: tickets, comments, assignees, SLA policy, and audit-log requirements. Do not invent extra resources unless you justify them explicitly.",
+        deliverableFormat: "Return sections for Endpoints, Request Schemas, Response Schemas, Validation Rules, Error Model, and Open Questions.",
+        successChecks: [
+          "Every endpoint is tied to the provided entities and workflows.",
+          "Schemas define required fields, identifiers, and validation behavior.",
+          "Error handling covers auth, validation, missing resources, and conflicts."
+        ],
+        failureModes: [
+          "Generic CRUD routes that ignore workflow constraints.",
+          "Missing schema details or error behavior.",
+          "Invented features that were not motivated by the brief."
+        ],
         metadata: {
           resolution: "atomic",
           interaction: "artifact",
@@ -44,6 +59,19 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         title: "Fix React Bug",
         description: "Repair a failing React component behavior in an isolated repo.",
         expectedOutcome: "Return a patch and tests that make the component deterministic and pass all checks.",
+        whyThisTask: "This is the baseline deterministic engineering task. It should distinguish agents that can edit code safely from agents that only describe a fix.",
+        inputs: "Use only the fixture repository copied into the sandbox workspace.",
+        deliverableFormat: "Modify the fixture code and leave the workspace in a passing state for the verifier command.",
+        successChecks: [
+          "The runner exits successfully.",
+          "The verifier command passes.",
+          "The resulting component behavior is deterministic."
+        ],
+        failureModes: [
+          "The code still fails tests.",
+          "The fix relies on brittle behavior or leaves the repo inconsistent.",
+          "The runner edits files outside the allowed workspace."
+        ],
         metadata: {
           resolution: "atomic",
           interaction: "terminal",
@@ -64,6 +92,18 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         title: "Logic Puzzle",
         description: "Solve a deterministic reasoning benchmark with traceable steps.",
         expectedOutcome: "Produce the final answer with concise rationale and internally consistent steps.",
+        whyThisTask: "This keeps a low-cost review-only task in the suite for quick reasoning checks when no sandbox is needed.",
+        inputs: "Use only the prompt content in the task brief.",
+        deliverableFormat: "Return the final answer first, then a short rationale that is internally consistent.",
+        successChecks: [
+          "The final answer is explicit.",
+          "The rationale does not contradict the answer."
+        ],
+        failureModes: [
+          "Ambiguous or missing final answer.",
+          "Reasoning contradicts the stated conclusion.",
+          "Overly long response that obscures the answer."
+        ],
         metadata: {
           resolution: "atomic",
           interaction: "artifact",
@@ -78,8 +118,21 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
       {
         key: "sql-refactor",
         title: "SQL Refactor",
-        description: "Improve correctness and performance of an existing SQL query.",
-        expectedOutcome: "Return corrected SQL plus rationale and measurable performance improvements.",
+        description: "Refactor a flawed reporting query against a fixed schema so it becomes correct, maintainable, and measurably cheaper to execute.",
+        expectedOutcome: "Return corrected SQL, explain the correctness fix, and describe the expected performance improvements against the supplied query shape.",
+        whyThisTask: "This checks whether the agent can reason about correctness and query design instead of only rewriting syntax.",
+        inputs: "Use the fixed schema, broken query, and performance symptoms provided in the task brief.",
+        deliverableFormat: "Return sections for Corrected Query, Correctness Notes, Performance Notes, and Validation Plan.",
+        successChecks: [
+          "The corrected query addresses the stated bug.",
+          "The explanation names at least one concrete performance improvement.",
+          "The output references the supplied schema and constraints."
+        ],
+        failureModes: [
+          "Returns SQL without explaining why it is correct.",
+          "Optimizes the query while changing the requested semantics.",
+          "Uses unsupported tables or columns."
+        ],
         metadata: {
           resolution: "atomic",
           interaction: "artifact",
@@ -108,6 +161,19 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         title: "Research Synthesis Loop",
         description: "Collect evidence across multiple sources, reconcile conflicts, and deliver a concise research brief with citations and open questions.",
         expectedOutcome: "Return a source-backed brief, a compact evidence table, and explicit uncertainty notes for anything unresolved.",
+        whyThisTask: "This evaluates whether the agent can synthesize evidence instead of dumping search results.",
+        inputs: "Use at least three current external sources, include publication or access dates, and explicitly reconcile conflicting claims.",
+        deliverableFormat: "Return sections for Executive Brief, Evidence Table, Conflicts, Open Questions, and Sources.",
+        successChecks: [
+          "At least three sources are cited.",
+          "Conflicting evidence is reconciled or left explicitly unresolved.",
+          "The output includes a compact evidence table."
+        ],
+        failureModes: [
+          "Uncited factual claims.",
+          "No conflict handling.",
+          "Source list without synthesis."
+        ],
         metadata: {
           resolution: "workflow",
           interaction: "tool-use",
@@ -122,8 +188,21 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
       {
         key: "release-war-room",
         title: "Release War Room",
-        description: "Drive a staged release workflow: assess failures, propose fixes, run checks, and produce a release decision with rollback notes.",
-        expectedOutcome: "Return the decision record, evidence from checks, and a rollback or follow-up plan when the release should not proceed.",
+        description: "Run a bounded release triage using the supplied failing checks, deployment notes, and rollback policy to decide whether the release should ship.",
+        expectedOutcome: "Return a release decision record with evidence, blocking issues, remediation plan, and rollback guidance that matches the provided constraints.",
+        whyThisTask: "This checks long-horizon operational reasoning under explicit ship-or-hold pressure.",
+        inputs: "Use the fixed release notes, failing checks, risk policy, and ownership roster supplied in the task brief.",
+        deliverableFormat: "Return sections for Decision, Evidence, Blocking Issues, Immediate Actions, Rollback Plan, and Follow-up Owners.",
+        successChecks: [
+          "The decision is explicit: ship, hold, or rollback.",
+          "Evidence cites the supplied checks and policies.",
+          "Rollback or follow-up steps are concrete and assigned."
+        ],
+        failureModes: [
+          "No explicit release decision.",
+          "Advice that ignores the stated risk policy.",
+          "No rollback path when the release should not continue."
+        ],
         metadata: {
           resolution: "campaign",
           interaction: "terminal",
@@ -138,8 +217,21 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
       {
         key: "superagent-handoff-mesh",
         title: "Superagent Handoff Mesh",
-        description: "Coordinate multiple specialist roles to split a large task, merge their outputs, resolve conflicts, and publish one coherent result with delegation notes.",
-        expectedOutcome: "Return the merged deliverable, a role-by-role handoff summary, and explicit conflict resolution notes for any contradictory sub-results.",
+        description: "Coordinate multiple specialist roles against a fixed project brief, merge their outputs, and resolve contradictory recommendations into one coherent result.",
+        expectedOutcome: "Return the merged deliverable, role-by-role handoff notes, explicit conflict resolution, and remaining risks.",
+        whyThisTask: "This tests whether the agent can structure delegation and synthesis rather than merely mentioning collaboration.",
+        inputs: "Use the fixed project brief, specialist responsibilities, and conflicting sub-findings provided in the task brief.",
+        deliverableFormat: "Return sections for Final Deliverable, Specialist Outputs, Conflict Resolution, Remaining Risks, and Handoff Notes.",
+        successChecks: [
+          "Each specialist role has a bounded responsibility.",
+          "Conflicts are resolved explicitly.",
+          "The merged output is coherent and does not contradict sub-results."
+        ],
+        failureModes: [
+          "Mentions multiple agents without clear handoffs.",
+          "Leaves conflicts unresolved.",
+          "Final output contradicts one or more specialist summaries."
+        ],
         metadata: {
           resolution: "swarm",
           interaction: "multi-agent",
@@ -168,6 +260,19 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         title: "Browser Support Escalation",
         description: "Work through a browser-based support console, collect state from multiple screens, update the case, and leave a concise operator note.",
         expectedOutcome: "Return the final case decision, the updated fields, and the note text that explains the escalation outcome.",
+        whyThisTask: "This verifies a real browser workflow where state collection and final operator notes both matter.",
+        inputs: "Use the seeded browser fixture exactly as loaded by the runner.",
+        deliverableFormat: "Update the case through the browser flow and write the expected result artifact for the verifier.",
+        successChecks: [
+          "The runner completes the browser workflow.",
+          "The verifier passes.",
+          "The final artifact contains the case decision, field updates, and note text."
+        ],
+        failureModes: [
+          "Incomplete browser traversal.",
+          "Missing or malformed result artifact.",
+          "Case note does not justify the escalation outcome."
+        ],
         metadata: {
           resolution: "workflow",
           interaction: "browser",
@@ -189,6 +294,19 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         title: "Computer Use Incident Drill",
         description: "Triage a noisy incident from a desktop-style environment, gather evidence from multiple tools, and publish a recovery plan under time pressure.",
         expectedOutcome: "Return the incident decision, the evidence captured from each tool, and a recovery plan with explicit next actions.",
+        whyThisTask: "This tests multi-surface evidence gathering and operational decision making under pressure.",
+        inputs: "Use the seeded desktop fixture with alerts, terminal output, ticket text, and runbook notes.",
+        deliverableFormat: "Produce the expected incident-plan artifact with a decision, evidence, and ordered recovery actions.",
+        successChecks: [
+          "The runner captures evidence from the provided surfaces.",
+          "The verifier passes.",
+          "The plan includes explicit next actions."
+        ],
+        failureModes: [
+          "Ignores one or more evidence sources.",
+          "Missing incident artifact.",
+          "Recovery plan is vague or unordered."
+        ],
         metadata: {
           resolution: "campaign",
           interaction: "computer-use",
@@ -207,8 +325,21 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
       {
         key: "tool-router-triage",
         title: "Tool Router Triage",
-        description: "Choose between multiple internal tools, route the work to the right surface, and justify why each tool call was necessary.",
-        expectedOutcome: "Return the routed plan, the tool-by-tool execution log, and a final summary of why the chosen path was correct.",
+        description: "Route a bounded operational request across multiple internal tools using the supplied tool catalog, escalation rules, and target outcome.",
+        expectedOutcome: "Return the routing plan, tool-by-tool execution sequence, decision rationale, and final completion summary.",
+        whyThisTask: "This checks whether the agent can choose tools intentionally instead of spraying calls across every available surface.",
+        inputs: "Use the fixed tool catalog, request brief, and escalation rules from the task brief.",
+        deliverableFormat: "Return sections for Routing Decision, Step Sequence, Tool Justification, Risks, and Final Summary.",
+        successChecks: [
+          "The selected tools are justified against the request.",
+          "The sequence is ordered and plausible.",
+          "Risks or escalation boundaries are called out."
+        ],
+        failureModes: [
+          "Uses tools without justification.",
+          "No ordered execution path.",
+          "Ignores escalation boundaries."
+        ],
         metadata: {
           resolution: "workflow",
           interaction: "tool-use",
@@ -287,6 +418,24 @@ function sandboxToMarkdown(sandbox: BenchmarkTaskRecord["sandbox"]): string[] {
   ];
 }
 
+function listSectionToMarkdown(heading: string, items: string[]): string[] {
+  if (items.length === 0) return [];
+  return [
+    `## ${heading}`,
+    ...items.map((item) => `- ${item}`),
+    ""
+  ];
+}
+
+function textSectionToMarkdown(heading: string, value: string): string[] {
+  if (!value.trim()) return [];
+  return [
+    `## ${heading}`,
+    value.trim(),
+    ""
+  ];
+}
+
 function suiteToMarkdown(suite: BenchmarkSuiteRecord): string {
   return [
     `# ${suite.title}`,
@@ -312,6 +461,11 @@ function taskToMarkdown(task: BenchmarkTaskRecord): string {
     "## Expected Outcome",
     task.expectedOutcome.trim(),
     "",
+    ...textSectionToMarkdown("Why This Task", task.whyThisTask),
+    ...textSectionToMarkdown("Inputs", task.inputs),
+    ...textSectionToMarkdown("Deliverable Format", task.deliverableFormat),
+    ...listSectionToMarkdown("Success Checks", task.successChecks),
+    ...listSectionToMarkdown("Failure Modes", task.failureModes),
     ...sandboxToMarkdown(task.sandbox),
     ...taskMetadataToMarkdown(normalizeTaskMetadataInput(task.metadata))
   ].join("\n");
@@ -320,6 +474,16 @@ function taskToMarkdown(task: BenchmarkTaskRecord): string {
 function extractSection(content: string, heading: string): string {
   const expression = new RegExp(`## ${heading}\\s*([\\s\\S]*?)(?=\\r?\\n##\\s+|\\s*$)`);
   return content.match(expression)?.[1]?.trim() || "";
+}
+
+function parseListSection(section: string): string[] {
+  if (!section.trim()) return [];
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^[-*]\s+/, "").trim())
+    .filter(Boolean);
 }
 
 function parseSuiteMarkdown(content: string, fallbackKey: string): { key: string; title: string; description: string; metadata: BenchmarkSuiteRecord["metadata"] } {
@@ -341,6 +505,11 @@ function parseTaskMarkdown(content: string, fallbackKey: string): BenchmarkTaskR
   const keyMatch = content.match(/^Key:\s*(.+)$/m);
   const description = extractSection(content, "Task");
   const expectedOutcome = extractSection(content, "Expected Outcome");
+  const whyThisTask = extractSection(content, "Why This Task");
+  const inputs = extractSection(content, "Inputs");
+  const deliverableFormat = extractSection(content, "Deliverable Format");
+  const successChecks = parseListSection(extractSection(content, "Success Checks"));
+  const failureModes = parseListSection(extractSection(content, "Failure Modes"));
   const sandbox = parseTaskSandbox(extractSection(content, "Sandbox"));
   const metadata = parseTaskMetadata(extractSection(content, "Metadata"));
 
@@ -350,6 +519,11 @@ function parseTaskMarkdown(content: string, fallbackKey: string): BenchmarkTaskR
     title: titleMatch?.[1]?.trim() || key,
     description,
     expectedOutcome,
+    whyThisTask,
+    inputs,
+    deliverableFormat,
+    successChecks,
+    failureModes,
     metadata,
     sandbox
   };
@@ -487,6 +661,11 @@ export function createBenchmarkTaskFile(benchmarksDir: string, input: {
   title: string;
   description: string;
   expectedOutcome: string;
+  whyThisTask?: string;
+  inputs?: string;
+  deliverableFormat?: string;
+  successChecks?: string[];
+  failureModes?: string[];
   metadata?: Partial<BenchmarkTaskRecord["metadata"]>;
   sandbox?: BenchmarkTaskRecord["sandbox"];
 }): BenchmarkTaskRecord {
@@ -512,6 +691,11 @@ export function createBenchmarkTaskFile(benchmarksDir: string, input: {
     title: input.title.trim(),
     description: input.description.trim(),
     expectedOutcome: input.expectedOutcome.trim(),
+    whyThisTask: input.whyThisTask?.trim() ?? EMPTY_TASK_TEXT,
+    inputs: input.inputs?.trim() ?? EMPTY_TASK_TEXT,
+    deliverableFormat: input.deliverableFormat?.trim() ?? EMPTY_TASK_TEXT,
+    successChecks: input.successChecks?.map((entry) => entry.trim()).filter(Boolean) ?? EMPTY_TASK_LIST,
+    failureModes: input.failureModes?.map((entry) => entry.trim()).filter(Boolean) ?? EMPTY_TASK_LIST,
     metadata: normalizeTaskMetadataInput(input.metadata),
     sandbox: input.sandbox ?? null
   };

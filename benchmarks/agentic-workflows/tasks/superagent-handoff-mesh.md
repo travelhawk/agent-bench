@@ -3,10 +3,29 @@
 Key: superagent-handoff-mesh
 
 ## Task
-Coordinate multiple specialist roles to split a large task, merge their outputs, resolve conflicts, and publish one coherent result with delegation notes.
+Coordinate multiple specialist roles against a fixed project brief, merge their outputs, and resolve contradictory recommendations into one coherent result.
 
 ## Expected Outcome
-Return the merged deliverable, a role-by-role handoff summary, and explicit conflict resolution notes for any contradictory sub-results.
+Return the merged deliverable, role-by-role handoff notes, explicit conflict resolution, and remaining risks.
+
+## Why This Task
+This tests whether the agent can structure delegation and synthesis rather than merely mentioning collaboration.
+
+## Inputs
+Use the fixed project brief, specialist responsibilities, and conflicting sub-findings provided in the task brief.
+
+## Deliverable Format
+Return sections for Final Deliverable, Specialist Outputs, Conflict Resolution, Remaining Risks, and Handoff Notes.
+
+## Success Checks
+- Each specialist role has a bounded responsibility.
+- Conflicts are resolved explicitly.
+- The merged output is coherent and does not contradict sub-results.
+
+## Failure Modes
+- Mentions multiple agents without clear handoffs.
+- Leaves conflicts unresolved.
+- Final output contradicts one or more specialist summaries.
 
 ## Metadata
 Resolution: swarm

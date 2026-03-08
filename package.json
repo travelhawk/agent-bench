@@ -2,7 +2,7 @@
   "name": "agent-bench",
   "version": "0.3.0",
   "description": "CLI and full-stack workbench for benchmarking AI agents",
-  "packageManager": "pnpm@10.27.0",
+  "packageManager": "pnpm@10.31.0",
   "main": "dist/src/index.js",
   "bin": {
     "agent-bench": "dist/src/index.js"

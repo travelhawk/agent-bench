@@ -64,6 +64,16 @@ button {
   cursor: pointer;
 }
 
+button:focus-visible,
+a:focus-visible,
+.agent-card:focus-visible,
+.playlist-card:focus-visible,
+.suite-pill:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid rgba(255, 209, 102, 0.75);
+  outline-offset: 3px;
+}
+
 code,
 pre {
   font-family: "SFMono-Regular", ui-monospace, monospace;
@@ -269,7 +279,9 @@ pre {
 .benchmark-library,
 .library-stack,
 .agent-list,
-.playlist-list {
+.playlist-list,
+.guidance-grid,
+.detail-stack {
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -346,6 +358,47 @@ pre {
   gap: 0.75rem;
 }
 
+.guidance-panel {
+  background:
+    radial-gradient(circle at top right, rgba(42, 198, 141, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(11, 18, 34, 0.94), rgba(8, 16, 31, 0.92));
+}
+
+.guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.callout {
+  border-radius: 1.2rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--muted);
+}
+
+.callout strong {
+  color: var(--text);
+}
+
+.callout-success {
+  border-color: rgba(42, 198, 141, 0.24);
+  background: rgba(42, 198, 141, 0.12);
+}
+
+.callout-error {
+  border-color: rgba(252, 165, 165, 0.28);
+  background: rgba(127, 29, 29, 0.25);
+}
+
+.callout-neutral {
+  border-color: rgba(96, 165, 250, 0.22);
+  background: rgba(30, 64, 175, 0.18);
+}
+
 .summary-band strong {
   font-family: "Space Grotesk", sans-serif;
   font-size: 1.1rem;
@@ -360,6 +413,19 @@ pre {
   background: rgba(255, 255, 255, 0.02);
   text-align: left;
   transition: 160ms ease;
+}
+
+.playlist-section {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  color: #dce5f1;
+}
+
+.playlist-section strong {
+  font-size: 0.82rem;
+  color: #f5d2b2;
 }
 
 .agent-card:hover,
@@ -428,6 +494,26 @@ pre {
   color: #dbe5f3;
 }
 
+.status-chip-good {
+  border-color: rgba(42, 198, 141, 0.28);
+  background: rgba(42, 198, 141, 0.16);
+}
+
+.status-chip-warn {
+  border-color: rgba(255, 209, 102, 0.28);
+  background: rgba(255, 209, 102, 0.14);
+}
+
+.status-chip-bad {
+  border-color: rgba(252, 165, 165, 0.28);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.status-chip-muted {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(51, 65, 85, 0.3);
+}
+
 .field-checkbox {
   flex-direction: row;
   align-items: center;
@@ -448,6 +534,23 @@ pre {
   background:
     radial-gradient(circle at top right, rgba(255, 157, 77, 0.18), transparent 30%),
     linear-gradient(180deg, rgba(11, 18, 34, 0.94), rgba(8, 16, 31, 0.92));
+}
+
+.workflow-chip-blocked,
+.workflow-chip-completed-with-failures {
+  border-color: rgba(252, 165, 165, 0.28);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.workflow-chip-ready,
+.workflow-chip-completed-clean {
+  border-color: rgba(42, 198, 141, 0.28);
+  background: rgba(42, 198, 141, 0.16);
+}
+
+.workflow-chip-running {
+  border-color: rgba(255, 209, 102, 0.28);
+  background: rgba(255, 209, 102, 0.14);
 }
 
 .step-badge {
@@ -481,6 +584,12 @@ pre {
   flex: 1;
 }
 
+.action-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .score-pill {
   width: 4.2rem;
   height: 4.2rem;
@@ -493,6 +602,10 @@ pre {
 
 .run-copy {
   flex: 1;
+}
+
+.run-card-failed {
+  border-color: rgba(252, 165, 165, 0.18);
 }
 
 .run-image,
@@ -532,6 +645,12 @@ pre {
   opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+.secondary-action:disabled,
+.text-link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .text-link {
@@ -580,6 +699,31 @@ pre {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.detail-stack {
+  border-radius: 1.2rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.status-line-success {
+  color: #9be7bd;
+}
+
+.status-line-error {
+  color: #f7b1b1;
+}
+
+.status-line-neutral {
+  color: var(--muted);
+}
+
 .detail-cell {
   color: var(--muted);
 }
@@ -591,7 +735,8 @@ pre {
 @media (max-width: 1260px) {
   .hero,
   .lab-grid,
-  .dashboard-grid {
+  .dashboard-grid,
+  .guidance-grid {
     grid-template-columns: 1fr;
   }
 }

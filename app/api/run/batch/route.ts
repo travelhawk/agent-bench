@@ -14,6 +14,11 @@ export async function POST(request: Request) {
       providerApiKey?: string;
       runMode?: "single-task" | "benchmark-cycle";
       agents?: string[];
+      jobs?: Array<{
+        benchmarkKey?: string;
+        taskKey?: string;
+        agentPath?: string;
+      }>;
     }>(request);
 
     return NextResponse.json(await runBatch({
@@ -22,7 +27,8 @@ export async function POST(request: Request) {
       model: body.model,
       providerApiKey: body.providerApiKey,
       runMode: body.runMode,
-      agents: Array.isArray(body.agents) ? body.agents : []
+      agents: Array.isArray(body.agents) ? body.agents : [],
+      jobs: Array.isArray(body.jobs) ? body.jobs : undefined
     }));
   } catch (error: unknown) {
     return handleRouteError(error);

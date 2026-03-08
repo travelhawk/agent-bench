@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import os from "node:os";
 
 export type RuntimeSandboxProvider = "process" | "macos-seatbelt" | "docker";
 
@@ -400,6 +401,11 @@ function buildDockerInvocation(input: {
   }
 
   const image = resolveDockerImage();
+  const configuredCpuLimit = Number(process.env.AGENT_BENCH_SANDBOX_DOCKER_CPUS?.trim() || "1");
+  const safeCpuLimit = Math.max(0.1, Math.min(
+    Number.isFinite(configuredCpuLimit) ? configuredCpuLimit : 1,
+    Math.max(1, os.cpus().length)
+  ));
   const args = [
     "run",
     "--rm",
@@ -416,7 +422,7 @@ function buildDockerInvocation(input: {
     "--memory",
     process.env.AGENT_BENCH_SANDBOX_DOCKER_MEMORY?.trim() || "1g",
     "--cpus",
-    process.env.AGENT_BENCH_SANDBOX_DOCKER_CPUS?.trim() || "1.5",
+    safeCpuLimit.toFixed(2),
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=64m"
   ];

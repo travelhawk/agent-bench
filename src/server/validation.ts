@@ -7,6 +7,9 @@ export const INPUT_LIMITS = {
   maxTitleLength: 120,
   maxDescriptionLength: 1600,
   maxExpectedOutcomeLength: 1600,
+  maxTaskGuidanceLength: 1600,
+  maxTaskListItems: 12,
+  maxTaskListItemLength: 180,
   maxDomainLength: 64,
   maxTagCount: 12,
   maxTagLength: 32,
@@ -55,6 +58,28 @@ export function normalizeTagList(input: unknown): string[] {
     throw new Error(`tags exceed the ${INPUT_LIMITS.maxTagCount}-tag limit.`);
   }
   return tags;
+}
+
+export function normalizeStringList(input: unknown, field: string): string[] {
+  if (!Array.isArray(input)) return [];
+  if (input.length > INPUT_LIMITS.maxTaskListItems) {
+    throw new Error(`${field} exceeds the ${INPUT_LIMITS.maxTaskListItems}-item limit.`);
+  }
+
+  return input.map((entry) => {
+    if (typeof entry !== "string") {
+      throw new Error(`${field} must contain strings only.`);
+    }
+
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      throw new Error(`${field} cannot contain empty items.`);
+    }
+    if (trimmed.length > INPUT_LIMITS.maxTaskListItemLength) {
+      throw new Error(`${field} items exceed the ${INPUT_LIMITS.maxTaskListItemLength}-character limit.`);
+    }
+    return trimmed;
+  });
 }
 
 export function resolveBatchAgents(workspaceRoot: string, input: unknown): AgentRecord[] {

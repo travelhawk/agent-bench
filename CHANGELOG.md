@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added a guided local runner flow in the Next.js workbench with explicit readiness states, blocker callouts, and next-step guidance
+- Added rerun-failed-only support plus persisted failed run history rows with generated failure summaries and logs
+- Replaced the old score presentation with evaluator-aware outcome/process/review/efficiency profiles and per-run confidence labels
+- Added objective check summaries, evidence highlights, and recommended next actions to run detail payloads and artifacts
+- Extended benchmark tasks with structured sections for why the task matters, fixed inputs, deliverable format, success checks, and failure modes
+- Upgraded the seeded benchmark tasks so the shipped suites are more specific and benchmark-grade by default
+- Hardened Docker sandbox defaults on low-core hosts by clamping the CPU limit to a safe local value
+- Added regression coverage for persisted failed runs, richer benchmark task round-trips, and Windows-safe sandboxed fixture patching
 - Hardened Windows execution by switching command discovery to `where`, keeping Docker shell execution POSIX inside Linux containers, and removing shell-dependent test invocation paths
 - Hardened sandbox auto-selection so Linux and Windows hosts only auto-pick Docker when the daemon is ready and the configured image already exists locally
 - Added a GitHub Actions CI matrix for `ubuntu-latest`, `macos-latest`, and `windows-latest`
