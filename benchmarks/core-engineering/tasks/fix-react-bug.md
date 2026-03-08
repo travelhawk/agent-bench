@@ -29,7 +29,7 @@ Modify the fixture code and leave the workspace in a passing state for the verif
 
 ## Sandbox
 Fixture Dir: fixtures/fix-react-bug
-Verify Command: node --test "tests/*.test.js"
+Verify Command: node --test tests/*.test.js
 Timeout Ms: 120000
 
 ## Metadata

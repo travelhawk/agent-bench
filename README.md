@@ -16,7 +16,7 @@ Local-first full-stack benchmarking workbench for AI agents.
 - Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
 - On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
 - On hosts without macOS seatbelt, `auto` mode now chooses Docker only when the daemon is ready and the configured image already exists locally; otherwise it falls back to `process`.
-- Hardened Windows execution paths by using `where` for binary lookup, keeping Docker container shells on `/bin/sh`, and replacing shell-expanded test globs with Node-owned quoted patterns.
+- Hardened Windows execution paths by using `where` for binary lookup, keeping Docker container shells on `/bin/sh`, and standardizing seeded verifier commands on explicit relative test-file globs.
 - Browser and computer-use tasks in `interaction-surfaces` now ship real fixture directories and verifier commands instead of metadata-only placeholders.
 - The sample workspace now includes runnable browser and computer-use example agents under `./examples/sample-workspace`.
 - Runner environments are now scrubbed by default and only receive a small safe host env plus explicit `AGENT_BENCH_*` runtime variables.
@@ -64,10 +64,13 @@ Build the production app and CLI:
 pnpm run build
 ```
 
-If you want to run the sample browser operator, install the local Playwright browser once:
+If you want to run the sample browser operator, ensure Google Chrome is installed locally.
+If Chrome is installed in a non-standard path, set `CHROME_BIN` to that executable before running E2E tests.
+
+Run the end-to-end UI regression suite locally:
 
 ```bash
-pnpm exec playwright install chromium
+pnpm run test:e2e
 ```
 
 Use the CLI directly:
@@ -153,7 +156,7 @@ Return a patch and tests that make the component deterministic and pass all chec
 
 ## Sandbox
 Fixture Dir: fixtures/fix-react-bug
-Verify Command: node --test "tests/*.test.js"
+Verify Command: node --test tests/*.test.js
 Provider: auto
 Timeout Ms: 120000
 ```
@@ -247,7 +250,7 @@ Key: <task-key>
 
 ## Sandbox
 Fixture Dir: fixtures/<task-name>
-Verify Command: node --test "tests/*.test.js"
+Verify Command: node --test tests/*.test.js
 Provider: auto
 Timeout Ms: 120000
 

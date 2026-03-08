@@ -66,7 +66,7 @@ test("runEvaluationInRuntime can execute a sandboxed runner against a task fixtu
       "const fs = require('node:fs');",
       "const path = require('node:path');",
       "const target = path.join(process.env.AGENT_BENCH_WORKSPACE, 'Counter.js');",
-      "const next = fs.readFileSync(target, 'utf8').replace(/next = current \\+ 1;\\r?\\n  next = current \\+ 1;/, 'next = current + 1\\n  next = next + 1;');",
+      "const next = fs.readFileSync(target, 'utf8').replace(/(next = current \\+ 1;)(\\r?\\n)  next = current \\+ 1;/, '$1$2  next = next + 1;');",
       "fs.writeFileSync(target, next);"
     ].join("\n"));
 
