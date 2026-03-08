@@ -87,7 +87,7 @@ Covered tests:
   - Verified:
     - the process-provider path executes the seeded `fix-react-bug` fixture without relying on macOS seatbelt or Docker
     - the runner exits `0`, the verifier exits `0`, and the run summary records `provider: process`
-    - the quoted `node --test "tests/*.test.js"` verifier command succeeds without shell-expanded glob assumptions
+    - the explicit `node --test tests/*.test.js` verifier command succeeds across the sandbox shell contract
 
 ## Notes
 
@@ -105,7 +105,7 @@ mkdir -p /tmp/agent-bench-sandbox-smoke/agents/local
 mkdir -p /tmp/agent-bench-sandbox-smoke/benchmarks
 cp -R ./benchmarks/core-engineering /tmp/agent-bench-sandbox-smoke/benchmarks/core-engineering
 printf '# Local Sandbox Coder\nRunner: node ./runner.js\n' > /tmp/agent-bench-sandbox-smoke/agents/local/coder.md
-printf "const fs = require('node:fs');\nconst path = require('node:path');\nconst target = path.join(process.env.AGENT_BENCH_WORKSPACE, 'Counter.js');\nconst next = fs.readFileSync(target, 'utf8').replace('next = current + 1;\\n  next = current + 1;', 'next = current + 1;\\n  next = next + 1;');\nfs.writeFileSync(target, next);\n" > /tmp/agent-bench-sandbox-smoke/agents/local/runner.js
+printf "const fs = require('node:fs');\nconst path = require('node:path');\nconst target = path.join(process.env.AGENT_BENCH_WORKSPACE, 'Counter.js');\nconst next = fs.readFileSync(target, 'utf8').replace(/(next = current \\+ 1;)(\\r?\\n)  next = current \\+ 1;/, '$1$2  next = next + 1;');\nfs.writeFileSync(target, next);\n" > /tmp/agent-bench-sandbox-smoke/agents/local/runner.js
 cd /Users/denniswestermann/Library/Mobile\ Documents/com~apple~CloudDocs/Desktop/Coding\ Projekte/Agent_Branche/agent-bench
 ./node_modules/.bin/tsc -p tsconfig.cli.json --pretty false
 ./node_modules/.bin/tsc -p tsconfig.json --pretty false
