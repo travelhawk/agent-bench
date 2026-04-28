@@ -67,7 +67,7 @@ button {
 button:focus-visible,
 a:focus-visible,
 .agent-card:focus-visible,
-.playlist-card:focus-visible,
+.playlist-select:focus-visible,
 .suite-pill:focus-visible,
 .nav-item:focus-visible {
   outline: 2px solid rgba(255, 209, 102, 0.75);
@@ -180,7 +180,7 @@ pre {
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: linear-gradient(180deg, rgba(255, 157, 77, 0.08), rgba(8, 15, 28, 0.3));
   color: var(--muted);
-  line-height: 1.65;
+  line-height: 1.5;
 }
 
 .sidebar-callout-muted {
@@ -191,7 +191,7 @@ pre {
 .workspace {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.75rem;
   padding: 1.5rem;
 }
 
@@ -284,17 +284,24 @@ pre {
 .detail-stack {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.15rem;
 }
 
 .lab-grid,
 .dashboard-grid {
   display: grid;
-  gap: 1.25rem;
+  gap: 1.5rem;
 }
 
 .lab-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+}
+
+.lab-grid > .panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.35rem;
 }
 
 .dashboard-grid {
@@ -404,6 +411,10 @@ pre {
   font-size: 1.1rem;
 }
 
+.suite-summary {
+  align-items: flex-start;
+}
+
 .agent-card,
 .playlist-card,
 .suite-pill {
@@ -413,6 +424,47 @@ pre {
   background: rgba(255, 255, 255, 0.02);
   text-align: left;
   transition: 160ms ease;
+}
+
+.playlist-step-label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #dce5f1;
+  font-size: 0.88rem;
+}
+
+.playlist-step-label span {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 157, 77, 0.16);
+  color: #ffd9b7;
+  font-weight: 700;
+}
+
+.playlist-select {
+  width: 100%;
+  text-align: left;
+}
+
+.playlist-card-footer {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.playlist-details {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .playlist-section {
@@ -443,6 +495,17 @@ pre {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.suite-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.suite-pill span + span {
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 .agent-title,
@@ -586,8 +649,14 @@ pre {
 
 .action-cluster {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.action-cluster .primary-action,
+.action-cluster .secondary-action {
+  width: 100%;
+  text-align: center;
 }
 
 .score-pill {

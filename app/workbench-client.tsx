@@ -38,7 +38,6 @@ const RESOLUTION_OPTIONS: BenchmarkResolution[] = ["atomic", "workflow", "campai
 const INTERACTION_OPTIONS: BenchmarkInteractionMode[] = ["artifact", "terminal", "browser", "tool-use", "computer-use", "multi-agent"];
 const EVALUATOR_OPTIONS: BenchmarkEvaluatorMode[] = ["state", "artifact", "trace", "judge", "hybrid"];
 const DIFFICULTY_OPTIONS = ["low", "medium", "high"] as const;
-const UTC_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "UTC" });
 const STORAGE_KEYS = { selectedAgents: "agent-bench:selected-agents", benchmarkKey: "agent-bench:benchmark-key", taskKey: "agent-bench:task-key", runMode: "agent-bench:run-mode", model: "agent-bench:model", providerApiKey: "agent-bench:provider-api-key" } as const;
 
 const emptyForm = (): BenchmarkFormState => ({
@@ -48,7 +47,6 @@ const emptyForm = (): BenchmarkFormState => ({
 });
 
 const formatMoney = (value: number) => `$${value.toFixed(2)}`;
-const formatDate = (value: string) => `${UTC_DATE_FORMATTER.format(new Date(value))} UTC`;
 const humanizeToken = (value: string) => value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 const splitListInput = (value: string) => value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
 const readRunSummary = (summary: RunResultPayload["summary"]) => (summary ?? null) as RunSummaryView | null;
@@ -95,7 +93,7 @@ function RunCard({ run, busyAction, onOpen, onJson, onDelete }: { run: RunRecord
     <article className={`run-card ${run.status === "failed" ? "run-card-failed" : ""}`}>
       <div className="run-card-top">
         <div className="score-pill">{run.score.toFixed(1)}</div>
-        <div className="run-copy"><h3>{run.agentName}</h3><p>{run.suiteName}</p><p>{run.runKey} / {formatDate(run.createdAt)}</p></div>
+        <div className="run-copy"><h3>{run.agentName}</h3><p>{run.suiteName}</p></div>
         <div className="run-metrics">
           <span>{run.durationMs > 0 ? `${(run.durationMs / 1000).toFixed(1)}s` : "n/a"}</span><span>{formatMoney(run.costUsd)}</span>
           <span className={`status-chip ${runStatusClass(run.status)}`}>{run.status}</span>
@@ -107,7 +105,6 @@ function RunCard({ run, busyAction, onOpen, onJson, onDelete }: { run: RunRecord
         <span>Review {run.reviewScore.toFixed(2)}</span><span>Efficiency {run.efficiencyScore.toFixed(2)}</span>
       </div>
       {run.failureReason && <div className="callout callout-error">{run.failureReason}</div>}
-      <img src={`/api/artifacts/${run.runKey}/report.svg`} alt={`Run report ${run.runKey}`} className="run-image" />
       <div className="action-row">
         <button type="button" className="text-link button-reset" onClick={onOpen} disabled={busy}>Open</button>
         <button type="button" className="text-link button-reset" onClick={onJson} disabled={busy}>Result JSON</button>
@@ -139,6 +136,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [activeRunAction, setActiveRunAction] = useState<string | null>(null);
   const [lastBatchResult, setLastBatchResult] = useState<BatchRunResult | null>(null);
   const [lastBatchFailureJobs, setLastBatchFailureJobs] = useState<RetryJob[]>([]);
+  const [expandedTaskKeys, setExpandedTaskKeys] = useState<string[]>([]);
 
   useEffect(() => {
     const savedAgents = localStorage.getItem(STORAGE_KEYS.selectedAgents), savedBenchmark = localStorage.getItem(STORAGE_KEYS.benchmarkKey),
@@ -226,8 +224,19 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     } catch (error: unknown) { setBenchmarkState({ tone: "error", message: error instanceof Error ? error.message : String(error) }); } finally { setIsCreatingBenchmark(false); }
   }
 
+  function selectBenchmarkSuite(nextBenchmarkKey: string) {
+    setBenchmarkKey(nextBenchmarkKey);
+    setExpandedTaskKeys([]);
+  }
+
+  function toggleTaskDetails(nextTaskKey: string) {
+    setExpandedTaskKeys((current) => current.includes(nextTaskKey)
+      ? current.filter((entry) => entry !== nextTaskKey)
+      : [...current, nextTaskKey]);
+  }
+
   const nextActionTitle = workflowState === "blocked" ? "Unblock the run plan" : workflowState === "running" ? "Batch in progress" : workflowState === "completed-with-failures" ? "Review failed jobs" : workflowState === "completed-clean" ? "Inspect the result" : "Ready to launch";
-  const nextActionCopy = workflowState === "blocked" ? blockers[0] ?? "Resolve the current blockers before launching the next batch." : workflowState === "running" ? "Wait for the synchronous batch to finish. The latest run will open automatically when the request returns." : workflowState === "completed-with-failures" ? "Open the failed runs, inspect the logs, and rerun only the failed jobs after fixing the blocker." : workflowState === "completed-clean" ? "Open the best run, confirm the evidence, and refine the selected benchmark if the task still feels too loose." : "The current plan is valid. Review the queued agents and tasks, then start the batch.";
+  const nextActionCopy = workflowState === "blocked" ? blockers[0] ?? "Resolve the blocker before launching." : workflowState === "running" ? "Batch is running. The latest result opens when it finishes." : workflowState === "completed-with-failures" ? "Inspect failed runs, fix the blocker, then rerun failed only." : workflowState === "completed-clean" ? "Open the best run and confirm the evidence." : "Plan is valid. Start when the agents and tasks look right.";
   const latestFailedRun = failedHistoryRuns[0];
 
   return (
@@ -239,12 +248,12 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
           <button type="button" className={`nav-item ${view === "history" ? "active" : ""}`} onClick={() => setView("history")}>Run History</button>
           <button type="button" className={`nav-item ${view === "benchmarks" ? "active" : ""}`} onClick={() => setView("benchmarks")}>Benchmark Library</button>
         </nav>
-        <div className="sidebar-callout"><div className="eyebrow">Current workflow</div><p>Pick agents, choose the benchmark shape, check the blockers, then launch one explicit run plan.</p></div>
-        <div className="sidebar-callout sidebar-callout-muted"><div className="eyebrow">Signal policy</div><p>Verifier-backed runs are high-confidence. Review-only tasks stay useful, but they are labeled honestly.</p></div>
+        <div className="sidebar-callout"><div className="eyebrow">Current workflow</div><p>Agents -&gt; suite -&gt; tasks -&gt; run.</p></div>
+        <div className="sidebar-callout sidebar-callout-muted"><div className="eyebrow">Signal policy</div><p>Verifier-backed runs carry the strongest signal.</p></div>
       </aside>
       <section className="workspace">
         <header className="hero">
-          <div className="hero-copy"><p className="eyebrow">Guided local runner</p><h1>Agent Test Lab</h1><p>Run the local benchmark loop deliberately: load agents, inspect task signal quality, launch one bounded batch, and review failures as first-class history items.</p></div>
+          <div className="hero-copy"><p className="eyebrow">Guided local runner</p><h1>Agent Test Lab</h1><p>Load agents, choose tasks, run a bounded benchmark, inspect results.</p></div>
           <div className="hero-stats">
             <article className="stat-card stat-card-blue"><span className="stat-label">Total runs</span><strong className="stat-value">{snapshot.summary.totalRuns}</strong></article>
             <article className="stat-card stat-card-green"><span className="stat-label">Average score</span><strong className="stat-value">{snapshot.summary.avgScore.toFixed(1)}</strong></article>
@@ -267,7 +276,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
             </section>
 
             <section className="config-strip panel">
-              <div className="section-intro"><div><p className="eyebrow">Provider configuration</p><h2>Configure review without blocking execution.</h2></div><p className="section-note">Session keys stay in session storage only. Leave the field empty to use <code>AI_GATEWAY_API_KEY</code> or rules review.</p></div>
+              <div className="section-intro"><div><p className="eyebrow">Provider configuration</p><h2>Review is optional.</h2></div><p className="section-note">Add a Gateway key for model review. Leave empty for env key or rules.</p></div>
               <div className="config-grid">
                 <label className="field"><span>Gateway API key</span><input value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} placeholder="Optional for model-based review" /></label>
                 <label className="field"><span>Review model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="openai/gpt-4.1-mini" /></label>
@@ -279,7 +288,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
 
             <section className="lab-grid">
               <article className="panel">
-                <div className="panel-head"><div className="step-badge">1</div><div><h2>Load Agents</h2><p>Select the local definitions that should participate in the next run plan.</p></div></div>
+                <div className="panel-head"><div className="step-badge">1</div><div><h2>Load Agents</h2><p>Pick one or more agents for this run.</p></div></div>
                 <div className="summary-band"><strong>{selectedAgents.length}</strong><span>selected from {snapshot.agents.length} discovered definitions</span></div>
                 <div className="agent-list">
                   {snapshot.agents.length > 0 ? snapshot.agents.map((agent) => {
@@ -297,30 +306,43 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
               </article>
 
               <article className="panel">
-                <div className="panel-head"><div className="step-badge">2</div><div><h2>Build the Playlist</h2><p>Review the task contract before you queue it. Clicking a task only changes the selected task, not the run mode.</p></div></div>
-                <div className="summary-band"><strong>{selectedBenchmark?.title ?? "No benchmark"}</strong><span>{selectedBenchmark?.description ?? "Select a benchmark suite."}</span>{selectedBenchmark && <div className="chip-row">{chipsForSuite(selectedBenchmark).map((chip) => <span className="mini-chip" key={chip}>{chip}</span>)}</div>}</div>
-                <div className="suite-pills">{snapshot.benchmarks.map((benchmark) => <button key={benchmark.key} type="button" className={`suite-pill ${benchmark.key === benchmarkKey ? "active" : ""}`} onClick={() => setBenchmarkKey(benchmark.key)}><span>{benchmark.title}</span><span>{benchmark.tasks.length} tasks / {humanizeToken(benchmark.metadata.resolution)}</span></button>)}</div>
+                <div className="panel-head"><div className="step-badge">2</div><div><h2>Choose Suite + Tasks</h2><p>Pick a benchmark suite. Its tasks appear below.</p></div></div>
+                <div className="summary-band suite-summary"><strong>{selectedBenchmark?.title ?? "No benchmark"}</strong><span>{selectedBenchmark ? `${selectedBenchmark.tasks.length} tasks available` : "Select a suite."}</span>{selectedBenchmark && <div className="chip-row">{chipsForSuite(selectedBenchmark).map((chip) => <span className="mini-chip" key={chip}>{chip}</span>)}</div>}</div>
+                <div className="playlist-step-label"><span>1</span><strong>Choose suite</strong></div>
+                <div className="suite-pills">{snapshot.benchmarks.map((benchmark) => <button key={benchmark.key} type="button" className={`suite-pill ${benchmark.key === benchmarkKey ? "active" : ""}`} onClick={() => selectBenchmarkSuite(benchmark.key)}><span>{benchmark.title}</span><span>{benchmark.tasks.length} tasks / {humanizeToken(benchmark.metadata.resolution)}</span></button>)}</div>
+                <div className="playlist-step-label"><span>2</span><strong>Tasks in {selectedBenchmark?.title ?? "suite"}</strong></div>
                 <div className="playlist-list">
                   {(selectedBenchmark?.tasks ?? []).map((task) => {
                     const active = task.key === selectedTask?.key;
                     const queued = runMode === "benchmark-cycle" || active;
+                    const expanded = expandedTaskKeys.includes(task.key);
                     return (
-                      <button key={task.key} type="button" className={`playlist-card ${active ? "active" : ""}`} onClick={() => setTaskKey(task.key)}>
-                        <div className="agent-card-head"><strong>{task.title}</strong><span className={`status-chip ${queued ? "status-chip-active" : ""}`}>{queued ? "Queued" : "Preview"}</span></div>
-                        <p>{task.description}</p>
-                        <div className="chip-row">{chipsForTask(task).map((chip) => <span className="mini-chip" key={`${task.key}-${chip}`}>{chip}</span>)}</div>
-                        {task.whyThisTask && <div className="playlist-section"><strong>Why it matters</strong><span>{task.whyThisTask}</span></div>}
-                        {task.deliverableFormat && <div className="playlist-section"><strong>Deliverable</strong><span>{task.deliverableFormat}</span></div>}
-                        {task.successChecks.length > 0 && <div className="playlist-section"><strong>Success checks</strong><span>{task.successChecks.slice(0, 3).join(" / ")}</span></div>}
-                        {task.failureModes.length > 0 && <div className="playlist-section"><strong>Failure modes</strong><span>{task.failureModes.slice(0, 2).join(" / ")}</span></div>}
-                      </button>
+                      <article key={task.key} className={`playlist-card ${active ? "active" : ""}`}>
+                        <button type="button" className="playlist-select button-reset" onClick={() => setTaskKey(task.key)}>
+                          <div className="agent-card-head"><strong>{task.title}</strong><span className={`status-chip ${queued ? "status-chip-active" : ""}`}>{queued ? "Queued" : "Preview"}</span></div>
+                          <p>{task.description}</p>
+                        </button>
+                        <div className="playlist-card-footer">
+                          <span>{runMode === "benchmark-cycle" ? "Included in cycle" : active ? "Selected challenge" : "Click title to select"}</span>
+                          <button type="button" className="text-link button-reset details-toggle" onClick={() => toggleTaskDetails(task.key)}>{expanded ? "Hide details" : "Show details"}</button>
+                        </div>
+                        {expanded && (
+                          <div className="playlist-details">
+                            <div className="chip-row">{chipsForTask(task).map((chip) => <span className="mini-chip" key={`${task.key}-${chip}`}>{chip}</span>)}</div>
+                            {task.whyThisTask && <div className="playlist-section"><strong>Why it matters</strong><span>{task.whyThisTask}</span></div>}
+                            {task.deliverableFormat && <div className="playlist-section"><strong>Deliverable</strong><span>{task.deliverableFormat}</span></div>}
+                            {task.successChecks.length > 0 && <div className="playlist-section"><strong>Success checks</strong><span>{task.successChecks.slice(0, 3).join(" / ")}</span></div>}
+                            {task.failureModes.length > 0 && <div className="playlist-section"><strong>Failure modes</strong><span>{task.failureModes.slice(0, 2).join(" / ")}</span></div>}
+                          </div>
+                        )}
+                      </article>
                     );
                   })}
                 </div>
               </article>
 
               <article className="panel panel-highlight">
-                <div className="panel-head"><div className="step-badge">3</div><div><h2>Launch Batch</h2><p>Launch only when the plan is explicit. Failures are persisted and can be rerun independently.</p></div></div>
+                <div className="panel-head"><div className="step-badge">3</div><div><h2>Launch Batch</h2><p>Check the count, then run. Use failed-only reruns after fixes.</p></div></div>
                 <div className="run-plan">
                   <div className="plan-metric"><strong>{selectedAgents.length}</strong><span>Agents selected</span></div>
                   <div className="plan-metric"><strong>{plannedTasks.length}</strong><span>Tasks queued</span></div>
