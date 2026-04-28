@@ -241,6 +241,14 @@ function getJudgeCacheEnabled(): boolean {
   return raw !== "false" && raw !== "0" && raw !== "no";
 }
 
+export function resolveGatewayApiKey(sessionKey?: string): string | undefined {
+  return sessionKey?.trim() || process.env.AI_GATEWAY_API_KEY?.trim() || undefined;
+}
+
+export function resolveJudgeModel(model?: string): string {
+  return model?.trim() || process.env.AGENT_BENCH_JUDGE_MODEL?.trim() || DEFAULT_MODEL;
+}
+
 function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string }): string {
   return createHash("sha256")
     .update(input.benchmarkKey)
@@ -307,9 +315,13 @@ function buildTaskBrief(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskReco
     `Interaction: ${task.metadata.interaction}`,
     `Evaluator: ${task.metadata.evaluator}`,
     `Difficulty: ${task.metadata.difficulty}`,
+    `Reliability: ${task.metadata.reliability}`,
     `Tags: ${task.metadata.tags.join(", ") || "none"}`,
     `Requires Isolation: ${task.metadata.requiresIsolation ? "yes" : "no"}`,
     `Requires Network: ${task.metadata.requiresNetwork ? "yes" : "no"}`,
+    `Time Budget Ms: ${task.metadata.timeBudgetMs}`,
+    `Cost Budget Usd: ${task.metadata.costBudgetUsd}`,
+    `Default Trials: ${task.metadata.defaultTrials}`,
     `Sandbox Provider: ${task.sandbox?.provider ?? "auto"}`,
     task.sandbox?.verifyCommand ? `Verify Command: ${task.sandbox.verifyCommand}` : "Verify Command: none",
     ""
@@ -396,6 +408,8 @@ async function maybeRunSandboxExecution(input: {
   agentPathLabel: string;
   agentMarkdown: string;
   agentRunnerCommand?: string;
+  strictSandbox?: boolean;
+  resolvedSandboxProvider?: RuntimeEvaluationRequest["resolvedSandboxProvider"];
   model?: string;
   providerApiKey?: string;
 }): Promise<SandboxExecutionResult> {
@@ -443,9 +457,11 @@ async function maybeRunSandboxExecution(input: {
     AGENT_BENCH_SANDBOX_NETWORK: allowNetwork ? "enabled" : "disabled"
   };
   const timeoutMs = input.task.sandbox.timeoutMs;
-  const provider = input.task.sandbox.provider && input.task.sandbox.provider !== "auto"
-    ? input.task.sandbox.provider
-    : undefined;
+  const provider = input.resolvedSandboxProvider && input.resolvedSandboxProvider !== "mixed"
+    ? input.resolvedSandboxProvider
+    : input.task.sandbox.provider && input.task.sandbox.provider !== "auto"
+      ? input.task.sandbox.provider
+      : undefined;
   const runner = await runSandboxedCommand({
     command: input.agentRunnerCommand,
     cwd: agentDir,
@@ -456,6 +472,7 @@ async function maybeRunSandboxExecution(input: {
     allowNetwork,
     label: "runner",
     provider,
+    strictProvider: Boolean(input.strictSandbox && provider),
     env: commandEnv as unknown as NodeJS.ProcessEnv,
     providerApiKey: input.providerApiKey,
     model: input.model
@@ -471,6 +488,7 @@ async function maybeRunSandboxExecution(input: {
       allowNetwork,
       label: "verifier",
       provider,
+      strictProvider: Boolean(input.strictSandbox && provider),
       env: commandEnv as unknown as NodeJS.ProcessEnv
     })
     : undefined;
@@ -744,7 +762,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const agentVersion = /v\d+/i.test(agentName) ? agentName.match(/v\d+/i)![0] : "v1";
   const taskContext = buildTaskContext(input.benchmarks, input.benchmarkKey, input.taskKey);
   const assessment = buildRulesAssessment(selectedBenchmark, selectedTask, material.agentMd);
-  const model = input.model ?? process.env.AGENT_BENCH_JUDGE_MODEL ?? DEFAULT_MODEL;
+  const model = resolveJudgeModel(input.model);
   const artifactsPath = path.join(input.artifactsRoot, input.runKey);
   mkdirSync(artifactsPath, { recursive: true });
   const sandbox = await maybeRunSandboxExecution({
@@ -757,13 +775,15 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     agentPathLabel: material.agentPathLabel,
     agentMarkdown: material.agentMd,
     agentRunnerCommand: input.agentRunnerCommand,
+    strictSandbox: input.strictSandbox,
+    resolvedSandboxProvider: input.resolvedSandboxProvider,
     model,
     providerApiKey: input.gatewayApiKey
   });
   const outcomeScore = sandbox.mode === "sandbox" ? sandbox.outcomeScore : assessment.outcomeScore;
   const processScore = sandbox.mode === "sandbox" && sandbox.processScore > 0 ? sandbox.processScore : assessment.processScore;
 
-  const apiKey = input.gatewayApiKey?.trim() || process.env.AI_GATEWAY_API_KEY;
+  const apiKey = resolveGatewayApiKey(input.gatewayApiKey);
   const cacheEnabled = getJudgeCacheEnabled();
   const judgePromptContent = [
     `Task Context:\n${taskContext}`,
@@ -875,6 +895,10 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     review: judge.score,
     efficiency: efficiencyScore
   });
+  const objectiveScore = sandbox.objectiveChecks.deterministic ? outcomeScore : 0;
+  const objectivePass = sandbox.objectiveChecks.deterministic
+    && sandbox.objectiveChecks.available > 0
+    && sandbox.objectiveChecks.passed >= sandbox.objectiveChecks.available;
   const matchedSignals = [
     ...assessment.matchedSignals,
     ...sandbox.matchedSignals
@@ -920,6 +944,10 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
 
   writeFileSync(path.join(artifactsPath, "summary.json"), JSON.stringify({
     runKey: input.runKey,
+    experimentKey: input.experimentKey ?? null,
+    setup: input.setupSnapshot ?? null,
+    trialIndex: input.trialIndex ?? null,
+    environmentFingerprint: input.environmentFingerprint ?? null,
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey ?? null,
     suiteMetadata: selectedBenchmark.metadata,
@@ -934,6 +962,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     model,
     executionMode: sandbox.mode,
     reviewMode: judge.mode,
+    resolvedSandboxProvider: input.resolvedSandboxProvider ?? sandbox.provider ?? null,
     scoreProfile,
     scoreConfidence,
     scoreLabels: {
@@ -946,6 +975,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     assessment,
     sandbox,
     objectiveChecks: sandbox.objectiveChecks,
+    objectiveScore,
+    objectivePass,
     evidence: {
       matchedSignals,
       missingSignals,
@@ -984,11 +1015,23 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
 
   return {
     runKey: input.runKey,
+    experimentKey: input.experimentKey ?? null,
+    benchmarkKey: input.benchmarkKey,
+    taskKey: input.taskKey ?? null,
+    setupKey: input.setupSnapshot?.key ?? null,
+    workflowPath: input.setupSnapshot?.workflowPath ?? input.agentPath ?? material.agentPathLabel,
+    modelId: input.setupSnapshot?.modelId ?? input.model ?? null,
+    trialIndex: input.trialIndex ?? null,
     agentName,
     agentVersion,
     suiteName: input.taskKey ? `${input.benchmarkKey}/${input.taskKey}` : input.benchmarkKey,
     status: "completed",
     scores,
+    objectiveScore,
+    objectivePass,
+    objectiveChecksAvailable: sandbox.objectiveChecks.available,
+    objectiveChecksPassed: sandbox.objectiveChecks.passed,
+    deterministic: sandbox.objectiveChecks.deterministic,
     scoreProfile,
     scoreConfidence,
     failureReason: null,

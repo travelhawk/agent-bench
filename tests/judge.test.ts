@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { judgeWithVercelAiSdk } from "../src/runtime/evaluator";
+import { judgeWithVercelAiSdk, resolveGatewayApiKey, resolveJudgeModel } from "../src/runtime/evaluator";
 
 test("judgeWithVercelAiSdk calls generateText and parses score", async () => {
   let capturedArgs: Record<string, unknown> | undefined;
@@ -53,4 +53,38 @@ test("judgeWithVercelAiSdk fails on empty model text", async () => {
     }),
     /empty response/i
   );
+});
+
+test("resolveGatewayApiKey falls back to AI_GATEWAY_API_KEY", () => {
+  const previousKey = process.env.AI_GATEWAY_API_KEY;
+
+  try {
+    process.env.AI_GATEWAY_API_KEY = " env-key ";
+
+    assert.equal(resolveGatewayApiKey(undefined), "env-key");
+    assert.equal(resolveGatewayApiKey(" session-key "), "session-key");
+  } finally {
+    if (previousKey === undefined) {
+      delete process.env.AI_GATEWAY_API_KEY;
+    } else {
+      process.env.AI_GATEWAY_API_KEY = previousKey;
+    }
+  }
+});
+
+test("resolveJudgeModel falls back to AGENT_BENCH_JUDGE_MODEL", () => {
+  const previousModel = process.env.AGENT_BENCH_JUDGE_MODEL;
+
+  try {
+    process.env.AGENT_BENCH_JUDGE_MODEL = " openai/custom-model ";
+
+    assert.equal(resolveJudgeModel(undefined), "openai/custom-model");
+    assert.equal(resolveJudgeModel(" openai/request-model "), "openai/request-model");
+  } finally {
+    if (previousModel === undefined) {
+      delete process.env.AGENT_BENCH_JUDGE_MODEL;
+    } else {
+      process.env.AGENT_BENCH_JUDGE_MODEL = previousModel;
+    }
+  }
 });

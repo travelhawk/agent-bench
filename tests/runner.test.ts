@@ -9,8 +9,10 @@ import { supportsSeatbeltSandbox } from "../src/runtime/sandbox";
 
 test("runEvaluationInRuntime writes artifacts without requiring a dist-only evaluator path", async () => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+  const previousGatewayKey = process.env.AI_GATEWAY_API_KEY;
 
   try {
+    delete process.env.AI_GATEWAY_API_KEY;
     const agentPath = path.join(workspace, "agents", "agent.md");
     const artifactsRoot = path.join(workspace, "artifacts");
     const benchmarksDir = path.join(workspace, "benchmarks");
@@ -43,6 +45,11 @@ test("runEvaluationInRuntime writes artifacts without requiring a dist-only eval
     assert.equal(summary.reviewMode, "rules");
     assert.ok(Array.isArray(summary.assessment?.matchedSignals));
   } finally {
+    if (previousGatewayKey === undefined) {
+      delete process.env.AI_GATEWAY_API_KEY;
+    } else {
+      process.env.AI_GATEWAY_API_KEY = previousGatewayKey;
+    }
     rmSync(workspace, { recursive: true, force: true });
   }
 });

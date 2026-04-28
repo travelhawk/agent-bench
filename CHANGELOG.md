@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed legacy SQLite schema startup by migrating new experiment/run columns before creating indexes that depend on them
+- Restored environment-based provider configuration via `AI_GATEWAY_API_KEY` and `AGENT_BENCH_JUDGE_MODEL` fallbacks
 - Added a guided local runner flow in the Next.js workbench with explicit readiness states, blocker callouts, and next-step guidance
 - Added rerun-failed-only support plus persisted failed run history rows with generated failure summaries and logs
 - Replaced the old score presentation with evaluator-aware outcome/process/review/efficiency profiles and per-run confidence labels

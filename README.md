@@ -317,6 +317,7 @@ Important:
 ## Troubleshooting
 
 - If the Next.js app fails to start after dependency changes, run `pnpm install` again so native packages like `better-sqlite3` are rebuilt.
+- Existing SQLite databases are migrated on startup. If startup reports a missing run column, stop duplicate `next dev` processes and restart so the latest schema migration can run once.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
 - Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.
 - If a runner needs to consume the configured model or provider key, read `AGENT_BENCH_PROVIDER_MODEL` and `AGENT_BENCH_PROVIDER_API_KEY` from the runner process.
