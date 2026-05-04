@@ -6,6 +6,7 @@
 - Added executable fixtures for `security-audit-report`, `release-notes-cli`, `simple-feedback-web-app`, and `landing-page-refresh`
 - Restored benchmark metadata fields for reliability, time budget, cost budget, and default trials
 - Added strict sandbox-provider enforcement support and clarified that `process` mode is a fresh workspace, not a dedicated sandbox
+- Fixed GitHub Actions pnpm setup to defer to `package.json#packageManager`, avoiding cross-platform CI failures from mismatched pinned versions
 - Fixed legacy SQLite schema startup by migrating new experiment/run columns before creating indexes that depend on them
 - Restored environment-based provider configuration via `AI_GATEWAY_API_KEY` and `AGENT_BENCH_JUDGE_MODEL` fallbacks
 - Added a guided local runner flow in the Next.js workbench with explicit readiness states, blocker callouts, and next-step guidance

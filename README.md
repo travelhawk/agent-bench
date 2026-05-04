@@ -53,6 +53,8 @@ Install dependencies:
 pnpm install
 ```
 
+CI derives the pnpm version from `package.json#packageManager`, so future pnpm upgrades only need that field changed.
+
 Start the local workbench:
 
 ```bash
