@@ -78,10 +78,20 @@ benchmarks/
 User
 -> selects one task or a full suite
 -> runner copies fixture into a fresh workspace
--> agent runner edits only that workspace
+-> agent runner receives the writable task workspace plus a read-only agent bundle that can include `.agents` skills and workflow files
 -> verifier produces the main pass/fail signal
 -> optional LLM judge adds secondary review context
 -> results persist to SQLite plus run artifacts
+
+### Agent Bundles
+
+- Workspace agents still load from `./agents`.
+- Managed bundles live under `./.agent-bench/agents` so uploaded files and discovered skills stay local and untracked.
+- A bundle can start from an existing agent file or nested `AGENTS.md` directory, then add:
+  - uploaded `.agents` files
+  - uploaded workflow/helper files
+  - `skills.sh` skills installed through the official `skills` CLI
+- Sandbox runs expose bundle paths through explicit env vars and copy bundle evidence into artifacts so the comparison covers the whole agent system.
 
 ### Sandbox Policy
 

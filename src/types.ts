@@ -94,14 +94,34 @@ export interface RuntimeEvaluationRequest {
   } | null;
 }
 
+export interface AgentSkillReference {
+  source: string;
+  skillName: string;
+  installSpec: string;
+  registryUrl?: string;
+  installs?: number;
+  title?: string;
+  origin: "bundled" | "skills.sh";
+}
+
+export interface AgentSystemSummary {
+  entryFile: string;
+  bundleMode: "flat" | "bundle";
+  bundlePath?: string;
+  skillCount: number;
+  assetFileCount: number;
+  skills: AgentSkillReference[];
+}
+
 export interface AgentRecord {
   key: string;
   name: string;
   path: string;
   summary: string;
+  system: AgentSystemSummary;
   executionMode: "review-only" | "sandbox";
   runnerCommand?: string;
-  source: "discovered" | "manual";
+  source: "discovered" | "manual" | "managed";
   status: "ready";
 }
 

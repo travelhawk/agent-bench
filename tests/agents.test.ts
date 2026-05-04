@@ -36,7 +36,7 @@ test("inspectAgentFile rejects files outside the agents workspace", () => {
 
     assert.throws(
       () => inspectAgentFile(workspace, "./notes/not-an-agent.md"),
-      /inside the workspace agents folder/i
+      /inside \.\/agents or \.\/\.agent-bench\/agents/i
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -55,6 +55,27 @@ test("inspectAgentFile exposes sandbox runner configuration when declared", () =
 
     assert.equal(agent.executionMode, "sandbox");
     assert.equal(agent.runnerCommand, "node ./scripts/run-agent.js");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("inspectAgentFile accepts a nested AGENTS.md bundle directory with attached skills", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-agents-"));
+
+  try {
+    const bundleDir = path.join(workspace, "agents", "workflow-bundle");
+    mkdirSync(path.join(bundleDir, ".agents", "skills", "lint-reviewer"), { recursive: true });
+    writeFileSync(path.join(bundleDir, "AGENTS.md"), "# Workflow Bundle\nRunner: node ./runner.js\n");
+    writeFileSync(path.join(bundleDir, "runner.js"), "console.log('runner');\n");
+    writeFileSync(path.join(bundleDir, ".agents", "skills", "lint-reviewer", "SKILL.md"), "# Lint Reviewer\n");
+
+    const agent = inspectAgentFile(workspace, "./agents/workflow-bundle");
+
+    assert.equal(agent.path, path.join("agents", "workflow-bundle", "AGENTS.md"));
+    assert.equal(agent.system.bundleMode, "bundle");
+    assert.equal(agent.system.skillCount, 1);
+    assert.ok(agent.system.assetFileCount >= 2);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

@@ -13,6 +13,9 @@ Validation covered:
 - replacement of the seeded benchmark library
 - new deterministic fixtures for repo, web-app, and CLI tasks
 - updated tests for seeded suites and sandbox execution
+- managed AGENTS.md bundles with uploaded `.agents` files
+- `skills.sh` search parsing plus managed bundle skill installation hooks
+- sandbox artifact persistence for bundle files and attached skills
 
 ## Checks Performed
 
@@ -20,8 +23,12 @@ Validation covered:
   - Result: pass
 - `pnpm test`
   - Result: pass
-  - Passed: 26
+  - Passed: 30
   - Skipped: 2
+- `pnpm run build`
+  - Result: pass
+- `pnpm run test:e2e`
+  - Result: pass
 
 ## Notes
 
@@ -35,4 +42,6 @@ Validation covered:
 pnpm rebuild better-sqlite3
 pnpm run build:cli
 pnpm test
+pnpm run build
+pnpm run test:e2e
 ```

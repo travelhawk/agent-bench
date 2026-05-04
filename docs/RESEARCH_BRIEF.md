@@ -12,6 +12,7 @@ Refocus `agent-bench` around fast, comparable benchmark tasks that actually test
 - Web-style tasks are useful when the environment matters, but they become expensive and noisy quickly. WebArena is a good reminder that realistic environments are valuable, but only when task success remains concretely checkable. Published 2023-07-26. Accessed 2026-05-04. https://arxiv.org/abs/2307.13854
 - Recent benchmark guidance keeps pushing in the same direction: controlled complexity, programmatic verification where possible, and careful scope boundaries. Accessed 2026-05-04. https://openreview.net/forum?id=E58HNCqoaA
 - OpenAI’s eval guidance and trace-grading guidance both reinforce the split between outcome checks and process checks. For this repo, that means deterministic verifiers should decide the core score whenever possible, while LLM judging should be reserved for residual qualities like design quality or written rationale. Accessed 2026-05-04. https://developers.openai.com/api/docs/guides/evals and https://developers.openai.com/api/docs/guides/trace-grading
+- The official `skills` CLI and `skills.sh` registry already define a project-scoped Codex install shape under `.agents/skills`, plus non-interactive install commands that can be reused from the workbench instead of inventing a separate skill packaging format. Accessed 2026-05-04. https://skills.sh/ and https://github.com/vercel-labs/skills/blob/main/README.md
 
 ## Review Of The Current Repo
 
@@ -60,6 +61,7 @@ Why this shape is better:
 - `landing-page-refresh` is still partly subjective. The verifier can bound structure and copy, but visual quality still needs human or LLM review.
 - A fresh workspace is not the same thing as a dedicated sandbox. Hard isolation only exists when Docker or macOS seatbelt is actually used.
 - The current provider flow still couples execution and judging around one key path. That is serviceable for now, but a later split between execution credentials and judge credentials would be cleaner.
+- Skill bundles can silently expand the effective agent system. Comparisons remain honest only if the full bundle is copied into artifacts and made visible to the runner contract, not hidden behind AGENTS.md alone.
 
 ## Open Questions
 
@@ -71,6 +73,8 @@ Why this shape is better:
 
 - OpenAI, “Working with evals.” Accessed 2026-05-04. https://developers.openai.com/api/docs/guides/evals
 - OpenAI, “Trace grading.” Accessed 2026-05-04. https://developers.openai.com/api/docs/guides/trace-grading
+- Vercel Labs, “skills” README. Accessed 2026-05-04. https://github.com/vercel-labs/skills/blob/main/README.md
+- skills.sh. Accessed 2026-05-04. https://skills.sh/
 - Jimenez et al., “SWE-bench: Can Language Models Resolve Real-World GitHub Issues?” Published 2023-10-10. Accessed 2026-05-04. https://arxiv.org/abs/2310.06770
 - Zhou et al., “WebArena: A Realistic Web Environment for Building Autonomous Agents.” Published 2023-07-26. Accessed 2026-05-04. https://arxiv.org/abs/2307.13854
 - “Establishing Best Practices in Building Rigorous Agentic Benchmarks.” Accessed 2026-05-04. https://openreview.net/forum?id=E58HNCqoaA

@@ -105,6 +105,8 @@ pnpm exec agent-bench compare --left <run-key> --right <run-key>
 
 - `/` renders the Test Lab shell and current workbench state.
 - `/api/workbench` returns the current dashboard snapshot.
+- `/api/skills/search` searches `skills.sh` through the official `skills` CLI.
+- `/api/agents/bundles` creates managed agent bundles under `./.agent-bench/agents`.
 - `/api/run/batch` executes multi-agent runs for either one task or a full benchmark cycle.
 - `/api/run/[runKey]/result` returns the persisted run summary used by the inspector.
 - `/api/artifacts/[runKey]/[file]` serves generated run reports and result files.
@@ -174,6 +176,8 @@ Runner contract:
 - the runner starts from the agent file directory, not from the task workspace
 - the writable task repo is exposed as `AGENT_BENCH_WORKSPACE`
 - task and agent material are written into the run artifacts and exposed as `AGENT_BENCH_TASK_FILE` and `AGENT_BENCH_AGENT_FILE`
+- bundled agent systems are exposed through `AGENT_BENCH_AGENT_BUNDLE`, `AGENT_BENCH_AGENT_ENTRY_FILE`, `AGENT_BENCH_AGENT_BUNDLE_MODE`, and `AGENT_BENCH_AGENT_SKILLS_DIR` when present
+- copied bundle evidence is exposed through `AGENT_BENCH_AGENT_ARTIFACT_DIR`
 - run metadata is exposed through `AGENT_BENCH_RUN_KEY`, `AGENT_BENCH_BENCHMARK_KEY`, `AGENT_BENCH_TASK_KEY`, and `AGENT_BENCH_ARTIFACTS_DIR`
 - `Provider:` can be `auto`, `process`, `macos-seatbelt`, or `docker`
 - in `auto` mode, macOS prefers `sandbox-exec`; other hosts only auto-select Docker when the daemon is ready and the configured image is already present locally
@@ -307,14 +311,21 @@ The default task set is:
 
 ## Agent Definitions
 
-The workbench scans `./agents` for markdown agent definitions and ignores task folders plus helper files like `AGENTS.md` and `README.md`.
+The workbench now supports both flat markdown agents and nested bundle agents.
+
+- flat agents: `./agents/<name>.md`
+- bundle agents: `./agents/<bundle>/AGENTS.md` with optional `.agents/` workflow and skill files
+- managed bundles created from the UI: `./.agent-bench/agents/<bundle>/...`
 
 Important:
 
 - `./agents` is gitignored for local work.
+- `./.agent-bench/agents` is also local-only and stores managed bundles created from the Test Lab.
 - Keep real agent definitions local unless you explicitly want them versioned elsewhere.
 - The repository examples now live under `./examples/sample-workspace` so they do not appear as loaded runtime agents.
 - Agents without `Runner:` stay in review-only mode; agents with `Runner:` become sandbox-capable when paired with a sandboxed task.
+- Bundle agents can carry `.agents/skills/*/SKILL.md`, workflow files, lock files, and helper scripts so the benchmark compares more than one markdown file.
+- The Test Lab can clone an existing agent into a managed bundle, attach uploaded `.agents` files, and install additional skills discovered via `skills.sh`.
 - Example runnable sandbox agents live under `./examples/sample-workspace/agents`.
 
 ## Defaults

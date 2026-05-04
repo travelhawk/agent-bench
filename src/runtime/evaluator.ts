@@ -1,9 +1,11 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { generateText } from "ai";
+import { resolveAgentExecutionContext } from "../agents/files";
 import { computeWeightedScore, efficiencyScoreFromMetrics } from "../core/scoring";
 import {
+  AgentSkillReference,
   BenchmarkSuiteRecord,
   BenchmarkTaskRecord,
   RunInput,
@@ -79,6 +81,17 @@ interface SandboxExecutionResult {
 }
 
 type JudgeCacheMap = Record<string, JudgeCacheEntry>;
+
+interface ResolvedAgentMaterial {
+  agentPathLabel: string;
+  entryMarkdown: string;
+  previewMarkdown: string;
+  absoluteEntryPath?: string;
+  absoluteBundlePath?: string;
+  bundleMode: "flat" | "bundle";
+  skills: AgentSkillReference[];
+  assetFileCount: number;
+}
 
 function clampScore(raw: number): number {
   if (raw < 0) return 0;
@@ -191,8 +204,73 @@ export async function judgeWithVercelAiSdk(input: {
   };
 }
 
-function readAgentPreview(agentPath: string): string {
-  return readFileSync(agentPath, "utf8").trim().slice(0, 12000);
+function collectAgentPreviewFiles(bundleRoot: string, limit = 8): string[] {
+  const results: string[] = [];
+  const excludedDirs = new Set(["node_modules", ".git", ".next", "dist", "test-results"]);
+
+  function walk(currentDir: string): void {
+    const entries = readdirSync(currentDir, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    entries.forEach((entry) => {
+      if (results.length >= limit) return;
+
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (excludedDirs.has(entry.name)) return;
+        walk(absolutePath);
+        return;
+      }
+
+      const extension = path.extname(entry.name).toLowerCase();
+      if (![".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".js", ".ts", ".py"].includes(extension)) {
+        return;
+      }
+      results.push(absolutePath);
+    });
+  }
+
+  walk(bundleRoot);
+  return results;
+}
+
+function buildAgentSystemPreview(input: {
+  bundleRoot: string;
+  entryPath: string;
+  entryMarkdown: string;
+  bundleMode: "flat" | "bundle";
+  skills: AgentSkillReference[];
+  assetFileCount: number;
+}): string {
+  if (input.bundleMode === "flat") {
+    return input.entryMarkdown.trim().slice(0, 16000);
+  }
+
+  const sections: string[] = [
+    `# Agent System`,
+    "",
+    `Entry File: ${path.basename(input.entryPath)}`,
+    `Bundle Mode: ${input.bundleMode}`,
+    `Skill Count: ${input.skills.length}`,
+    `Asset File Count: ${input.assetFileCount}`,
+    ...(input.skills.length > 0
+      ? ["", "## Attached Skills", ...input.skills.map((skill) => `- ${skill.installSpec}`)]
+      : []),
+    "",
+    "## Entry Markdown",
+    input.entryMarkdown.trim()
+  ];
+  const previewFiles = collectAgentPreviewFiles(input.bundleRoot)
+    .filter((filePath) => filePath !== input.entryPath);
+
+  previewFiles.forEach((filePath) => {
+    const relativePath = path.relative(input.bundleRoot, filePath).replace(/\\/g, "/");
+    const content = readFileSync(filePath, "utf8").trim();
+    if (!content) return;
+    sections.push("", `## File: ${relativePath}`, content.slice(0, 2400));
+  });
+
+  return sections.join("\n").slice(0, 16000);
 }
 
 function buildTaskContext(benchmarks: RuntimeEvaluationRequest["benchmarks"], benchmarkKey: string, taskKey?: string): string {
@@ -208,11 +286,16 @@ function buildTaskContext(benchmarks: RuntimeEvaluationRequest["benchmarks"], be
   }, null, 2);
 }
 
-function resolveAgentMaterial(input: RuntimeEvaluationRequest): { agentPathLabel: string; agentMd: string } {
+function resolveAgentMaterial(input: RuntimeEvaluationRequest): ResolvedAgentMaterial {
   if (input.agentMarkdown && input.agentMarkdown.trim()) {
+    const entryMarkdown = input.agentMarkdown.trim().slice(0, 12000);
     return {
       agentPathLabel: input.agentPath ?? "inline-agent",
-      agentMd: input.agentMarkdown.trim().slice(0, 12000)
+      entryMarkdown,
+      previewMarkdown: entryMarkdown,
+      bundleMode: "flat",
+      skills: [],
+      assetFileCount: 0
     };
   }
 
@@ -220,9 +303,23 @@ function resolveAgentMaterial(input: RuntimeEvaluationRequest): { agentPathLabel
     throw new Error("Run request requires either agentPath or agentMarkdown.");
   }
 
+  const resolved = resolveAgentExecutionContext(input.agentPath);
   return {
     agentPathLabel: input.agentPath,
-    agentMd: readAgentPreview(input.agentPath)
+    entryMarkdown: resolved.content.trim().slice(0, 12000),
+    previewMarkdown: buildAgentSystemPreview({
+      bundleRoot: resolved.absoluteBundlePath,
+      entryPath: resolved.absoluteEntryPath,
+      entryMarkdown: resolved.content,
+      bundleMode: resolved.bundleMode,
+      skills: resolved.skills,
+      assetFileCount: resolved.assetFileCount
+    }),
+    absoluteEntryPath: resolved.absoluteEntryPath,
+    absoluteBundlePath: resolved.absoluteBundlePath,
+    bundleMode: resolved.bundleMode,
+    skills: resolved.skills,
+    assetFileCount: resolved.assetFileCount
   };
 }
 
@@ -398,6 +495,33 @@ function summarizeSandboxExecution(
   };
 }
 
+function copyAgentSystemToArtifacts(input: {
+  artifactsPath: string;
+  agentPath?: string;
+  bundlePath?: string;
+  bundleMode: "flat" | "bundle";
+}): string | undefined {
+  if (!input.agentPath) return undefined;
+
+  const targetDir = path.join(input.artifactsPath, "agent-system");
+  mkdirSync(targetDir, { recursive: true });
+
+  if (input.bundleMode === "bundle" && input.bundlePath) {
+    cpSync(input.bundlePath, targetDir, {
+      recursive: true,
+      filter: (sourcePath) => {
+        const baseName = path.basename(sourcePath);
+        return !["node_modules", ".git", ".next", "dist", "test-results"].includes(baseName);
+      }
+    });
+    return targetDir;
+  }
+
+  const fileName = path.basename(input.agentPath);
+  cpSync(input.agentPath, path.join(targetDir, fileName));
+  return targetDir;
+}
+
 async function maybeRunSandboxExecution(input: {
   runKey: string;
   artifactsPath: string;
@@ -405,6 +529,10 @@ async function maybeRunSandboxExecution(input: {
   task?: BenchmarkTaskRecord;
   benchmarksDir?: string;
   agentPath?: string;
+  agentBundlePath?: string;
+  agentBundleMode: "flat" | "bundle";
+  agentSkills: AgentSkillReference[];
+  agentAssetFileCount: number;
   agentPathLabel: string;
   agentMarkdown: string;
   agentRunnerCommand?: string;
@@ -440,6 +568,14 @@ async function maybeRunSandboxExecution(input: {
   const taskBriefPath = path.join(input.artifactsPath, "task-brief.md");
   const agentFilePath = path.join(input.artifactsPath, "agent.md");
   const agentDir = input.agentPath ? path.dirname(input.agentPath) : workspaceDir;
+  const agentBundleDir = input.agentBundlePath ?? agentDir;
+  const agentSkillsDir = path.join(agentBundleDir, ".agents", "skills");
+  const agentArtifactDir = copyAgentSystemToArtifacts({
+    artifactsPath: input.artifactsPath,
+    agentPath: input.agentPath,
+    bundlePath: input.agentBundlePath,
+    bundleMode: input.agentBundleMode
+  });
   const allowNetwork = input.task.metadata.requiresNetwork;
   cpSync(fixtureDir, workspaceDir, { recursive: true });
   writeFileSync(taskBriefPath, buildTaskBrief(input.benchmark, input.task), "utf8");
@@ -451,11 +587,22 @@ async function maybeRunSandboxExecution(input: {
     AGENT_BENCH_TASK_FILE: taskBriefPath,
     AGENT_BENCH_AGENT_FILE: agentFilePath,
     AGENT_BENCH_AGENT_DIR: agentDir,
+    AGENT_BENCH_AGENT_BUNDLE: agentBundleDir,
+    AGENT_BENCH_AGENT_ENTRY_FILE: input.agentPath ?? agentFilePath,
+    AGENT_BENCH_AGENT_BUNDLE_MODE: input.agentBundleMode,
+    AGENT_BENCH_AGENT_SKILL_COUNT: String(input.agentSkills.length),
+    AGENT_BENCH_AGENT_ASSET_FILE_COUNT: String(input.agentAssetFileCount),
     AGENT_BENCH_ARTIFACTS_DIR: input.artifactsPath,
     AGENT_BENCH_BENCHMARK_KEY: input.benchmark.key,
     AGENT_BENCH_TASK_KEY: input.task.key,
     AGENT_BENCH_SANDBOX_NETWORK: allowNetwork ? "enabled" : "disabled"
   };
+  if (existsSync(agentSkillsDir)) {
+    commandEnv.AGENT_BENCH_AGENT_SKILLS_DIR = agentSkillsDir;
+  }
+  if (agentArtifactDir) {
+    commandEnv.AGENT_BENCH_AGENT_ARTIFACT_DIR = agentArtifactDir;
+  }
   const timeoutMs = input.task.sandbox.timeoutMs;
   const provider = input.resolvedSandboxProvider && input.resolvedSandboxProvider !== "mixed"
     ? input.resolvedSandboxProvider
@@ -467,7 +614,7 @@ async function maybeRunSandboxExecution(input: {
     cwd: agentDir,
     workspaceDir,
     artifactsDir: input.artifactsPath,
-    readOnlyDirs: [agentDir],
+    readOnlyDirs: [agentBundleDir],
     timeoutMs,
     allowNetwork,
     label: "runner",
@@ -483,7 +630,7 @@ async function maybeRunSandboxExecution(input: {
       cwd: workspaceDir,
       workspaceDir,
       artifactsDir: input.artifactsPath,
-      readOnlyDirs: [agentDir],
+      readOnlyDirs: [agentBundleDir],
       timeoutMs,
       allowNetwork,
       label: "verifier",
@@ -756,12 +903,12 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   }
 
   const material = resolveAgentMaterial(input);
-  const headingName = material.agentMd.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const headingName = material.entryMarkdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const fallbackName = path.basename(material.agentPathLabel, path.extname(material.agentPathLabel)) || "agent";
   const agentName = headingName || fallbackName;
   const agentVersion = /v\d+/i.test(agentName) ? agentName.match(/v\d+/i)![0] : "v1";
   const taskContext = buildTaskContext(input.benchmarks, input.benchmarkKey, input.taskKey);
-  const assessment = buildRulesAssessment(selectedBenchmark, selectedTask, material.agentMd);
+  const assessment = buildRulesAssessment(selectedBenchmark, selectedTask, material.previewMarkdown);
   const model = resolveJudgeModel(input.model);
   const artifactsPath = path.join(input.artifactsRoot, input.runKey);
   mkdirSync(artifactsPath, { recursive: true });
@@ -771,9 +918,13 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     benchmark: selectedBenchmark,
     task: selectedTask,
     benchmarksDir: input.benchmarksDir,
-    agentPath: input.agentPath,
+    agentPath: material.absoluteEntryPath ?? input.agentPath,
+    agentBundlePath: material.absoluteBundlePath,
+    agentBundleMode: material.bundleMode,
+    agentSkills: material.skills,
+    agentAssetFileCount: material.assetFileCount,
     agentPathLabel: material.agentPathLabel,
-    agentMarkdown: material.agentMd,
+    agentMarkdown: material.entryMarkdown,
     agentRunnerCommand: input.agentRunnerCommand,
     strictSandbox: input.strictSandbox,
     resolvedSandboxProvider: input.resolvedSandboxProvider,
@@ -818,14 +969,14 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         }
         : null
     }, null, 2)}`,
-    `Agent Markdown:\n${material.agentMd}`
+    `Agent System:\n${material.previewMarkdown}`
   ].join("\n\n");
   const fingerprint = makeJudgeFingerprint({
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
     model,
     taskContext,
-    agentMd: material.agentMd
+    agentMd: material.previewMarkdown
   });
   const cachePath = cachePathFromArtifactsRoot(input.artifactsRoot);
   const judgeCache = loadJudgeCache(cachePath);
@@ -919,6 +1070,9 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Benchmark: ${input.benchmarkKey}`,
     `Task: ${input.taskKey ?? "all"}`,
     `Agent: ${material.agentPathLabel}`,
+    `Agent bundle mode: ${material.bundleMode}`,
+    `Agent skill count: ${material.skills.length}`,
+    `Agent asset file count: ${material.assetFileCount}`,
     `Execution mode: ${sandbox.mode}`,
     `Sandbox provider: ${sandbox.provider ?? "n/a"}`,
     `Network access: ${sandbox.networkAccess ?? "n/a"}`,
@@ -959,6 +1113,14 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       successChecks: selectedTask.successChecks,
       failureModes: selectedTask.failureModes
     } : null,
+    agentSystem: {
+      entryFile: material.agentPathLabel,
+      bundleMode: material.bundleMode,
+      bundlePath: material.absoluteBundlePath ?? null,
+      skillCount: material.skills.length,
+      assetFileCount: material.assetFileCount,
+      skills: material.skills
+    },
     model,
     executionMode: sandbox.mode,
     reviewMode: judge.mode,
@@ -984,6 +1146,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         "summary.json",
         "session.log",
         "report.svg",
+        ...(material.bundleMode === "bundle" ? ["agent-system/"] : []),
         ...(sandbox.taskBriefPath ? ["task-brief.md"] : []),
         ...(sandbox.workspaceDir ? ["workspace/"] : [])
       ]

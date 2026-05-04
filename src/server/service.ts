@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { inspectAgentFile, listAgentFiles } from "../agents/files";
+import { createManagedAgentBundle } from "../agents/bundles";
+import { searchSkillsRegistry, SkillSearchResult } from "../agents/skills";
 import { normalizeSuiteMetadataInput, normalizeTaskMetadataInput } from "../benchmarks/metadata";
 import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesFromFiles } from "../benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
@@ -83,6 +85,23 @@ interface BatchRunJob {
   agentRunnerCommand?: string;
 }
 
+interface ManagedAgentBundleInput {
+  name?: string;
+  baseAgentPath?: string;
+  agentMarkdown?: string;
+  files?: Array<{
+    path?: string;
+    content?: string;
+  }>;
+  skills?: Array<{
+    source?: string;
+    skillName?: string;
+    registryUrl?: string;
+    installs?: number;
+    title?: string;
+  }>;
+}
+
 function withContext<T>(fn: (context: ServiceContext) => Promise<T> | T, dbPathInput?: string): Promise<T> {
   const workspaceRoot = getWorkspaceRoot();
   const dbPath = resolveDbPath(workspaceRoot, dbPathInput);
@@ -105,6 +124,10 @@ function withContext<T>(fn: (context: ServiceContext) => Promise<T> | T, dbPathI
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export function resolveRunMode(value: unknown): RunMode {
@@ -342,6 +365,50 @@ export function getWorkbenchSnapshot(dbPathInput?: string): Promise<WorkbenchSna
 
 export function inspectAgent(agentPath: string, dbPathInput?: string): Promise<AgentRecord> {
   return withContext((context) => inspectAgentFile(context.workspaceRoot, agentPath), dbPathInput);
+}
+
+export function searchSkills(query: string, dbPathInput?: string): Promise<SkillSearchResult[]> {
+  return withContext((context) => {
+    const normalizedQuery = readBoundedString(query, "query", INPUT_LIMITS.maxSkillQueryLength, true)!;
+    return searchSkillsRegistry(normalizedQuery, context.workspaceRoot);
+  }, dbPathInput);
+}
+
+export function createAgentBundle(input: ManagedAgentBundleInput, dbPathInput?: string): Promise<AgentRecord> {
+  return withContext((context) => {
+    const name = readBoundedString(input.name, "name", INPUT_LIMITS.maxManagedBundleNameLength);
+    const baseAgentPath = readBoundedString(input.baseAgentPath, "baseAgentPath", INPUT_LIMITS.maxKeyLength * 4);
+    const agentMarkdown = readBoundedString(input.agentMarkdown, "agentMarkdown", INPUT_LIMITS.maxAgentMarkdownLength);
+    const files = Array.isArray(input.files) ? input.files : [];
+    const skills = Array.isArray(input.skills) ? input.skills : [];
+
+    if (!baseAgentPath && !agentMarkdown) {
+      throw new Error("Provide either baseAgentPath or agentMarkdown.");
+    }
+    if (files.length > INPUT_LIMITS.maxManagedBundleFiles) {
+      throw new Error(`files exceed the ${INPUT_LIMITS.maxManagedBundleFiles}-file limit.`);
+    }
+
+    const normalizedFiles = files.map((file, index) => ({
+      path: readBoundedString(file?.path, `files[${index}].path`, INPUT_LIMITS.maxManagedBundleFilePathLength, true)!,
+      content: readBoundedString(file?.content, `files[${index}].content`, INPUT_LIMITS.maxManagedBundleFileContentLength, true)!
+    }));
+    const normalizedSkills = skills.map((skill, index) => ({
+      source: readBoundedString(skill?.source, `skills[${index}].source`, INPUT_LIMITS.maxDescriptionLength, true)!,
+      skillName: readBoundedString(skill?.skillName, `skills[${index}].skillName`, INPUT_LIMITS.maxTitleLength, true)!,
+      registryUrl: readBoundedString(skill?.registryUrl, `skills[${index}].registryUrl`, INPUT_LIMITS.maxDescriptionLength),
+      installs: readOptionalNumber(skill?.installs),
+      title: readBoundedString(skill?.title, `skills[${index}].title`, INPUT_LIMITS.maxTitleLength)
+    }));
+
+    return createManagedAgentBundle(context.workspaceRoot, {
+      name,
+      baseAgentPath,
+      agentMarkdown,
+      files: normalizedFiles,
+      skills: normalizedSkills
+    });
+  }, dbPathInput);
 }
 
 export function createBenchmark(input: CreateBenchmarkInput, dbPathInput?: string): Promise<BenchmarkSuiteRecord | BenchmarkTaskRecord> {

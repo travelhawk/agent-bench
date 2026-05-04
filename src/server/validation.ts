@@ -16,6 +16,11 @@ export const INPUT_LIMITS = {
   maxModelLength: 160,
   maxApiKeyLength: 512,
   maxAgentMarkdownLength: 12000,
+  maxSkillQueryLength: 120,
+  maxManagedBundleNameLength: 80,
+  maxManagedBundleFiles: 200,
+  maxManagedBundleFilePathLength: 240,
+  maxManagedBundleFileContentLength: 120000,
   maxAgentsPerBatch: 8,
   maxRunsPerBatch: 48
 } as const;

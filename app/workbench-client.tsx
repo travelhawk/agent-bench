@@ -1,9 +1,9 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import type {
-  AgentRecord, BatchRunFailure, BatchRunResult, BenchmarkEvaluatorMode, BenchmarkInteractionMode,
+  AgentRecord, AgentSkillReference, BatchRunFailure, BatchRunResult, BenchmarkEvaluatorMode, BenchmarkInteractionMode,
   BenchmarkResolution, BenchmarkSuiteRecord, BenchmarkTaskRecord, RunMode, RunRecord, RunResultPayload, WorkbenchSnapshot
 } from "../src/types";
 
@@ -22,6 +22,7 @@ interface BenchmarkFormState {
 interface RunSummaryView {
   status?: "completed" | "failed"; executionMode?: string; reviewMode?: string; scoreProfile?: string; scoreConfidence?: Confidence;
   latencyMs?: number; costUsd?: number; failureReason?: string;
+  agentSystem?: { entryFile?: string; bundleMode?: "flat" | "bundle"; bundlePath?: string | null; skillCount?: number; assetFileCount?: number; skills?: AgentSkillReference[] };
   sandbox?: { provider?: string; networkAccess?: string; runner?: { exitCode?: number; cwd?: string }; verifier?: { exitCode?: number; command?: string } };
   objectiveChecks?: { available?: number; passed?: number; deterministic?: boolean; items?: string[] };
   scores?: { total?: number; outcome?: number; process?: number; review?: number; efficiency?: number; tests?: number; judge?: number; performance?: number };
@@ -32,6 +33,15 @@ interface RunSummaryView {
 
 interface StatusMessage { tone: AsyncTone; message: string; }
 interface RetryJob { benchmarkKey: string; taskKey: string; agentPath: string; }
+interface SkillSearchResultView {
+  source: string;
+  skillName: string;
+  installSpec: string;
+  registryUrl: string;
+  installs?: number;
+  title: string;
+}
+interface BundleUploadFile { path: string; content: string; }
 
 const MAX_BATCH_RUNS = 48;
 const RESOLUTION_OPTIONS: BenchmarkResolution[] = ["atomic", "workflow", "campaign", "swarm"];
@@ -47,9 +57,21 @@ const emptyForm = (): BenchmarkFormState => ({
 });
 
 const formatMoney = (value: number) => `$${value.toFixed(2)}`;
+const formatInstalls = (value?: number) => typeof value === "number" ? `${value.toLocaleString()} installs` : "skills.sh";
 const humanizeToken = (value: string) => value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 const splitListInput = (value: string) => value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
 const readRunSummary = (summary: RunResultPayload["summary"]) => (summary ?? null) as RunSummaryView | null;
+
+async function readBundleUploadFiles(fileList: FileList): Promise<BundleUploadFile[]> {
+  const files = Array.from(fileList);
+  return Promise.all(files.map(async (file) => {
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+    return {
+      path: relativePath,
+      content: await file.text()
+    };
+  }));
+}
 
 function taskSignalQuality(task: BenchmarkTaskRecord): Confidence {
   if (task.sandbox?.verifyCommand) return "high";
@@ -125,12 +147,22 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [providerApiKey, setProviderApiKey] = useState("");
   const [manualAgentPath, setManualAgentPath] = useState("");
   const [manualAgentState, setManualAgentState] = useState<StatusMessage>({ tone: "neutral", message: "" });
+  const [bundleBaseAgentPath, setBundleBaseAgentPath] = useState(initialSnapshot.agents[0]?.path ?? "");
+  const [bundleName, setBundleName] = useState("");
+  const [bundleUploadFiles, setBundleUploadFiles] = useState<BundleUploadFile[]>([]);
+  const [bundleState, setBundleState] = useState<StatusMessage>({ tone: "neutral", message: "" });
+  const [skillQuery, setSkillQuery] = useState("");
+  const [skillResults, setSkillResults] = useState<SkillSearchResultView[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<SkillSearchResultView[]>([]);
+  const [skillState, setSkillState] = useState<StatusMessage>({ tone: "neutral", message: "" });
   const [runState, setRunState] = useState<StatusMessage>({ tone: "neutral", message: "" });
   const [benchmarkState, setBenchmarkState] = useState<StatusMessage>({ tone: "neutral", message: "" });
   const [resultJson, setResultJson] = useState<Record<string, string>>({});
   const [detail, setDetail] = useState<RunResultPayload | null>(null);
   const [benchmarkForm, setBenchmarkForm] = useState<BenchmarkFormState>(emptyForm());
   const [isInspectingAgent, setIsInspectingAgent] = useState(false);
+  const [isSearchingSkills, setIsSearchingSkills] = useState(false);
+  const [isCreatingBundle, setIsCreatingBundle] = useState(false);
   const [isRunningBatch, setIsRunningBatch] = useState(false);
   const [isCreatingBenchmark, setIsCreatingBenchmark] = useState(false);
   const [activeRunAction, setActiveRunAction] = useState<string | null>(null);
@@ -194,8 +226,82 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
       const response = await mutateJson<{ agent: AgentRecord }>("/api/agents/inspect", "POST", { agentPath: manualAgentPath.trim() });
       startTransition(() => setSnapshot((current) => ({ ...current, agents: [...current.agents.filter((agent) => agent.path !== response.agent.path), response.agent] })));
       setSelectedAgentPaths((current) => Array.from(new Set([...current, response.agent.path]))); setManualAgentPath("");
+      setBundleBaseAgentPath(response.agent.path);
       setManualAgentState({ tone: "success", message: `Loaded ${response.agent.name}.` });
     } catch (error: unknown) { setManualAgentState({ tone: "error", message: error instanceof Error ? error.message : String(error) }); } finally { setIsInspectingAgent(false); }
+  }
+
+  async function searchSkillsAction() {
+    if (!skillQuery.trim()) {
+      setSkillState({ tone: "error", message: "Enter a skills.sh search query first." });
+      return;
+    }
+
+    setIsSearchingSkills(true);
+    setSkillState({ tone: "neutral", message: `Searching skills.sh for "${skillQuery.trim()}"...` });
+    try {
+      const response = await mutateJson<{ results: SkillSearchResultView[] }>("/api/skills/search", "POST", { query: skillQuery.trim() });
+      setSkillResults(response.results);
+      setSkillState({
+        tone: response.results.length > 0 ? "success" : "neutral",
+        message: response.results.length > 0 ? `Found ${response.results.length} candidate skill(s).` : "No skills found for that query."
+      });
+    } catch (error: unknown) {
+      setSkillState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsSearchingSkills(false);
+    }
+  }
+
+  async function handleBundleUploadChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      setBundleUploadFiles([]);
+      return;
+    }
+
+    const uploaded = await readBundleUploadFiles(files);
+    setBundleUploadFiles(uploaded);
+    setBundleState({ tone: "success", message: `Loaded ${uploaded.length} uploaded bundle file(s).` });
+  }
+
+  function toggleSelectedSkill(skill: SkillSearchResultView) {
+    setSelectedSkills((current) => current.some((entry) => entry.installSpec === skill.installSpec)
+      ? current.filter((entry) => entry.installSpec !== skill.installSpec)
+      : [...current, skill]);
+  }
+
+  async function createManagedBundleAction() {
+    const baseAgentPath = bundleBaseAgentPath || selectedAgents[0]?.path || manualAgentPath.trim();
+    if (!baseAgentPath) {
+      setBundleState({ tone: "error", message: "Choose or inspect a base agent before creating a managed bundle." });
+      return;
+    }
+
+    setIsCreatingBundle(true);
+    setBundleState({ tone: "neutral", message: "Creating managed agent bundle..." });
+    try {
+      const response = await mutateJson<{ agent: AgentRecord }>("/api/agents/bundles", "POST", {
+        name: bundleName || undefined,
+        baseAgentPath,
+        files: bundleUploadFiles,
+        skills: selectedSkills
+      });
+      startTransition(() => setSnapshot((current) => ({
+        ...current,
+        agents: [...current.agents.filter((agent) => agent.path !== response.agent.path), response.agent]
+      })));
+      setSelectedAgentPaths((current) => Array.from(new Set([...current, response.agent.path])));
+      setBundleBaseAgentPath(response.agent.path);
+      setBundleName("");
+      setBundleUploadFiles([]);
+      setSelectedSkills([]);
+      setBundleState({ tone: "success", message: `Created managed bundle ${response.agent.name}.` });
+    } catch (error: unknown) {
+      setBundleState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsCreatingBundle(false);
+    }
   }
 
   async function runBatchAction(retryJobs?: RetryJob[]) {
@@ -296,13 +402,42 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                     return (
                       <button key={agent.path} type="button" className={`agent-card ${active ? "selected" : ""}`} onClick={() => setSelectedAgentPaths((current) => current.includes(agent.path) ? current.filter((entry) => entry !== agent.path) : [...current, agent.path])}>
                         <div className="agent-card-head"><div><div className="agent-title">{agent.name}</div><div className="agent-summary">{agent.summary}</div></div><span className={`status-chip ${active ? "status-chip-active" : ""}`}>{active ? "Selected" : "Ready"}</span></div>
-                        <div className="agent-meta"><span>{agent.path}</span><span>{agent.executionMode === "sandbox" ? "Sandbox-capable" : "Review-only"}</span><span>{agent.source === "manual" ? "Added manually" : "Discovered"}</span></div>
+                        <div className="agent-meta">
+                          <span>{agent.path}</span>
+                          <span>{agent.executionMode === "sandbox" ? "Sandbox-capable" : "Review-only"}</span>
+                          <span>{agent.system.bundleMode === "bundle" ? `${agent.system.skillCount} skills / ${agent.system.assetFileCount} assets` : "Single-file agent"}</span>
+                          <span>{agent.source === "manual" ? "Added manually" : agent.source === "managed" ? "Managed bundle" : "Discovered"}</span>
+                        </div>
                       </button>
                     );
                   }) : <div className="empty-state">No agent markdown files found under <code>./agents</code> yet.</div>}
                 </div>
-                <div className="inline-form"><input value={manualAgentPath} onChange={(event) => setManualAgentPath(event.target.value)} placeholder="Add another agent path inside ./agents" disabled={isInspectingAgent} /><button type="button" className="secondary-action" onClick={inspectManualAgent} disabled={isInspectingAgent}>Inspect path</button></div>
+                <div className="inline-form"><input value={manualAgentPath} onChange={(event) => setManualAgentPath(event.target.value)} placeholder="Add another agent path or bundle directory inside ./agents" disabled={isInspectingAgent} /><button type="button" className="secondary-action" onClick={inspectManualAgent} disabled={isInspectingAgent}>Inspect path</button></div>
                 {manualAgentState.message && <p className={toneClass(manualAgentState.tone)}>{manualAgentState.message}</p>}
+                <div className="callout callout-muted">
+                  <strong>Bundle skills and workflows</strong>
+                  <span>Create a managed agent bundle by starting from an existing AGENTS.md or agent file, then attaching uploaded `.agents` content and extra skills from skills.sh.</span>
+                </div>
+                <div className="config-grid">
+                  <label className="field"><span>Base agent</span><select value={bundleBaseAgentPath} onChange={(event) => setBundleBaseAgentPath(event.target.value)}><option value="">Select agent</option>{snapshot.agents.map((agent) => <option key={`bundle-${agent.path}`} value={agent.path}>{agent.name} ({agent.path})</option>)}</select></label>
+                  <label className="field"><span>Managed bundle name</span><input value={bundleName} onChange={(event) => setBundleName(event.target.value)} placeholder="optional bundle name" /></label>
+                  <label className="field field-span-2"><span>Upload `.agents` or workflow files</span><input type="file" multiple onChange={handleBundleUploadChange} {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)} /></label>
+                </div>
+                {bundleUploadFiles.length > 0 ? <div className="chip-row">{bundleUploadFiles.slice(0, 6).map((file) => <span className="mini-chip" key={file.path}>{file.path}</span>)}{bundleUploadFiles.length > 6 ? <span className="mini-chip">+{bundleUploadFiles.length - 6} more</span> : null}</div> : null}
+                <div className="inline-form"><input value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} placeholder="Search skills.sh for reusable skills" disabled={isSearchingSkills} /><button type="button" className="secondary-action" onClick={searchSkillsAction} disabled={isSearchingSkills}>{isSearchingSkills ? "Searching..." : "Search skills"}</button></div>
+                {skillState.message && <p className={toneClass(skillState.tone)}>{skillState.message}</p>}
+                {skillResults.length > 0 ? <div className="agent-list">{skillResults.map((skill) => {
+                  const selected = selectedSkills.some((entry) => entry.installSpec === skill.installSpec);
+                  return (
+                    <button key={skill.installSpec} type="button" className={`agent-card ${selected ? "selected" : ""}`} onClick={() => toggleSelectedSkill(skill)}>
+                      <div className="agent-card-head"><div><div className="agent-title">{skill.title}</div><div className="agent-summary">{skill.installSpec}</div></div><span className={`status-chip ${selected ? "status-chip-active" : ""}`}>{selected ? "Attached" : "Attach"}</span></div>
+                      <div className="agent-meta"><span>{formatInstalls(skill.installs)}</span><span>{skill.registryUrl}</span></div>
+                    </button>
+                  );
+                })}</div> : null}
+                {selectedSkills.length > 0 ? <div className="chip-row">{selectedSkills.map((skill) => <span className="mini-chip" key={`selected-${skill.installSpec}`}>{skill.installSpec}</span>)}</div> : null}
+                <div className="action-row"><button type="button" className="secondary-action" onClick={createManagedBundleAction} disabled={isCreatingBundle}>{isCreatingBundle ? "Creating..." : "Create managed bundle"}</button></div>
+                {bundleState.message && <p className={toneClass(bundleState.tone)}>{bundleState.message}</p>}
               </article>
 
               <article className="panel">
@@ -382,6 +517,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                         <div className="detail-cell">Execution <strong>{detailSummary?.executionMode ?? "review-only"}</strong></div><div className="detail-cell">Sandbox <strong>{detailSummary?.sandbox?.provider ?? "n/a"}</strong></div>
                         <div className="detail-cell">Network <strong>{detailSummary?.sandbox?.networkAccess ?? "n/a"}</strong></div><div className="detail-cell">Review mode <strong>{detailSummary?.reviewMode ?? "unknown"}</strong></div>
                       </div>
+                      {detailSummary?.agentSystem ? <div className="detail-stack"><strong>Agent system</strong><span>{detailSummary.agentSystem.bundleMode === "bundle" ? `Bundle with ${detailSummary.agentSystem.skillCount ?? 0} skills and ${detailSummary.agentSystem.assetFileCount ?? 0} asset files` : "Single-file agent definition"}</span>{detailSummary.agentSystem.skills?.length ? <span>{detailSummary.agentSystem.skills.map((skill) => skill.installSpec).join(" / ")}</span> : null}</div> : null}
                       {detailSummary?.objectiveChecks && <div className="detail-stack"><strong>Objective checks</strong><span>{detailSummary.objectiveChecks.passed ?? 0}/{detailSummary.objectiveChecks.available ?? 0}{detailSummary.objectiveChecks.deterministic ? " deterministic" : " advisory"}</span>{detailSummary.objectiveChecks.items?.length ? <span>{detailSummary.objectiveChecks.items.join(" / ")}</span> : null}</div>}
                       {detailSummary?.taskContract?.deliverableFormat && <div className="detail-stack"><strong>Deliverable format</strong><span>{detailSummary.taskContract.deliverableFormat}</span></div>}
                       {detailSummary?.evidence?.matchedSignals?.length ? <div className="detail-stack"><strong>Matched evidence</strong><span>{detailSummary.evidence.matchedSignals.join(" / ")}</span></div> : null}

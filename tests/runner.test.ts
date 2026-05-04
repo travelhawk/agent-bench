@@ -222,3 +222,53 @@ test("runEvaluationInRuntime can execute the security audit fixture", async () =
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("runEvaluationInRuntime persists agent bundle files into artifacts for sandbox runs", async () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+
+  try {
+    const agentDir = path.join(workspace, "agents", "bundle-agent");
+    const agentPath = path.join(agentDir, "AGENTS.md");
+    const runnerScriptPath = path.join(agentDir, "runner.js");
+    const skillFilePath = path.join(agentDir, ".agents", "skills", "patch-guide", "SKILL.md");
+    const artifactsRoot = path.join(workspace, "artifacts");
+    const benchmarksDir = path.join(workspace, "benchmarks");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "repo-maintenance");
+
+    mkdirSync(path.dirname(skillFilePath), { recursive: true });
+    mkdirSync(artifactsRoot, { recursive: true });
+    mkdirSync(benchmarksDir, { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "repo-maintenance"), { recursive: true });
+    writeFileSync(agentPath, "# Bundle Agent\nRunner: node ./runner.js\n");
+    writeFileSync(runnerScriptPath, [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const target = path.join(process.env.AGENT_BENCH_WORKSPACE, 'Counter.js');",
+      "const next = fs.readFileSync(target, 'utf8').replace(/(next = current \\+ 1;)(\\r?\\n)  next = current \\+ 1;/, '$1$2  next = next + 1;');",
+      "fs.writeFileSync(target, next);"
+    ].join("\n"));
+    writeFileSync(skillFilePath, "# Patch Guide\nAlways inspect verifier output.\n");
+
+    await runEvaluationInRuntime({
+      runKey: "run-agent-bundle",
+      agentPath,
+      agentRunnerCommand: "node ./runner.js",
+      benchmarkKey: "repo-maintenance",
+      taskKey: "fix-react-bug",
+      artifactsRoot,
+      benchmarksDir,
+      benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
+    });
+
+    const summary = JSON.parse(readFileSync(path.join(artifactsRoot, "run-agent-bundle", "summary.json"), "utf8")) as {
+      agentSystem?: { bundleMode?: string; skillCount?: number };
+    };
+
+    assert.equal(summary.agentSystem?.bundleMode, "bundle");
+    assert.equal(summary.agentSystem?.skillCount, 1);
+    assert.ok(existsSync(path.join(artifactsRoot, "run-agent-bundle", "agent-system", "AGENTS.md")));
+    assert.ok(existsSync(path.join(artifactsRoot, "run-agent-bundle", "agent-system", ".agents", "skills", "patch-guide", "SKILL.md")));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
