@@ -27,6 +27,9 @@ test("listBenchmarkSuitesFromFiles backfills metadata for legacy markdown", () =
     assert.equal(suite.tasks[0].metadata.resolution, "atomic");
     assert.equal(suite.tasks[0].metadata.interaction, "artifact");
     assert.equal(suite.tasks[0].metadata.evaluator, "hybrid");
+    assert.equal(suite.tasks[0].metadata.reliability, "medium");
+    assert.equal(suite.tasks[0].metadata.timeBudgetMs, 90000);
+    assert.equal(suite.tasks[0].metadata.defaultTrials, 1);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -64,9 +67,13 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
         interaction: "multi-agent",
         evaluator: "trace",
         difficulty: "high",
+        reliability: "medium",
         tags: ["delegation", "orchestration"],
         requiresIsolation: true,
-        requiresNetwork: false
+        requiresNetwork: false,
+        timeBudgetMs: 120000,
+        costBudgetUsd: 2,
+        defaultTrials: 2
       },
       sandbox: {
         fixtureDir: "fixtures/superagent-handoff",
@@ -84,6 +91,9 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
     assert.equal(suite.tasks[0].metadata.interaction, "multi-agent");
     assert.equal(suite.tasks[0].metadata.evaluator, "trace");
     assert.equal(suite.tasks[0].metadata.difficulty, "high");
+    assert.equal(suite.tasks[0].metadata.reliability, "medium");
+    assert.equal(suite.tasks[0].metadata.timeBudgetMs, 120000);
+    assert.equal(suite.tasks[0].metadata.defaultTrials, 2);
     assert.equal(suite.tasks[0].whyThisTask, "Checks orchestrated delegation.");
     assert.equal(suite.tasks[0].inputs, "Use the supplied project brief.");
     assert.equal(suite.tasks[0].deliverableFormat, "Return sections for result and handoffs.");
@@ -97,42 +107,49 @@ test("createBenchmark* files persist metadata for richer eval structure", () => 
   }
 });
 
-test("default seeded benchmarks cover browser and computer-use surfaces", () => {
+test("default seeded benchmarks prefer fast product and repo tasks", () => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-benchmarks-"));
 
   try {
     const benchmarksDir = path.join(workspace, "benchmarks");
     const suites = listBenchmarkSuitesFromFiles(benchmarksDir);
-    const surfaceSuite = suites.find((entry) => entry.key === "interaction-surfaces");
+    const creativeSuite = suites.find((entry) => entry.key === "creative-frontend");
+    const productSuite = suites.find((entry) => entry.key === "product-builds");
+    const repoSuite = suites.find((entry) => entry.key === "repo-maintenance");
 
-    assert.ok(surfaceSuite);
-    assert.equal(surfaceSuite.metadata.domain, "operator-systems");
-    assert.ok(surfaceSuite.tasks.some((task) => task.metadata.interaction === "browser"));
-    assert.ok(surfaceSuite.tasks.some((task) => task.metadata.interaction === "computer-use"));
+    assert.ok(creativeSuite);
+    assert.ok(productSuite);
+    assert.ok(repoSuite);
+    assert.equal(creativeSuite.metadata.domain, "frontend-design");
+    assert.equal(productSuite.metadata.domain, "product-engineering");
+    assert.equal(repoSuite.metadata.domain, "software-engineering");
     assert.equal(
-      surfaceSuite.tasks.find((task) => task.key === "browser-support-escalation")?.sandbox?.verifyCommand,
+      suites
+        .find((entry) => entry.key === "creative-frontend")
+        ?.tasks.find((task) => task.key === "landing-page-refresh")
+        ?.sandbox?.verifyCommand,
       "node verify.js"
     );
     assert.equal(
-      surfaceSuite.tasks.find((task) => task.key === "browser-support-escalation")?.sandbox?.provider,
-      "process"
-    );
-    assert.equal(
-      surfaceSuite.tasks.find((task) => task.key === "computer-use-incident-drill")?.sandbox?.fixtureDir,
-      "fixtures/computer-use-incident-drill"
+      suites
+        .find((entry) => entry.key === "product-builds")
+        ?.tasks.find((task) => task.key === "simple-feedback-web-app")
+        ?.sandbox?.verifyCommand,
+      "node --test tests/*.test.js"
     );
     assert.equal(
       suites
-        .find((entry) => entry.key === "core-engineering")
+        .find((entry) => entry.key === "repo-maintenance")
         ?.tasks.find((task) => task.key === "fix-react-bug")
         ?.sandbox?.verifyCommand,
       "node --test tests/*.test.js"
     );
-    assert.ok(
-      (suites
-        .find((entry) => entry.key === "core-engineering")
-        ?.tasks.find((task) => task.key === "design-rest-api")
-        ?.deliverableFormat ?? "").includes("Endpoints")
+    assert.equal(
+      suites
+        .find((entry) => entry.key === "repo-maintenance")
+        ?.tasks.find((task) => task.key === "security-audit-report")
+        ?.sandbox?.fixtureDir,
+      "fixtures/security-audit-report"
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });

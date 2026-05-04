@@ -24,7 +24,7 @@ test("runEvaluationInRuntime writes artifacts without requiring a dist-only eval
     const result = await runEvaluationInRuntime({
       runKey: "run-test",
       agentPath,
-      benchmarkKey: "core-engineering",
+      benchmarkKey: "repo-maintenance",
       taskKey: "fix-react-bug",
       artifactsRoot,
       benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
@@ -33,7 +33,7 @@ test("runEvaluationInRuntime writes artifacts without requiring a dist-only eval
     const runArtifactsDir = path.join(artifactsRoot, "run-test");
 
     assert.equal(result.runKey, "run-test");
-    assert.equal(result.suiteName, "core-engineering/fix-react-bug");
+    assert.equal(result.suiteName, "repo-maintenance/fix-react-bug");
     assert.ok(existsSync(path.join(runArtifactsDir, "summary.json")));
     assert.ok(existsSync(path.join(runArtifactsDir, "session.log")));
     assert.ok(existsSync(path.join(runArtifactsDir, "report.svg")));
@@ -62,12 +62,12 @@ test("runEvaluationInRuntime can execute a sandboxed runner against a task fixtu
     const runnerScriptPath = path.join(path.dirname(agentPath), "runner.js");
     const artifactsRoot = path.join(workspace, "artifacts");
     const benchmarksDir = path.join(workspace, "benchmarks");
-    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "core-engineering");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "repo-maintenance");
 
     mkdirSync(path.dirname(agentPath), { recursive: true });
     mkdirSync(artifactsRoot, { recursive: true });
     mkdirSync(benchmarksDir, { recursive: true });
-    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "core-engineering"), { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "repo-maintenance"), { recursive: true });
     writeFileSync(agentPath, "# Agent\nRunner: node ./runner.js\n");
     writeFileSync(runnerScriptPath, [
       "const fs = require('node:fs');",
@@ -81,7 +81,7 @@ test("runEvaluationInRuntime can execute a sandboxed runner against a task fixtu
       runKey: "run-sandbox",
       agentPath,
       agentRunnerCommand: "node ./runner.js",
-      benchmarkKey: "core-engineering",
+      benchmarkKey: "repo-maintenance",
       taskKey: "fix-react-bug",
       artifactsRoot,
       benchmarksDir,
@@ -118,13 +118,13 @@ test("sandboxed runner cannot write outside the task workspace when seatbelt is 
     const runnerScriptPath = path.join(path.dirname(agentPath), "runner.js");
     const artifactsRoot = path.join(workspace, "artifacts");
     const benchmarksDir = path.join(workspace, "benchmarks");
-    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "core-engineering");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "repo-maintenance");
     const forbiddenPath = path.join(workspace, "escape.txt");
 
     mkdirSync(path.dirname(agentPath), { recursive: true });
     mkdirSync(artifactsRoot, { recursive: true });
     mkdirSync(benchmarksDir, { recursive: true });
-    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "core-engineering"), { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "repo-maintenance"), { recursive: true });
     writeFileSync(agentPath, "# Agent\nRunner: node ./runner.js\n");
     writeFileSync(runnerScriptPath, [
       "const fs = require('node:fs');",
@@ -135,7 +135,7 @@ test("sandboxed runner cannot write outside the task workspace when seatbelt is 
       runKey: "run-seatbelt",
       agentPath,
       agentRunnerCommand: "node ./runner.js",
-      benchmarkKey: "core-engineering",
+      benchmarkKey: "repo-maintenance",
       taskKey: "fix-react-bug",
       artifactsRoot,
       benchmarksDir,
@@ -163,7 +163,7 @@ test("sandboxed runner cannot write outside the task workspace when seatbelt is 
   }
 });
 
-test("runEvaluationInRuntime can execute the computer-use incident fixture", async () => {
+test("runEvaluationInRuntime can execute the security audit fixture", async () => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
 
   try {
@@ -171,53 +171,53 @@ test("runEvaluationInRuntime can execute the computer-use incident fixture", asy
     const runnerScriptPath = path.join(path.dirname(agentPath), "runner.js");
     const artifactsRoot = path.join(workspace, "artifacts");
     const benchmarksDir = path.join(workspace, "benchmarks");
-    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "interaction-surfaces");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "repo-maintenance");
 
     mkdirSync(path.dirname(agentPath), { recursive: true });
     mkdirSync(artifactsRoot, { recursive: true });
     mkdirSync(benchmarksDir, { recursive: true });
-    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "interaction-surfaces"), { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "repo-maintenance"), { recursive: true });
     writeFileSync(agentPath, "# Agent\nRunner: node ./runner.js\n");
     writeFileSync(runnerScriptPath, [
       "const fs = require('node:fs');",
       "const path = require('node:path');",
       "const workspace = process.env.AGENT_BENCH_WORKSPACE;",
-      "const alerts = JSON.parse(fs.readFileSync(path.join(workspace, 'desktop', 'alerts.json'), 'utf8'));",
-      "const terminalLog = fs.readFileSync(path.join(workspace, 'desktop', 'terminal.log'), 'utf8');",
-      "const runbook = fs.readFileSync(path.join(workspace, 'desktop', 'runbook.md'), 'utf8');",
-      "fs.mkdirSync(path.join(workspace, 'result'), { recursive: true });",
-      "fs.writeFileSync(path.join(workspace, 'result', 'incident-plan.json'), JSON.stringify({",
-      "  incidentId: alerts.incidentId,",
-      "  severity: alerts.severity,",
-      "  suspectedComponent: 'token-cache',",
-      "  immediateActions: ['Disable stale token reuse before worker restart.', 'Restart cache worker pool after the guardrail flag is off.'],",
-      "  evidence: ['alerts.json: ' + alerts.symptoms[0], 'terminal.log: ' + terminalLog.split(/\\\\r?\\\\n/)[2], 'runbook.md: ' + runbook.split(/\\\\r?\\\\n/)[1]]",
-      "}, null, 2));"
+      "const report = [{",
+      "  id: 'command-injection',",
+      "  severity: 'high',",
+      "  file: 'src/server.js',",
+      "  line: 7,",
+      "  title: 'Command injection via unsanitized shell execution',",
+      "  evidence: 'The handler passes req.query.cmd directly into exec(command).',",
+      "  impact: 'An attacker can execute arbitrary shell commands on the host.',",
+      "  remediation: 'Avoid shell execution, use an allowlist, and prefer execFile for fixed commands.'",
+      "}];",
+      "fs.writeFileSync(path.join(workspace, 'audit-findings.json'), JSON.stringify(report, null, 2));"
     ].join("\n"));
 
     const result = await runEvaluationInRuntime({
-      runKey: "run-computer-use",
+      runKey: "run-security-audit",
       agentPath,
       agentRunnerCommand: "node ./runner.js",
-      benchmarkKey: "interaction-surfaces",
-      taskKey: "computer-use-incident-drill",
+      benchmarkKey: "repo-maintenance",
+      taskKey: "security-audit-report",
       artifactsRoot,
       benchmarksDir,
       benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
     });
 
-    const runArtifactsDir = path.join(artifactsRoot, "run-computer-use");
+    const runArtifactsDir = path.join(artifactsRoot, "run-security-audit");
     const summary = JSON.parse(readFileSync(path.join(runArtifactsDir, "summary.json"), "utf8")) as {
       executionMode?: string;
       sandbox?: { verifier?: { exitCode?: number } };
       scores?: { tests?: number };
     };
 
-    assert.equal(result.runKey, "run-computer-use");
+    assert.equal(result.runKey, "run-security-audit");
     assert.equal(summary.executionMode, "sandbox");
     assert.equal(summary.sandbox?.verifier?.exitCode, 0);
     assert.ok((summary.scores?.tests ?? 0) >= 9.5);
-    assert.ok(existsSync(path.join(runArtifactsDir, "workspace", "result", "incident-plan.json")));
+    assert.ok(existsSync(path.join(runArtifactsDir, "workspace", "audit-findings.json")));
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

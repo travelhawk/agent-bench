@@ -1,0 +1,11 @@
+{
+  "version": "1.4.0",
+  "date": "2026-05-01",
+  "changes": [
+    { "type": "fixed", "text": "Correct invoice tax rounding." },
+    { "type": "docs", "text": "Document the billing retry policy." },
+    { "type": "added", "text": "Add draft invoice preview." },
+    { "type": "fixed", "text": "Avoid duplicate reminder emails." }
+  ]
+}
+

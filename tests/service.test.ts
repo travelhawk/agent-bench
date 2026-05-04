@@ -7,33 +7,33 @@ import { executeBatchPlan, runBatch } from "../src/server/service";
 
 test("executeBatchPlan keeps later jobs running when one job fails", async () => {
   const jobs = [
-    { benchmarkKey: "agentic-workflows", taskKey: "research-synthesis-loop", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1" },
-    { benchmarkKey: "agentic-workflows", taskKey: "release-war-room", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1" },
-    { benchmarkKey: "agentic-workflows", taskKey: "superagent-handoff-mesh", agentPath: "agents/reviewer.md", agentName: "reviewer", agentVersion: "v1" }
+    { benchmarkKey: "product-builds", taskKey: "simple-feedback-web-app", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1" },
+    { benchmarkKey: "product-builds", taskKey: "release-notes-cli", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1" },
+    { benchmarkKey: "repo-maintenance", taskKey: "security-audit-report", agentPath: "agents/reviewer.md", agentName: "reviewer", agentVersion: "v1" }
   ];
 
   const order: string[] = [];
   const result = await executeBatchPlan(jobs, async (job) => {
     order.push(`${job.agentPath}:${job.taskKey}`);
-    if (job.taskKey === "release-war-room") {
+    if (job.taskKey === "release-notes-cli") {
       throw new Error("judge gateway timed out");
     }
     return `${job.agentPath}:${job.taskKey}`;
   });
 
   assert.deepEqual(order, [
-    "agents/coder.md:research-synthesis-loop",
-    "agents/coder.md:release-war-room",
-    "agents/reviewer.md:superagent-handoff-mesh"
+    "agents/coder.md:simple-feedback-web-app",
+    "agents/coder.md:release-notes-cli",
+    "agents/reviewer.md:security-audit-report"
   ]);
   assert.deepEqual(result.results, [
-    "agents/coder.md:research-synthesis-loop",
-    "agents/reviewer.md:superagent-handoff-mesh"
+    "agents/coder.md:simple-feedback-web-app",
+    "agents/reviewer.md:security-audit-report"
   ]);
   assert.deepEqual(result.failures, [
     {
       agentPath: "agents/coder.md",
-      taskKey: "release-war-room",
+      taskKey: "release-notes-cli",
       message: "judge gateway timed out"
     }
   ]);

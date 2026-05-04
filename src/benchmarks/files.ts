@@ -16,70 +16,45 @@ const EMPTY_TASK_LIST: string[] = [];
 
 const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
   {
-    key: "core-engineering",
-    title: "Core Engineering",
-    description: "Baseline suite for deterministic coding, debugging, and API design tasks.",
+    key: "repo-maintenance",
+    title: "Repo Maintenance",
+    description: "Fast, deterministic tasks on seeded repositories where agents must either repair a regression or identify a concrete security issue.",
     metadata: {
       resolution: "atomic",
       domain: "software-engineering",
-      tags: ["coding", "deterministic", "regression"]
+      tags: ["repo", "maintenance", "deterministic"]
     },
     tasks: [
       {
-        key: "design-rest-api",
-        title: "Design REST API",
-        description: "Design a deterministic REST API for a support ticket service using the provided entity model and policy constraints.",
-        expectedOutcome: "Deliver a complete API proposal with routes, schemas, validation rules, idempotency behavior, and error handling aligned to the supplied constraints.",
-        whyThisTask: "This checks whether an agent can turn a bounded product brief into a production-credible contract instead of returning generic CRUD boilerplate.",
-        inputs: "Use the task brief as the fixed input set: tickets, comments, assignees, SLA policy, and audit-log requirements. Do not invent extra resources unless you justify them explicitly.",
-        deliverableFormat: "Return sections for Endpoints, Request Schemas, Response Schemas, Validation Rules, Error Model, and Open Questions.",
-        successChecks: [
-          "Every endpoint is tied to the provided entities and workflows.",
-          "Schemas define required fields, identifiers, and validation behavior.",
-          "Error handling covers auth, validation, missing resources, and conflicts."
-        ],
-        failureModes: [
-          "Generic CRUD routes that ignore workflow constraints.",
-          "Missing schema details or error behavior.",
-          "Invented features that were not motivated by the brief."
-        ],
-        metadata: {
-          resolution: "atomic",
-          interaction: "artifact",
-          evaluator: "artifact",
-          difficulty: "medium",
-          tags: ["api", "schemas", "contracts"],
-          requiresIsolation: true,
-          requiresNetwork: false
-        },
-        sandbox: null
-      },
-      {
         key: "fix-react-bug",
         title: "Fix React Bug",
-        description: "Repair a failing React component behavior in an isolated repo.",
-        expectedOutcome: "Return a patch and tests that make the component deterministic and pass all checks.",
-        whyThisTask: "This is the baseline deterministic engineering task. It should distinguish agents that can edit code safely from agents that only describe a fix.",
-        inputs: "Use only the fixture repository copied into the sandbox workspace.",
-        deliverableFormat: "Modify the fixture code and leave the workspace in a passing state for the verifier command.",
+        description: "Repair a seeded regression in a tiny React-like component repo and leave the workspace in a passing state.",
+        expectedOutcome: "Modify the fixture repository so the failing behavior becomes deterministic and the verifier passes.",
+        whyThisTask: "This is the baseline coding regression task. It is cheap to run, easy to compare across agents, and impossible to pass by only describing a fix.",
+        inputs: "Use only the copied fixture repository inside the sandbox workspace.",
+        deliverableFormat: "Edit the repo in place. The final workspace must satisfy the verifier command without manual follow-up.",
         successChecks: [
           "The runner exits successfully.",
           "The verifier command passes.",
-          "The resulting component behavior is deterministic."
+          "The component behavior is deterministic after the fix."
         ],
         failureModes: [
-          "The code still fails tests.",
-          "The fix relies on brittle behavior or leaves the repo inconsistent.",
-          "The runner edits files outside the allowed workspace."
+          "The tests still fail.",
+          "The patch relies on brittle behavior.",
+          "The agent edits files outside the workspace."
         ],
         metadata: {
           resolution: "atomic",
           interaction: "terminal",
           evaluator: "hybrid",
-          difficulty: "medium",
-          tags: ["react", "bugfix", "tests"],
+          difficulty: "low",
+          reliability: "high",
+          tags: ["bugfix", "react", "tests", "repo"],
           requiresIsolation: true,
-          requiresNetwork: false
+          requiresNetwork: false,
+          timeBudgetMs: 60000,
+          costBudgetUsd: 0.6,
+          defaultTrials: 1
         },
         sandbox: {
           fixtureDir: "fixtures/fix-react-bug",
@@ -88,268 +63,176 @@ const DEFAULT_SUITES: BenchmarkSuiteRecord[] = [
         }
       },
       {
-        key: "logic-puzzle",
-        title: "Logic Puzzle",
-        description: "Solve a deterministic reasoning benchmark with traceable steps.",
-        expectedOutcome: "Produce the final answer with concise rationale and internally consistent steps.",
-        whyThisTask: "This keeps a low-cost review-only task in the suite for quick reasoning checks when no sandbox is needed.",
-        inputs: "Use only the prompt content in the task brief.",
-        deliverableFormat: "Return the final answer first, then a short rationale that is internally consistent.",
+        key: "security-audit-report",
+        title: "Security Audit Report",
+        description: "Inspect a seeded mini service repo, identify the single highest-severity vulnerability, and write a structured audit finding.",
+        expectedOutcome: "Produce `audit-findings.json` in the workspace root with the required finding schema and the correct highest-severity issue.",
+        whyThisTask: "This gives you a fast, comparable security task that can be checked deterministically without requiring the agent to fix the code.",
+        inputs: "Use only the copied fixture repository. The repo contains one intentionally seeded high-severity issue that should be reported.",
+        deliverableFormat: "Write `audit-findings.json` with exactly one finding containing id, severity, file, line, title, evidence, impact, and remediation.",
         successChecks: [
-          "The final answer is explicit.",
-          "The rationale does not contradict the answer."
+          "The report file exists in the expected path.",
+          "The finding matches the seeded vulnerability.",
+          "The report does not include extra false-positive findings."
         ],
         failureModes: [
-          "Ambiguous or missing final answer.",
-          "Reasoning contradicts the stated conclusion.",
-          "Overly long response that obscures the answer."
+          "The report misses the seeded issue.",
+          "The report contains multiple speculative findings.",
+          "The JSON schema is malformed."
         ],
         metadata: {
           resolution: "atomic",
-          interaction: "artifact",
-          evaluator: "judge",
-          difficulty: "low",
-          tags: ["reasoning", "consistency"],
-          requiresIsolation: false,
-          requiresNetwork: false
-        },
-        sandbox: null
-      },
-      {
-        key: "sql-refactor",
-        title: "SQL Refactor",
-        description: "Refactor a flawed reporting query against a fixed schema so it becomes correct, maintainable, and measurably cheaper to execute.",
-        expectedOutcome: "Return corrected SQL, explain the correctness fix, and describe the expected performance improvements against the supplied query shape.",
-        whyThisTask: "This checks whether the agent can reason about correctness and query design instead of only rewriting syntax.",
-        inputs: "Use the fixed schema, broken query, and performance symptoms provided in the task brief.",
-        deliverableFormat: "Return sections for Corrected Query, Correctness Notes, Performance Notes, and Validation Plan.",
-        successChecks: [
-          "The corrected query addresses the stated bug.",
-          "The explanation names at least one concrete performance improvement.",
-          "The output references the supplied schema and constraints."
-        ],
-        failureModes: [
-          "Returns SQL without explaining why it is correct.",
-          "Optimizes the query while changing the requested semantics.",
-          "Uses unsupported tables or columns."
-        ],
-        metadata: {
-          resolution: "atomic",
-          interaction: "artifact",
-          evaluator: "artifact",
-          difficulty: "medium",
-          tags: ["sql", "optimization", "correctness"],
-          requiresIsolation: true,
-          requiresNetwork: false
-        },
-        sandbox: null
-      }
-    ]
-  },
-  {
-    key: "agentic-workflows",
-    title: "Agentic Workflows",
-    description: "Higher-resolution suites for multi-step workflows, long-horizon operations, and multi-agent handoff patterns.",
-    metadata: {
-      resolution: "campaign",
-      domain: "agent-operations",
-      tags: ["workflow", "orchestration", "multi-agent"]
-    },
-    tasks: [
-      {
-        key: "research-synthesis-loop",
-        title: "Research Synthesis Loop",
-        description: "Collect evidence across multiple sources, reconcile conflicts, and deliver a concise research brief with citations and open questions.",
-        expectedOutcome: "Return a source-backed brief, a compact evidence table, and explicit uncertainty notes for anything unresolved.",
-        whyThisTask: "This evaluates whether the agent can synthesize evidence instead of dumping search results.",
-        inputs: "Use at least three current external sources, include publication or access dates, and explicitly reconcile conflicting claims.",
-        deliverableFormat: "Return sections for Executive Brief, Evidence Table, Conflicts, Open Questions, and Sources.",
-        successChecks: [
-          "At least three sources are cited.",
-          "Conflicting evidence is reconciled or left explicitly unresolved.",
-          "The output includes a compact evidence table."
-        ],
-        failureModes: [
-          "Uncited factual claims.",
-          "No conflict handling.",
-          "Source list without synthesis."
-        ],
-        metadata: {
-          resolution: "workflow",
-          interaction: "tool-use",
-          evaluator: "trace",
-          difficulty: "medium",
-          tags: ["research", "synthesis", "citations"],
-          requiresIsolation: false,
-          requiresNetwork: true
-        },
-        sandbox: null
-      },
-      {
-        key: "release-war-room",
-        title: "Release War Room",
-        description: "Run a bounded release triage using the supplied failing checks, deployment notes, and rollback policy to decide whether the release should ship.",
-        expectedOutcome: "Return a release decision record with evidence, blocking issues, remediation plan, and rollback guidance that matches the provided constraints.",
-        whyThisTask: "This checks long-horizon operational reasoning under explicit ship-or-hold pressure.",
-        inputs: "Use the fixed release notes, failing checks, risk policy, and ownership roster supplied in the task brief.",
-        deliverableFormat: "Return sections for Decision, Evidence, Blocking Issues, Immediate Actions, Rollback Plan, and Follow-up Owners.",
-        successChecks: [
-          "The decision is explicit: ship, hold, or rollback.",
-          "Evidence cites the supplied checks and policies.",
-          "Rollback or follow-up steps are concrete and assigned."
-        ],
-        failureModes: [
-          "No explicit release decision.",
-          "Advice that ignores the stated risk policy.",
-          "No rollback path when the release should not continue."
-        ],
-        metadata: {
-          resolution: "campaign",
           interaction: "terminal",
           evaluator: "hybrid",
-          difficulty: "high",
-          tags: ["release", "debugging", "handoff"],
+          difficulty: "medium",
+          reliability: "high",
+          tags: ["security", "audit", "report", "repo"],
           requiresIsolation: true,
-          requiresNetwork: false
+          requiresNetwork: false,
+          timeBudgetMs: 60000,
+          costBudgetUsd: 0.75,
+          defaultTrials: 1
         },
-        sandbox: null
-      },
-      {
-        key: "superagent-handoff-mesh",
-        title: "Superagent Handoff Mesh",
-        description: "Coordinate multiple specialist roles against a fixed project brief, merge their outputs, and resolve contradictory recommendations into one coherent result.",
-        expectedOutcome: "Return the merged deliverable, role-by-role handoff notes, explicit conflict resolution, and remaining risks.",
-        whyThisTask: "This tests whether the agent can structure delegation and synthesis rather than merely mentioning collaboration.",
-        inputs: "Use the fixed project brief, specialist responsibilities, and conflicting sub-findings provided in the task brief.",
-        deliverableFormat: "Return sections for Final Deliverable, Specialist Outputs, Conflict Resolution, Remaining Risks, and Handoff Notes.",
-        successChecks: [
-          "Each specialist role has a bounded responsibility.",
-          "Conflicts are resolved explicitly.",
-          "The merged output is coherent and does not contradict sub-results."
-        ],
-        failureModes: [
-          "Mentions multiple agents without clear handoffs.",
-          "Leaves conflicts unresolved.",
-          "Final output contradicts one or more specialist summaries."
-        ],
-        metadata: {
-          resolution: "swarm",
-          interaction: "multi-agent",
-          evaluator: "trace",
-          difficulty: "high",
-          tags: ["multi-agent", "delegation", "orchestration"],
-          requiresIsolation: true,
-          requiresNetwork: false
-        },
-        sandbox: null
+        sandbox: {
+          fixtureDir: "fixtures/security-audit-report",
+          verifyCommand: "node verify.js",
+          timeoutMs: 120000
+        }
       }
     ]
   },
   {
-    key: "interaction-surfaces",
-    title: "Interaction Surfaces",
-    description: "Cross-surface tasks for browser, computer-use, and mixed-tool workflows where the environment matters as much as the final answer.",
+    key: "product-builds",
+    title: "Product Builds",
+    description: "Small greenfield implementation tasks with deterministic checks for a simple web app and a CLI tool.",
     metadata: {
       resolution: "workflow",
-      domain: "operator-systems",
-      tags: ["browser", "computer-use", "tooling"]
+      domain: "product-engineering",
+      tags: ["build", "web-app", "cli"]
     },
     tasks: [
       {
-        key: "browser-support-escalation",
-        title: "Browser Support Escalation",
-        description: "Work through a browser-based support console, collect state from multiple screens, update the case, and leave a concise operator note.",
-        expectedOutcome: "Return the final case decision, the updated fields, and the note text that explains the escalation outcome.",
-        whyThisTask: "This verifies a real browser workflow where state collection and final operator notes both matter.",
-        inputs: "Use the seeded browser fixture exactly as loaded by the runner.",
-        deliverableFormat: "Update the case through the browser flow and write the expected result artifact for the verifier.",
+        key: "simple-feedback-web-app",
+        title: "Simple Feedback Web App",
+        description: "Complete a tiny Node web app that serves HTML, accepts feedback submissions, and exposes a health endpoint.",
+        expectedOutcome: "Edit the fixture app until the test suite passes and the delivered HTML/HTTP behavior matches the task brief.",
+        whyThisTask: "This gives you a real app-building task without the latency and variance of a full framework or browser-heavy stack.",
+        inputs: "Use the copied fixture repository only. No external packages are required.",
+        deliverableFormat: "Implement the app directly in the workspace and leave it in a passing state for the verifier.",
         successChecks: [
-          "The runner completes the browser workflow.",
-          "The verifier passes.",
-          "The final artifact contains the case decision, field updates, and note text."
+          "The test suite passes.",
+          "HTML output includes the required content and form.",
+          "POST and health behaviors match the spec."
         ],
         failureModes: [
-          "Incomplete browser traversal.",
-          "Missing or malformed result artifact.",
-          "Case note does not justify the escalation outcome."
+          "Routes are missing or malformed.",
+          "Validation behavior is incorrect.",
+          "The app passes one path but breaks another."
         ],
         metadata: {
           resolution: "workflow",
-          interaction: "browser",
-          evaluator: "trace",
-          difficulty: "medium",
-          tags: ["browser", "forms", "state"],
-          requiresIsolation: true,
-          requiresNetwork: false
-        },
-        sandbox: {
-          fixtureDir: "fixtures/browser-support-escalation",
-          verifyCommand: "node verify.js",
-          provider: "process",
-          timeoutMs: 120000
-        }
-      },
-      {
-        key: "computer-use-incident-drill",
-        title: "Computer Use Incident Drill",
-        description: "Triage a noisy incident from a desktop-style environment, gather evidence from multiple tools, and publish a recovery plan under time pressure.",
-        expectedOutcome: "Return the incident decision, the evidence captured from each tool, and a recovery plan with explicit next actions.",
-        whyThisTask: "This tests multi-surface evidence gathering and operational decision making under pressure.",
-        inputs: "Use the seeded desktop fixture with alerts, terminal output, ticket text, and runbook notes.",
-        deliverableFormat: "Produce the expected incident-plan artifact with a decision, evidence, and ordered recovery actions.",
-        successChecks: [
-          "The runner captures evidence from the provided surfaces.",
-          "The verifier passes.",
-          "The plan includes explicit next actions."
-        ],
-        failureModes: [
-          "Ignores one or more evidence sources.",
-          "Missing incident artifact.",
-          "Recovery plan is vague or unordered."
-        ],
-        metadata: {
-          resolution: "campaign",
-          interaction: "computer-use",
-          evaluator: "trace",
-          difficulty: "high",
-          tags: ["computer-use", "incident-response", "recovery"],
-          requiresIsolation: true,
-          requiresNetwork: false
-        },
-        sandbox: {
-          fixtureDir: "fixtures/computer-use-incident-drill",
-          verifyCommand: "node verify.js",
-          timeoutMs: 120000
-        }
-      },
-      {
-        key: "tool-router-triage",
-        title: "Tool Router Triage",
-        description: "Route a bounded operational request across multiple internal tools using the supplied tool catalog, escalation rules, and target outcome.",
-        expectedOutcome: "Return the routing plan, tool-by-tool execution sequence, decision rationale, and final completion summary.",
-        whyThisTask: "This checks whether the agent can choose tools intentionally instead of spraying calls across every available surface.",
-        inputs: "Use the fixed tool catalog, request brief, and escalation rules from the task brief.",
-        deliverableFormat: "Return sections for Routing Decision, Step Sequence, Tool Justification, Risks, and Final Summary.",
-        successChecks: [
-          "The selected tools are justified against the request.",
-          "The sequence is ordered and plausible.",
-          "Risks or escalation boundaries are called out."
-        ],
-        failureModes: [
-          "Uses tools without justification.",
-          "No ordered execution path.",
-          "Ignores escalation boundaries."
-        ],
-        metadata: {
-          resolution: "workflow",
-          interaction: "tool-use",
+          interaction: "terminal",
           evaluator: "hybrid",
           difficulty: "medium",
-          tags: ["triage", "tool-routing", "ops"],
+          reliability: "high",
+          tags: ["web-app", "node", "http", "product"],
           requiresIsolation: true,
-          requiresNetwork: false
+          requiresNetwork: false,
+          timeBudgetMs: 90000,
+          costBudgetUsd: 1,
+          defaultTrials: 1
         },
-        sandbox: null
+        sandbox: {
+          fixtureDir: "fixtures/simple-feedback-web-app",
+          verifyCommand: "node --test tests/*.test.js",
+          timeoutMs: 120000
+        }
+      },
+      {
+        key: "release-notes-cli",
+        title: "Release Notes CLI",
+        description: "Implement a tiny CLI that reads a JSON change log and prints a deterministic Markdown release summary.",
+        expectedOutcome: "Complete the CLI so the seeded tests pass and the output format is stable across runs.",
+        whyThisTask: "CLI tasks are cheap, highly comparable, and sensitive to instruction-quality changes without needing a large runtime budget.",
+        inputs: "Use the copied fixture repository and the seeded sample input files only.",
+        deliverableFormat: "Implement the CLI and supporting helpers in place so the verifier passes.",
+        successChecks: [
+          "The test suite passes.",
+          "Markdown output matches the required structure.",
+          "Entries are grouped and ordered exactly as specified."
+        ],
+        failureModes: [
+          "The CLI ignores invalid input handling.",
+          "Output structure is unstable or incomplete.",
+          "Sorting and grouping rules are wrong."
+        ],
+        metadata: {
+          resolution: "atomic",
+          interaction: "terminal",
+          evaluator: "hybrid",
+          difficulty: "low",
+          reliability: "high",
+          tags: ["cli", "node", "formatting", "product"],
+          requiresIsolation: true,
+          requiresNetwork: false,
+          timeBudgetMs: 45000,
+          costBudgetUsd: 0.4,
+          defaultTrials: 1
+        },
+        sandbox: {
+          fixtureDir: "fixtures/release-notes-cli",
+          verifyCommand: "node --test tests/*.test.js",
+          timeoutMs: 120000
+        }
+      }
+    ]
+  },
+  {
+    key: "creative-frontend",
+    title: "Creative Frontend",
+    description: "A bounded landing-page task with explicit copy and layout requirements plus lightweight automated checks and easy human review.",
+    metadata: {
+      resolution: "workflow",
+      domain: "frontend-design",
+      tags: ["landing-page", "copy", "visual"]
+    },
+    tasks: [
+      {
+        key: "landing-page-refresh",
+        title: "Landing Page Refresh",
+        description: "Turn a flat starter page into a polished landing page for a fictional product using the supplied brand and copy constraints.",
+        expectedOutcome: "Produce a visually coherent landing page that satisfies the required sections, uses the supplied positioning, and passes the structural verifier.",
+        whyThisTask: "This is the one intentionally subjective task. Humans can compare the page visually, while the verifier and task contract keep the work bounded enough for LLM review and regression tracking.",
+        inputs: "Use the copied static-site fixture. The brief defines the audience, product promise, tone, required sections, forbidden claims, and CTA.",
+        deliverableFormat: "Edit `index.html` and `styles.css` in place. Leave the workspace ready for manual inspection and the automated verifier.",
+        successChecks: [
+          "The required sections are present and non-placeholder.",
+          "The verifier passes.",
+          "The page is visually easy to compare by a human reviewer."
+        ],
+        failureModes: [
+          "Required sections or CTA are missing.",
+          "Copy contains forbidden placeholder text or unsupported claims.",
+          "The page remains structurally valid but visually unchanged."
+        ],
+        metadata: {
+          resolution: "workflow",
+          interaction: "terminal",
+          evaluator: "hybrid",
+          difficulty: "medium",
+          reliability: "medium",
+          tags: ["landing-page", "copywriting", "design", "frontend"],
+          requiresIsolation: true,
+          requiresNetwork: false,
+          timeBudgetMs: 90000,
+          costBudgetUsd: 0.8,
+          defaultTrials: 1
+        },
+        sandbox: {
+          fixtureDir: "fixtures/landing-page-refresh",
+          verifyCommand: "node verify.js",
+          timeoutMs: 120000
+        }
       }
     ]
   }

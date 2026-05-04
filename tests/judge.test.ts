@@ -19,8 +19,8 @@ test("judgeWithVercelAiSdk calls generateText and parses score", async () => {
   const result = await judgeWithVercelAiSdk({
     apiKey: "test-key",
     model: "openai/gpt-4.1-mini",
-    benchmarkKey: "core-engineering",
-    taskKey: "logic-puzzle",
+    benchmarkKey: "creative-frontend",
+    taskKey: "landing-page-refresh",
     agentPath: "/tmp/agent.md",
     agentName: "agent",
     agentVersion: "v1",
@@ -43,8 +43,8 @@ test("judgeWithVercelAiSdk fails on empty model text", async () => {
     () => judgeWithVercelAiSdk({
       apiKey: "test-key",
       model: "openai/gpt-4.1-mini",
-      benchmarkKey: "core-engineering",
-      taskKey: "logic-puzzle",
+      benchmarkKey: "creative-frontend",
+      taskKey: "landing-page-refresh",
       agentPath: "/tmp/agent.md",
       agentName: "agent",
       agentVersion: "v1",

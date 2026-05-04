@@ -1,193 +1,102 @@
 # Architecture Spec
 
-Date: 2026-03-05
+Date: 2026-05-04
 
-Chosen option: keep the current local Node/Express stack, but shift the product from a dashboard-first shell to a workbench-first evaluation flow.
+## Chosen Direction
 
-## Options Considered
+Keep the existing local runner architecture, but make the seeded benchmark library narrower, faster, and more executable.
 
-### Option A: Keep the current dashboard and only add more charts
+## Architecture Spec
 
-- Low engineering cost
-- Low product leverage
-- Does not solve first-run friction or multi-agent workflow gaps
+### Principles
 
-### Option B: Workbench-first on the current stack
+- Default suites should optimize for comparability, not breadth.
+- Every coding task in the default seed set should have an executable verifier.
+- Review-only tasks should be rare and clearly labeled.
+- A fresh workspace is mandatory for sandboxed tasks.
+- Dedicated isolation should be treated as a provider capability, not assumed from the presence of a fresh workspace alone.
 
-- Keep the current backend and artifact model
-- Reframe the UI around provider setup, agent loading, playlist building, and batch launch
-- Add minimal APIs for agent discovery and batch execution
+### Benchmark Taxonomy
 
-Chosen because it creates a materially better product without requiring a framework rewrite.
+- `repo-maintenance`
+  - objective repo tasks on existing code
+  - fastest signal for prompt changes
+- `product-builds`
+  - small greenfield implementation tasks
+  - still executable and bounded
+- `creative-frontend`
+  - one visually inspectable task with enough structure for automation plus human review
 
-### Option C: Full Next.js rewrite
+### Task Metadata
 
-- Better long-term app primitives
-- Much higher migration cost
-- Does not inherently solve the product-flow problem
+Each task now carries:
 
-Deferred until the product needs auth, sharing, richer state management, or hosted collaboration.
+- `resolution`
+- `interaction`
+- `evaluator`
+- `difficulty`
+- `reliability`
+- `tags`
+- `requiresIsolation`
+- `requiresNetwork`
+- `timeBudgetMs`
+- `costBudgetUsd`
+- `defaultTrials`
 
-## Product Architecture
+These extra fields are necessary for speed-focused comparison. A benchmark that has no budget and no declared reliability is hard to use as a regression gate.
 
-### Core UX layers
+### File Tree
 
-1. Test Lab
-   Provider config, agent queue, benchmark playlist, batch launch.
+```text
+benchmarks/
+  creative-frontend/
+    benchmark.md
+    fixtures/
+      landing-page-refresh/
+    tasks/
+      landing-page-refresh.md
+  product-builds/
+    benchmark.md
+    fixtures/
+      release-notes-cli/
+      simple-feedback-web-app/
+    tasks/
+      release-notes-cli.md
+      simple-feedback-web-app.md
+  repo-maintenance/
+    benchmark.md
+    fixtures/
+      fix-react-bug/
+      security-audit-report/
+    tasks/
+      fix-react-bug.md
+      security-audit-report.md
+```
 
-2. Experiment History
-   Durable runs, deletion, reopening, comparison-ready records.
-
-3. Inspector Rail
-   Latest log, run details, score breakdown, artifact preview.
-
-4. Benchmark Authoring
-   Suite/task creation backed by markdown files.
-
-## Diagram
+### Data Flow
 
 User
--> Test Lab UI
--> Provider config + selected agents + selected benchmark mode
--> Batch Run API
--> Runtime evaluator
--> SQLite runs table + artifact folder
--> History + Inspector + Logs
+-> selects one task or a full suite
+-> runner copies fixture into a fresh workspace
+-> agent runner edits only that workspace
+-> verifier produces the main pass/fail signal
+-> optional LLM judge adds secondary review context
+-> results persist to SQLite plus run artifacts
 
-## Backend Additions
+### Sandbox Policy
 
-### Agent discovery
+- `process`: fresh workspace only, not a strong sandbox boundary
+- `docker`: fresh workspace plus real dedicated isolation
+- `macos-seatbelt`: fresh workspace plus real dedicated isolation on supported macOS hosts
+- `strictProvider`: fail closed when a dedicated provider was requested but unavailable
 
-New module:
-- `src/agents/files.ts`
+### Key Decision
 
-Responsibilities:
-- scan `./agents`
-- ignore `AGENTS.md`, `README.md`, and task folders
-- expose discovered agent definitions for the UI
-- inspect manually entered agent paths
+Do not make the default benchmark set “impressive” by adding many surfaces. Make it useful first:
 
-### Batch execution
+- one visual task
+- one simple app
+- one CLI tool
+- two repo tasks
 
-New API:
-- `POST /api/run/batch`
-
-Behavior:
-- accepts multiple agent paths
-- accepts `single-task` or `benchmark-cycle`
-- expands a benchmark cycle into one run per task
-- persists every generated run independently
-
-### Provider handoff
-
-Runtime request extended with:
-- `gatewayApiKey?: string`
-
-Behavior:
-- UI can provide an API key for the current browser session
-- runtime uses the provided key without storing it in the DB or artifacts
-- environment variable fallback still works
-
-## Frontend Architecture
-
-### Views
-
-- `lab-view`
-- `history-view`
-- `benchmarks-view`
-
-### Frontend state
-
-Browser-managed state in `app.js`:
-- available benchmarks
-- available agents
-- selected agent paths
-- run mode
-- selected benchmark and task
-- model override
-- session-scoped provider API key
-- latest batch results
-
-### Persistence
-
-- `localStorage`: selected agents, benchmark, task, run mode, model
-- `sessionStorage`: provider API key
-
-This keeps secrets out of disk-backed app data while still reducing friction inside the current browser session.
-
-## APIs
-
-### Existing APIs retained
-
-- `GET /api/summary`
-- `GET /api/runs?limit=n`
-- `GET /api/benchmarks`
-- `POST /api/benchmarks`
-- `GET /api/run/:runKey/result`
-- `GET /api/logs/latest`
-- `POST /api/run`
-- `DELETE /api/run/:runKey`
-
-### New APIs
-
-- `GET /api/agents`
-  Returns discovered agent records.
-
-- `POST /api/agents/inspect`
-  Validates and returns one manually entered agent definition.
-
-- `POST /api/run/batch`
-  Executes one agent-task matrix and returns the created runs.
-
-## Error Handling
-
-- reject empty agent selections for batch runs
-- reject `single-task` mode without a task
-- reject unknown benchmark/task combinations
-- reject invalid manual agent paths
-- keep fallback judging behavior when no provider key is present
-
-## Security Notes
-
-- Provider keys passed from the UI are not persisted to SQLite or artifact files.
-- UI copy explicitly tells the user that browser-entered keys remain in the current session only.
-- Workspace agent discovery is restricted to markdown files in the local `agents` folder.
-
-## What This Architecture Enables Next
-
-### Near-term
-
-- side-by-side run comparison view
-- benchmark playlists with ordering or subsets
-- agent readiness checks beyond file existence
-- richer progress reporting during batch execution
-
-### Medium-term
-
-- dataset-backed benchmarks
-- manual review and annotation queues
-- real trace ingestion and grading
-- artifact/file diffs between runs
-
-### Long-term
-
-- optional hosted mode
-- team collaboration and sharing
-- CI quality gates with stored baselines
-
-## Minimal Implementation Slice Chosen
-
-Implement now:
-
-- provider config strip in the UI
-- agent discovery and manual inspection
-- multi-agent selection with ready/loaded states
-- benchmark cycle execution across all tasks in a suite
-- refreshed workbench-style UI
-
-Defer:
-
-- true trace grading
-- real-time batch progress streaming
-- side-by-side diff explorer
-- multi-user or hosted collaboration
+That is enough to measure whether agent prompt changes improved real outcomes without making every run slow or expensive.

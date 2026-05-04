@@ -1,128 +1,76 @@
 # Research Brief
 
-Date: 2026-03-05
+Date: 2026-05-04
 
 ## Goal
 
-Turn `agent-bench` from a run-history dashboard into a local workbench that makes agent testing feel structured, fast, and enjoyable: configure a provider, load several agents, choose a challenge or a full benchmark cycle, launch a batch, and compare outcomes with enough context to learn from them.
+Refocus `agent-bench` around fast, comparable benchmark tasks that actually test agent capability instead of mostly testing prompt fit or vague planning quality.
 
-## What The Current Repo Already Gets Right
+## Key Facts
 
-- The project already has a strong MVP spine: CLI, SQLite persistence, benchmark files, artifact snapshots, a local UI, and deterministic fallback evaluation.
-- The tech stack is pragmatic for a local-first open-source tool: TypeScript, Node, SQLite, Express, Tailwind.
-- The repo is already artifact-first enough to support a stronger inspection workflow later.
+- Execution-backed repo tasks should remain the benchmark backbone. SWE-bench is still the clearest primary example of why real codebase edits plus executable verification are a strong software-agent evaluation pattern. Published 2023-10-10. Accessed 2026-05-04. https://arxiv.org/abs/2310.06770
+- Web-style tasks are useful when the environment matters, but they become expensive and noisy quickly. WebArena is a good reminder that realistic environments are valuable, but only when task success remains concretely checkable. Published 2023-07-26. Accessed 2026-05-04. https://arxiv.org/abs/2307.13854
+- Recent benchmark guidance keeps pushing in the same direction: controlled complexity, programmatic verification where possible, and careful scope boundaries. Accessed 2026-05-04. https://openreview.net/forum?id=E58HNCqoaA
+- OpenAI’s eval guidance and trace-grading guidance both reinforce the split between outcome checks and process checks. For this repo, that means deterministic verifiers should decide the core score whenever possible, while LLM judging should be reserved for residual qualities like design quality or written rationale. Accessed 2026-05-04. https://developers.openai.com/api/docs/guides/evals and https://developers.openai.com/api/docs/guides/trace-grading
 
-## What Is Missing In The Current Product Shape
+## Review Of The Current Repo
 
-- The UI is dashboard-first, not workflow-first. It starts with run summaries, not with the act of preparing an evaluation session.
-- The current happy path is mostly single-agent and single-run oriented.
-- Provider configuration is hidden in environment variables, which increases friction for first-time testers.
-- Benchmarks exist as suites and tasks, but the UI does not yet turn them into a visible playlist or benchmark cycle.
-- The scoring/runtime layer is still simulated, so UX must make clear what is “real infrastructure” versus “placeholder evaluation”.
+- Fresh per-run workspaces already existed. That part of the runner model was correct.
+- True dedicated sandboxing did not exist on every host. On Windows without Docker, `auto` still degraded to host-process execution, which is a fresh workspace but not a hard isolation boundary.
+- Running without a provider key was too easy to misinterpret. The rules-based fallback is acceptable for low-cost smoke guidance, but it is not a strong measurement of AI capability on its own.
+- The seeded tasks were too mixed. Some were good deterministic software tasks, but several were abstract workflow tasks that are hard to compare after small prompt changes.
 
-## External Patterns That Repeatedly Show Up
+## Answer To The API-Key Question
 
-### 1. Mature eval tools are dataset/experiment tools, not just prompt runners
+- For deterministic sandbox tasks, running without an LLM judge key can still make sense if the agent itself can execute and the verifier is the main source of truth.
+- For review-only or design-heavy tasks, no-key runs should be treated as directional only, not as benchmark-grade capability claims.
+- The strongest setup is:
+  - agent execution uses a model key or a local model
+  - the benchmark outcome is decided by tests or a verifier
+  - an LLM judge is optional and secondary
+- The weakest setup is:
+  - no execution
+  - no deterministic verifier
+  - no judge key
+  - only a rules heuristic
 
-- OpenAI’s eval guide frames evals around test data plus graders, and treats them as a core reliability mechanism rather than an optional add-on.
-- LangSmith organizes evaluation around datasets, experiments, comparison, and human feedback loops.
-- Braintrust makes the experiment the unit of record and uses experiment comparison as a first-class workflow.
+## Recommended Benchmark Shape
 
-Implication:
-`agent-bench` should evolve from “run a benchmark” to “assemble and compare experiment batches”.
+Keep the shipped suite set small and product-like:
 
-### 2. Comparison is the product, not a secondary feature
+- `repo-maintenance`
+  - `fix-react-bug`
+  - `security-audit-report`
+- `product-builds`
+  - `simple-feedback-web-app`
+  - `release-notes-cli`
+- `creative-frontend`
+  - `landing-page-refresh`
 
-- Promptfoo’s viewer emphasizes diffing runs, filtering failures, inline scoring, comments, exports, and head-to-head inspection.
-- Braintrust explicitly highlights improvements and regressions per example, not just aggregate scores.
-- LangSmith exposes compare-experiments, UI filters, performance metrics, and annotation queues.
+Why this shape is better:
 
-Implication:
-The experience should default to side-by-side comparison and queue execution, not isolated single-run cards.
-
-### 3. Human review remains important
-
-- Promptfoo persists comments, pass/fail overrides, and scores to build training datasets.
-- LangSmith positions annotation queues and inline run annotation as a structured part of evaluation workflows.
-
-Implication:
-Open-source credibility will increase if `agent-bench` eventually supports lightweight manual review and promotion of interesting runs into benchmark data.
-
-### 4. Trace visibility matters more for agents than for plain prompts
-
-- OpenAI’s trace grading guidance distinguishes black-box output checks from trace-level grading of decisions, tool calls, and reasoning flow.
-- Braintrust’s experiment views surface detailed traces and row-level regressions.
-
-Implication:
-If this project wants to matter for agents, not only prompts, the long-term differentiator is trace inspection and artifact diffs, not just score math.
-
-### 5. Great eval UX separates fast iteration from durable records
-
-- Braintrust uses playgrounds for quick iteration and experiments for immutable comparisons.
-- Promptfoo separates editing/rerunning from the viewer and export/share flows.
-
-Implication:
-`agent-bench` should eventually have two modes:
-- a lab/workbench for quickly composing a test run
-- an experiment/history area for durable comparison and auditability
-
-## Product Opportunity
-
-The repo makes sense if it positions itself as:
-
-> the local-first, open-source evaluation workbench for agent developers who want fast setup, reproducible artifacts, and understandable comparisons without adopting a hosted platform first.
-
-That is a credible angle because:
-
-- hosted tools optimize for teams and cloud telemetry
-- this repo can optimize for immediate local setup, repo-native benchmark definitions, and zero-ops experimentation
-- the current codebase already aligns with that local-first posture
-
-## UX Direction That Fits The Opportunity
-
-### Recommended primary flow
-
-1. Configure provider access in the UI.
-2. Auto-discover agent definition files and let the user queue multiple agents.
-3. Select either one challenge or a full benchmark cycle.
-4. Show the run plan before execution: agents x tasks = total queued runs.
-5. Launch the batch and keep the latest results visible in one place.
-6. Open any run into a detail inspector with artifacts, score breakdown, and logs.
-
-### Why this is better than the current dashboard-first shape
-
-- It matches the user’s mental model: “I want to test these agents on these challenges.”
-- It makes the product feel active and purposeful instead of archival.
-- It turns benchmarking into a ritual with visible momentum, which is important for perceived fun.
+- each task can run individually
+- deterministic tasks stay cheap
+- prompt changes are easier to compare
+- at least one task remains easy for humans to inspect visually
+- the abstract long-horizon tasks are removed from the default seed set, but can return later as optional suites
 
 ## Risks
 
-- The backend still simulates evaluation, so the UX can outgrow the runtime quickly if messaging is vague.
-- API key handling in the browser must stay explicit and local-only unless a stronger security model is added.
-- Without trace-level data, comparison value will plateau after the first wave of UI improvements.
-- If benchmark tasks stay too generic, the product risks becoming a demo shell instead of a trusted quality gate.
+- `landing-page-refresh` is still partly subjective. The verifier can bound structure and copy, but visual quality still needs human or LLM review.
+- A fresh workspace is not the same thing as a dedicated sandbox. Hard isolation only exists when Docker or macOS seatbelt is actually used.
+- The current provider flow still couples execution and judging around one key path. That is serviceable for now, but a later split between execution credentials and judge credentials would be cleaner.
 
 ## Open Questions
 
-- Should benchmark tasks evolve into dataset-backed test cases instead of single markdown prompts?
-- What is the long-term runtime contract for real agent execution: Docker, remote runners, or pluggable local sandboxes?
-- Should manual review live directly in the UI first, or should the next major step focus on trace collection?
-- How opinionated should provider support be: AI Gateway-first, or multi-provider config from day one?
+- Should strict sandbox mode become the default for all `Requires Isolation: yes` tasks, even if that fails closed on Windows hosts without Docker?
+- Should the provider setup be split into `execution key` and `judge key` in the UI and API?
+- Should the next visual task be a landing page variant pack or a tiny game, after enough low-variance frontend scoring infrastructure exists?
 
-## Decisions And Assumptions
+## Sources
 
-- Decision: keep the existing local Node/Express architecture for now instead of jumping to a heavier framework migration.
-- Decision: optimize the UI around “batch experiment setup” before building deeper charts.
-- Assumption: the fastest route to open-source usefulness is lowering the friction of the first benchmark cycle.
-- Assumption: clear local workflows and reproducible artifacts matter more right now than multi-user collaboration.
-
-## Primary Sources
-
-- Promptfoo, “Using the web viewer”, accessed 2026-03-05: https://www.promptfoo.dev/docs/usage/web-ui/
-- LangSmith, “Evaluation concepts”, accessed 2026-03-05: https://docs.langchain.com/langsmith/evaluation-concepts
-- Braintrust, “Evaluate systematically”, accessed 2026-03-05: https://www.braintrust.dev/docs/platform/experiments
-- Braintrust, “Use playgrounds”, accessed 2026-03-05: https://www.braintrust.dev/docs/platform/playground
-- Braintrust, “Interpret evals”, accessed 2026-03-05: https://www.braintrust.dev/docs/guides/evals/interpret
-- OpenAI, “Working with evals”, accessed 2026-03-05: https://developers.openai.com/api/docs/guides/evals
-- OpenAI, “Agent evals”, accessed 2026-03-05: https://developers.openai.com/api/docs/guides/agent-evals
-- OpenAI, “Trace grading”, accessed 2026-03-05: https://developers.openai.com/api/docs/guides/trace-grading
+- OpenAI, “Working with evals.” Accessed 2026-05-04. https://developers.openai.com/api/docs/guides/evals
+- OpenAI, “Trace grading.” Accessed 2026-05-04. https://developers.openai.com/api/docs/guides/trace-grading
+- Jimenez et al., “SWE-bench: Can Language Models Resolve Real-World GitHub Issues?” Published 2023-10-10. Accessed 2026-05-04. https://arxiv.org/abs/2310.06770
+- Zhou et al., “WebArena: A Realistic Web Environment for Building Autonomous Agents.” Published 2023-07-26. Accessed 2026-05-04. https://arxiv.org/abs/2307.13854
+- “Establishing Best Practices in Building Rigorous Agentic Benchmarks.” Accessed 2026-05-04. https://openreview.net/forum?id=E58HNCqoaA

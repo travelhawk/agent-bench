@@ -11,12 +11,12 @@ The strongest current eval systems do not treat "agent benchmarks" as one flat b
 - the scorer type (`state`, `artifact`, `trace`, `judge`, `hybrid`)
 - the operational constraints (network, isolation, budget, latency, recovery)
 
-This matches the repo direction. The project should not only store prompts/tasks. It should store structured benchmark metadata so we can test:
+This still matches the repo direction, but the default shipped set should stay smaller and more executable than the full design space. The project should store structured benchmark metadata so we can test:
 
 - coding agents on deterministic repo tasks
-- tool-using agents on multi-step business workflows
-- computer-use agents on browser/desktop environments
-- "superagent" orchestrators on delegation, handoff, and merge quality
+- product-building agents on small web-app and CLI tasks
+- one bounded frontend-design task that is easy for humans to inspect
+- optional higher-resolution suites later, rather than by default
 
 ## Key Findings
 
@@ -86,21 +86,21 @@ Implication for this repo:
 
 ## Recommended Starter Suite Set
 
-To make the repo useful as an open-source workbench, the seeded benchmarks should cover both horizon and surface:
+To keep the repo useful as a fast local workbench, the default seeded benchmarks should stay narrow:
 
 | Suite | Primary purpose | Coverage |
 | --- | --- | --- |
-| `core-engineering` | fast deterministic regressions | `atomic` coding, SQL, bug-fixing, artifact checks |
-| `agentic-workflows` | longer multi-step and superagent evaluation | `workflow`, `campaign`, `swarm`, tool use, terminal, multi-agent |
-| `interaction-surfaces` | UI and environment-sensitive workflows | browser, computer-use, and routed tool-use tasks |
+| `repo-maintenance` | fast deterministic regressions on existing code | bug fixing, security auditing, executable verification |
+| `product-builds` | bounded implementation tasks | simple web app, simple CLI, low runtime variance |
+| `creative-frontend` | visually inspectable output with bounded structure | one landing-page style task with human and LLM review value |
 
-That gives the project a practical starting shape:
+That gives the project a better starter shape:
 
 - cheap atomic regressions for every commit
-- workflow suites for realistic tool-using agents
-- campaign tasks for recovery and state management
-- swarm tasks for orchestration quality
-- browser and computer-use tasks for embodied or operator-style agents
+- one simple product-app task
+- one simple tooling task
+- one visually obvious task for human comparison
+- no default dependence on complex browser or desktop simulators
 
 ## Proposed Repo Structure
 
@@ -110,9 +110,13 @@ The benchmark model in this repo should carry these fields per task:
 - `interaction`
 - `evaluator`
 - `difficulty`
+- `reliability`
 - `tags`
 - `requiresIsolation`
 - `requiresNetwork`
+- `timeBudgetMs`
+- `costBudgetUsd`
+- `defaultTrials`
 
 Suite-level metadata should carry:
 

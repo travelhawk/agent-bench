@@ -401,7 +401,7 @@ export function createBenchmark(input: CreateBenchmarkInput, dbPathInput?: strin
 
 export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise<RunEvaluationResult> {
   return withContext(async (context) => {
-    const benchmarkKey = input.benchmarkKey ?? "core-engineering";
+    const benchmarkKey = input.benchmarkKey ?? "repo-maintenance";
     const agentPathInput = readOptionalString(input.agentPath);
     const agentRecord = agentPathInput
       ? inspectAgentFile(context.workspaceRoot, agentPathInput)
@@ -430,7 +430,7 @@ export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise
 export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<BatchRunResult> {
   return withContext(async (context) => {
     const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
-    const benchmarkKey = input.benchmarkKey ?? "core-engineering";
+    const benchmarkKey = input.benchmarkKey ?? "repo-maintenance";
     const runMode = resolveRunMode(input.runMode);
     const explicitJobs = Array.isArray(input.jobs) ? input.jobs : [];
 

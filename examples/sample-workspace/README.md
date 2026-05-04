@@ -8,5 +8,5 @@ This folder is a reference workspace for local experiments.
 
 Notes:
 
-- `agents/browser-operator.md` targets the `browser-support-escalation` fixture and uses the repo-local `playwright` dependency.
-- `agents/computer-operator.md` targets the `computer-use-incident-drill` fixture and reads multiple desktop-style files before writing a deterministic result artifact.
+- `agents/coder-v1.md` and `agents/reviewer-v1.md` still make sense against the current seeded suites.
+- `agents/browser-operator.md` and `agents/computer-operator.md` are now legacy examples from the earlier interaction-surface experiments and are no longer mapped to the default seeded benchmark library.

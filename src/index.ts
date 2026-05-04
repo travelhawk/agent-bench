@@ -48,7 +48,7 @@ program
   .command("run")
   .description("Execute one benchmark suite run for an agent")
   .option("--agent <path>", "Path to agent definition", "./agent.md")
-  .option("--benchmark <key>", "Benchmark suite key", "core-engineering")
+  .option("--benchmark <key>", "Benchmark suite key", "repo-maintenance")
   .option("--task <key>", "Optional task key inside benchmark")
   .option("--model <provider/model>", "Vercel AI Gateway model identifier")
   .option("--db <path>", "Custom sqlite path")

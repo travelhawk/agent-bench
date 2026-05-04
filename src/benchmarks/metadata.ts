@@ -2,6 +2,7 @@ import {
   BenchmarkDifficulty,
   BenchmarkEvaluatorMode,
   BenchmarkInteractionMode,
+  BenchmarkReliability,
   BenchmarkResolution,
   BenchmarkSuiteMetadata,
   BenchmarkTaskMetadata
@@ -11,6 +12,7 @@ export const BENCHMARK_RESOLUTIONS: BenchmarkResolution[] = ["atomic", "workflow
 export const BENCHMARK_INTERACTIONS: BenchmarkInteractionMode[] = ["artifact", "terminal", "browser", "tool-use", "computer-use", "multi-agent"];
 export const BENCHMARK_EVALUATORS: BenchmarkEvaluatorMode[] = ["state", "artifact", "trace", "judge", "hybrid"];
 export const BENCHMARK_DIFFICULTIES: BenchmarkDifficulty[] = ["low", "medium", "high"];
+export const BENCHMARK_RELIABILITY_LEVELS: BenchmarkReliability[] = ["low", "medium", "high"];
 
 const DEFAULT_SUITE_METADATA: BenchmarkSuiteMetadata = {
   resolution: "workflow",
@@ -23,9 +25,13 @@ const DEFAULT_TASK_METADATA: BenchmarkTaskMetadata = {
   interaction: "artifact",
   evaluator: "hybrid",
   difficulty: "medium",
+  reliability: "medium",
   tags: [],
   requiresIsolation: true,
-  requiresNetwork: false
+  requiresNetwork: false,
+  timeBudgetMs: 90000,
+  costBudgetUsd: 1,
+  defaultTrials: 1
 };
 
 interface SuiteMetadataInput {
@@ -39,9 +45,13 @@ interface TaskMetadataInput {
   interaction?: string;
   evaluator?: string;
   difficulty?: string;
+  reliability?: string;
   tags?: unknown;
   requiresIsolation?: boolean;
   requiresNetwork?: boolean;
+  timeBudgetMs?: number;
+  costBudgetUsd?: number;
+  defaultTrials?: number;
 }
 
 function sanitizeTag(input: string): string {
@@ -65,6 +75,38 @@ function parseChoice<T extends string>(value: string | undefined, allowed: reado
   return value && allowed.includes(value.trim().toLowerCase() as T)
     ? value.trim().toLowerCase() as T
     : fallback;
+}
+
+function resolveDefaultTimeBudgetMs(difficulty: BenchmarkDifficulty): number {
+  switch (difficulty) {
+    case "low":
+      return 30000;
+    case "high":
+      return 180000;
+    default:
+      return DEFAULT_TASK_METADATA.timeBudgetMs;
+  }
+}
+
+function resolveDefaultCostBudgetUsd(difficulty: BenchmarkDifficulty): number {
+  switch (difficulty) {
+    case "low":
+      return 0.3;
+    case "high":
+      return 2.5;
+    default:
+      return DEFAULT_TASK_METADATA.costBudgetUsd;
+  }
+}
+
+function normalizePositiveInteger(input: number | undefined, fallback: number): number {
+  if (!Number.isFinite(input) || (input ?? 0) <= 0) return fallback;
+  return Math.round(input!);
+}
+
+function normalizePositiveNumber(input: number | undefined, fallback: number): number {
+  if (!Number.isFinite(input) || (input ?? 0) <= 0) return fallback;
+  return Number(input!.toFixed(2));
 }
 
 export function normalizeTags(input: unknown): string[] {
@@ -114,14 +156,19 @@ export function normalizeSuiteMetadataInput(input: SuiteMetadataInput = {}): Ben
 }
 
 export function normalizeTaskMetadataInput(input: TaskMetadataInput = {}): BenchmarkTaskMetadata {
+  const difficulty = parseChoice(input.difficulty, BENCHMARK_DIFFICULTIES, DEFAULT_TASK_METADATA.difficulty);
   return {
     resolution: parseChoice(input.resolution, BENCHMARK_RESOLUTIONS, DEFAULT_TASK_METADATA.resolution),
     interaction: parseChoice(input.interaction, BENCHMARK_INTERACTIONS, DEFAULT_TASK_METADATA.interaction),
     evaluator: parseChoice(input.evaluator, BENCHMARK_EVALUATORS, DEFAULT_TASK_METADATA.evaluator),
-    difficulty: parseChoice(input.difficulty, BENCHMARK_DIFFICULTIES, DEFAULT_TASK_METADATA.difficulty),
+    difficulty,
+    reliability: parseChoice(input.reliability, BENCHMARK_RELIABILITY_LEVELS, DEFAULT_TASK_METADATA.reliability),
     tags: normalizeTags(input.tags),
     requiresIsolation: typeof input.requiresIsolation === "boolean" ? input.requiresIsolation : DEFAULT_TASK_METADATA.requiresIsolation,
-    requiresNetwork: typeof input.requiresNetwork === "boolean" ? input.requiresNetwork : DEFAULT_TASK_METADATA.requiresNetwork
+    requiresNetwork: typeof input.requiresNetwork === "boolean" ? input.requiresNetwork : DEFAULT_TASK_METADATA.requiresNetwork,
+    timeBudgetMs: normalizePositiveInteger(input.timeBudgetMs, resolveDefaultTimeBudgetMs(difficulty)),
+    costBudgetUsd: normalizePositiveNumber(input.costBudgetUsd, resolveDefaultCostBudgetUsd(difficulty)),
+    defaultTrials: normalizePositiveInteger(input.defaultTrials, DEFAULT_TASK_METADATA.defaultTrials)
   };
 }
 
@@ -142,10 +189,18 @@ export function parseTaskMetadata(section: string): BenchmarkTaskMetadata {
       interaction: metadata.interaction as BenchmarkInteractionMode | undefined,
       evaluator: metadata.evaluator as BenchmarkEvaluatorMode | undefined,
       difficulty: metadata.difficulty as BenchmarkDifficulty | undefined,
+      reliability: metadata.reliability as BenchmarkReliability | undefined,
       tags: metadata.tags
     }),
     requiresIsolation: parseBoolean(metadata["requires isolation"], DEFAULT_TASK_METADATA.requiresIsolation),
-    requiresNetwork: parseBoolean(metadata["requires network"], DEFAULT_TASK_METADATA.requiresNetwork)
+    requiresNetwork: parseBoolean(metadata["requires network"], DEFAULT_TASK_METADATA.requiresNetwork),
+    timeBudgetMs: normalizePositiveInteger(Number(metadata["time budget ms"]), resolveDefaultTimeBudgetMs(
+      parseChoice(metadata.difficulty, BENCHMARK_DIFFICULTIES, DEFAULT_TASK_METADATA.difficulty)
+    )),
+    costBudgetUsd: normalizePositiveNumber(Number(metadata["cost budget usd"]), resolveDefaultCostBudgetUsd(
+      parseChoice(metadata.difficulty, BENCHMARK_DIFFICULTIES, DEFAULT_TASK_METADATA.difficulty)
+    )),
+    defaultTrials: normalizePositiveInteger(Number(metadata["default trials"]), DEFAULT_TASK_METADATA.defaultTrials)
   };
 }
 
@@ -166,9 +221,13 @@ export function taskMetadataToMarkdown(metadata: BenchmarkTaskMetadata): string[
     `Interaction: ${metadata.interaction}`,
     `Evaluator: ${metadata.evaluator}`,
     `Difficulty: ${metadata.difficulty}`,
+    `Reliability: ${metadata.reliability}`,
     `Tags: ${metadata.tags.length > 0 ? metadata.tags.join(", ") : "none"}`,
     `Requires Isolation: ${metadata.requiresIsolation ? "yes" : "no"}`,
     `Requires Network: ${metadata.requiresNetwork ? "yes" : "no"}`,
+    `Time Budget Ms: ${metadata.timeBudgetMs}`,
+    `Cost Budget Usd: ${metadata.costBudgetUsd}`,
+    `Default Trials: ${metadata.defaultTrials}`,
     ""
   ];
 }

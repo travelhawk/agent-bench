@@ -30,6 +30,7 @@ interface RunSandboxedCommandInput {
   allowNetwork: boolean;
   label: string;
   provider?: RuntimeSandboxProvider;
+  strictProvider?: boolean;
   env?: Record<string, string | undefined>;
   providerApiKey?: string;
   model?: string;
@@ -145,14 +146,24 @@ function dockerAutoAvailable(): boolean {
   return dockerDaemonAvailable() && dockerImageAvailable();
 }
 
-export function resolveSandboxProvider(preferred?: string): RuntimeSandboxProvider {
+export function resolveSandboxProvider(preferred?: string, strict = false): RuntimeSandboxProvider {
   const raw = (preferred ?? process.env[SANDBOX_PROVIDER_ENV] ?? "auto").trim().toLowerCase();
   if (raw === "process") return "process";
   if (raw === "docker") {
-    return dockerDaemonAvailable() ? "docker" : "process";
+    if (dockerDaemonAvailable()) return "docker";
+    if (strict) {
+      throw new Error("Docker sandbox requested, but the Docker daemon is unavailable.");
+    }
+    return "process";
   }
   if (raw === "macos-seatbelt" || raw === "sandbox-exec") {
-    return process.platform === "darwin" && commandExists("sandbox-exec") ? "macos-seatbelt" : "process";
+    if (process.platform === "darwin" && commandExists("sandbox-exec")) {
+      return "macos-seatbelt";
+    }
+    if (strict) {
+      throw new Error("macOS seatbelt sandbox requested, but sandbox-exec is unavailable.");
+    }
+    return "process";
   }
 
   if (process.platform === "darwin" && commandExists("sandbox-exec")) {
@@ -160,6 +171,9 @@ export function resolveSandboxProvider(preferred?: string): RuntimeSandboxProvid
   }
   if (dockerAutoAvailable()) {
     return "docker";
+  }
+  if (strict) {
+    throw new Error("No dedicated sandbox provider is available. Only host process execution is available.");
   }
 
   return "process";
@@ -460,7 +474,7 @@ function buildDockerInvocation(input: {
 }
 
 export async function runSandboxedCommand(input: RunSandboxedCommandInput): Promise<SandboxCommandResult> {
-  const provider = resolveSandboxProvider(input.provider);
+  const provider = resolveSandboxProvider(input.provider, Boolean(input.strictProvider));
   const workspaceDir = resolveRealDir(input.workspaceDir, true);
   const artifactsDir = resolveRealDir(input.artifactsDir, true);
   const tempDir = resolveRealDir(path.join(artifactsDir, "sandbox-tmp"), true);

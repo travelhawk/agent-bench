@@ -6,6 +6,10 @@ Local-first full-stack benchmarking workbench for AI agents.
 
 ## What Changed Since v0.3.0
 
+- Replaced the older broad default suites with a smaller benchmark-grade set: `repo-maintenance`, `product-builds`, and `creative-frontend`.
+- Added deterministic seeded fixtures for a security audit task, a CLI build task, and a simple web-app task, plus a bounded landing-page task for human and LLM review.
+- Restored benchmark metadata fields for `Reliability`, `Time Budget Ms`, `Cost Budget Usd`, and `Default Trials` so tasks are easier to compare after small agent prompt changes.
+- Added strict sandbox-provider support so callers can fail closed instead of silently degrading to host-process execution when a dedicated sandbox is required.
 - Reframed the Test Lab around a guided local runner flow with explicit blocker states, next-step guidance, and post-run actions.
 - Persisted failed batch jobs as first-class run history entries with failure summaries, logs, and rerun support.
 - Replaced the old fixed score framing in the UI with evaluator-aware outcome/process/review/efficiency breakdowns plus confidence labels.
@@ -17,7 +21,7 @@ Local-first full-stack benchmarking workbench for AI agents.
 - On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
 - On hosts without macOS seatbelt, `auto` mode now chooses Docker only when the daemon is ready and the configured image already exists locally; otherwise it falls back to `process`.
 - Hardened Windows execution paths by using `where` for binary lookup, keeping Docker container shells on `/bin/sh`, and standardizing seeded verifier commands on explicit relative test-file globs.
-- Browser and computer-use tasks in `interaction-surfaces` now ship real fixture directories and verifier commands instead of metadata-only placeholders.
+- The default seeded tasks now bias toward repo, CLI, web-app, and landing-page work instead of broader environment simulations.
 - The sample workspace now includes runnable browser and computer-use example agents under `./examples/sample-workspace`.
 - Runner environments are now scrubbed by default and only receive a small safe host env plus explicit `AGENT_BENCH_*` runtime variables.
 - Added a GitHub Actions CI matrix so the branch is validated on `ubuntu-latest`, `macos-latest`, and `windows-latest`.
@@ -118,6 +122,8 @@ export AI_GATEWAY_API_KEY="your_key"
 You can also paste a key directly into the UI for the current browser session. That session key is not written to SQLite or run artifacts.
 
 Without a key, `agent-bench` still works using deterministic rules-based review driven by the agent spec and benchmark metadata.
+That is acceptable for low-cost smoke guidance, but it should not be treated as a strong AI-capability measurement on subjective or review-only tasks.
+For benchmark-grade comparisons, prefer fixture-backed tasks with executable verifiers and treat the judge as secondary.
 
 Sandboxed runners also receive:
 
@@ -170,7 +176,9 @@ Runner contract:
 - `Provider:` can be `auto`, `process`, `macos-seatbelt`, or `docker`
 - in `auto` mode, macOS prefers `sandbox-exec`; other hosts only auto-select Docker when the daemon is ready and the configured image is already present locally
 - on Windows hosts without Docker, sandboxed runs fall back to the host `process` provider and keep the same runner/verifier contract
-- browser tasks can explicitly choose `Provider: process` when a host browser is required and the stronger sandbox would break launch stability
+- `process` mode gives you a fresh workspace but not a dedicated isolation boundary
+- use a dedicated provider such as Docker or macOS seatbelt when you need true sandbox isolation
+- strict-provider mode is supported in the runtime so callers can fail closed when a dedicated sandbox is required
 
 ## What A Run Means Today
 
@@ -190,7 +198,7 @@ Current runs now come in two honest modes:
 - Generated artifacts are run reports plus execution files like the copied workspace, task brief, and sandbox profile files. They are not fake browser screenshots.
 - Batch failures are now persisted as failed history rows instead of being hidden in a transient batch response only.
 
-This means the workbench now performs real sandboxed execution for tasks that opt into the fixture/runner contract, while the broader benchmark library still contains review-only tasks as well.
+This means the workbench now performs real sandboxed execution for the default seeded tasks, with the landing-page task intentionally retaining a human-review component on top of a structural verifier.
 
 ## Benchmarks
 
@@ -259,9 +267,13 @@ Resolution: atomic
 Interaction: terminal
 Evaluator: hybrid
 Difficulty: medium
+Reliability: high
 Tags: react, tests
 Requires Isolation: yes
 Requires Network: no
+Time Budget Ms: 60000
+Cost Budget Usd: 0.6
+Default Trials: 1
 ```
 
 Metadata meanings:
@@ -270,19 +282,26 @@ Metadata meanings:
 - `Interaction`: `artifact`, `terminal`, `browser`, `tool-use`, `computer-use`, or `multi-agent`
 - `Evaluator`: `state`, `artifact`, `trace`, `judge`, or `hybrid`
 - `Difficulty`: `low`, `medium`, or `high`
+- `Reliability`: how trustworthy the task score is expected to be as a regression signal
+- `Time Budget Ms`: the intended latency budget for one trial
+- `Cost Budget Usd`: the intended model-cost budget for one trial
+- `Default Trials`: the default repeat count for more stable comparison
 - `Sandbox`: optional fixture-backed runtime contract for real execution
 - Structured task sections are optional for backward compatibility, but strongly recommended because the workbench now uses them for guidance and confidence labeling
 
 The repo now ships three benchmark shapes by default:
 
-- `core-engineering` for fast deterministic regressions
-- `agentic-workflows` for higher-resolution workflow, campaign, and superagent-style tests
-- `interaction-surfaces` for browser, computer-use, and mixed tool-routing scenarios
+- `repo-maintenance` for fast deterministic repo tasks
+- `product-builds` for a small web app and a small CLI build
+- `creative-frontend` for a bounded landing-page task that is easy for humans to inspect
 
-The `interaction-surfaces` suite now includes executable fixtures for:
+The default task set is:
 
-- `browser-support-escalation`
-- `computer-use-incident-drill`
+- `repo-maintenance/fix-react-bug`
+- `repo-maintenance/security-audit-report`
+- `product-builds/simple-feedback-web-app`
+- `product-builds/release-notes-cli`
+- `creative-frontend/landing-page-refresh`
 
 ## Agent Definitions
 
@@ -307,7 +326,7 @@ Important:
 ## Current Limits
 
 - Full isolation now has two stronger providers: `sandbox-exec` on macOS and Docker on hosts where the daemon is available.
-- Browser tasks currently default to `Provider: process` when they need a real host browser; that is intentional until a browser-capable container/runtime path is added.
+- `process` mode is still a compatibility path, not a hard sandbox boundary.
 - The runtime contract is command-based. `agent-bench` does not yet provide a universal in-process tool protocol for arbitrary agent frameworks.
 - Multi-agent suites are still structurally modeled, but they only become truly executable when they are backed by concrete fixtures and verification commands.
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
@@ -316,11 +335,10 @@ Important:
 
 ## Troubleshooting
 
-- If the Next.js app fails to start after dependency changes, run `pnpm install` again so native packages like `better-sqlite3` are rebuilt.
+- If the Next.js app fails to start after dependency changes, run `pnpm install` again. If the local Node version changed, run `pnpm rebuild better-sqlite3` before retrying.
 - Existing SQLite databases are migrated on startup. If startup reports a missing run column, stop duplicate `next dev` processes and restart so the latest schema migration can run once.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
 - Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.
 - If a runner needs to consume the configured model or provider key, read `AGENT_BENCH_PROVIDER_MODEL` and `AGENT_BENCH_PROVIDER_API_KEY` from the runner process.
 - If you need to debug a failing sandbox on macOS, inspect the per-run `runner.sb` and `verifier.sb` files in the artifacts directory.
-- If you want to exercise the browser sample runner, install Chromium once with `pnpm exec playwright install chromium`.
 - See `docs/AGENTIC_TEST_RESEARCH.md` for the current research-backed test taxonomy and why the benchmark metadata is structured this way.

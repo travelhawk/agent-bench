@@ -1,6 +1,8 @@
 export type RunStatus = "completed" | "failed";
 export type ScoreConfidence = "high" | "medium" | "low";
 export type ScoreProfileKey = "hybrid" | "artifact" | "trace" | "judge" | "state";
+export type SandboxSelection = "process" | "macos-seatbelt" | "docker" | "mixed";
+export type BenchmarkReliability = "low" | "medium" | "high";
 
 export interface ScoreBreakdown {
   outcome: number;
@@ -41,11 +43,23 @@ export interface RunRecord {
 
 export interface RunInput {
   runKey: string;
+  experimentKey?: string | null;
+  benchmarkKey?: string;
+  taskKey?: string | null;
+  setupKey?: string | null;
+  workflowPath?: string | null;
+  modelId?: string | null;
+  trialIndex?: number | null;
   agentName: string;
   agentVersion: string;
   suiteName: string;
   status: RunStatus;
   scores: ScoreBreakdown;
+  objectiveScore?: number;
+  objectivePass?: boolean;
+  objectiveChecksAvailable?: number;
+  objectiveChecksPassed?: number;
+  deterministic?: boolean;
   scoreProfile: ScoreProfileKey;
   scoreConfidence: ScoreConfidence;
   failureReason?: string | null;
@@ -58,6 +72,7 @@ export interface RunInput {
 
 export interface RuntimeEvaluationRequest {
   runKey: string;
+  experimentKey?: string | null;
   agentPath?: string;
   agentMarkdown?: string;
   agentRunnerCommand?: string;
@@ -68,6 +83,15 @@ export interface RuntimeEvaluationRequest {
   benchmarks: BenchmarkSuiteRecord[];
   model?: string;
   gatewayApiKey?: string;
+  strictSandbox?: boolean;
+  resolvedSandboxProvider?: SandboxSelection;
+  trialIndex?: number | null;
+  environmentFingerprint?: string | null;
+  setupSnapshot?: {
+    key?: string | null;
+    workflowPath?: string | null;
+    modelId?: string | null;
+  } | null;
 }
 
 export interface AgentRecord {
@@ -98,9 +122,13 @@ export interface BenchmarkTaskMetadata {
   interaction: BenchmarkInteractionMode;
   evaluator: BenchmarkEvaluatorMode;
   difficulty: BenchmarkDifficulty;
+  reliability: BenchmarkReliability;
   tags: string[];
   requiresIsolation: boolean;
   requiresNetwork: boolean;
+  timeBudgetMs: number;
+  costBudgetUsd: number;
+  defaultTrials: number;
 }
 
 export interface BenchmarkTaskSandbox {

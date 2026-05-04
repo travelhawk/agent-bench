@@ -1,0 +1,13 @@
+body {
+  margin: 0;
+  font-family: sans-serif;
+}
+
+.page {
+  padding: 24px;
+}
+
+section {
+  margin-bottom: 24px;
+}
+
