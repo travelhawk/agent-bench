@@ -4,7 +4,7 @@ import { startTransition, useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type {
   AgentRecord, AgentSkillReference, BatchRunFailure, BatchRunResult, BenchmarkEvaluatorMode, BenchmarkInteractionMode,
-  BenchmarkResolution, BenchmarkSuiteRecord, BenchmarkTaskRecord, RunMode, RunRecord, RunResultPayload, WorkbenchSnapshot
+  BenchmarkResolution, BenchmarkSuiteRecord, BenchmarkTaskRecord, InstalledSkillRecord, RunMode, RunRecord, RunResultPayload, WorkbenchSnapshot
 } from "../src/types";
 
 type ViewMode = "lab" | "history" | "benchmarks";
@@ -22,7 +22,7 @@ interface BenchmarkFormState {
 interface RunSummaryView {
   status?: "completed" | "failed"; executionMode?: string; reviewMode?: string; scoreProfile?: string; scoreConfidence?: Confidence;
   latencyMs?: number; costUsd?: number; failureReason?: string;
-  agentSystem?: { entryFile?: string; bundleMode?: "flat" | "bundle"; bundlePath?: string | null; skillCount?: number; assetFileCount?: number; skills?: AgentSkillReference[] };
+  agentSystem?: { entryFile?: string; bundleMode?: "flat" | "bundle"; bundlePath?: string | null; sharedAgentsPath?: string | null; skillCount?: number; assetFileCount?: number; skills?: AgentSkillReference[] };
   sandbox?: { provider?: string; networkAccess?: string; runner?: { exitCode?: number; cwd?: string }; verifier?: { exitCode?: number; command?: string } };
   objectiveChecks?: { available?: number; passed?: number; deterministic?: boolean; items?: string[] };
   scores?: { total?: number; outcome?: number; process?: number; review?: number; efficiency?: number; tests?: number; judge?: number; performance?: number };
@@ -42,6 +42,7 @@ interface SkillSearchResultView {
   title: string;
 }
 interface BundleUploadFile { path: string; content: string; }
+interface ProjectSkillsResponse { skills: InstalledSkillRecord[]; }
 
 const MAX_BATCH_RUNS = 48;
 const RESOLUTION_OPTIONS: BenchmarkResolution[] = ["atomic", "workflow", "campaign", "swarm"];
@@ -98,7 +99,7 @@ async function getJson<T>(url: string): Promise<T> {
   return data as T;
 }
 
-async function mutateJson<T>(url: string, method: "POST" | "DELETE", body?: unknown): Promise<T> {
+async function mutateJson<T>(url: string, method: "POST" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
   const response = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `Request failed: ${url}`);
@@ -155,6 +156,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [skillResults, setSkillResults] = useState<SkillSearchResultView[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<SkillSearchResultView[]>([]);
   const [skillState, setSkillState] = useState<StatusMessage>({ tone: "neutral", message: "" });
+  const [projectSkillState, setProjectSkillState] = useState<StatusMessage>({ tone: "neutral", message: "" });
   const [runState, setRunState] = useState<StatusMessage>({ tone: "neutral", message: "" });
   const [benchmarkState, setBenchmarkState] = useState<StatusMessage>({ tone: "neutral", message: "" });
   const [resultJson, setResultJson] = useState<Record<string, string>>({});
@@ -162,6 +164,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [benchmarkForm, setBenchmarkForm] = useState<BenchmarkFormState>(emptyForm());
   const [isInspectingAgent, setIsInspectingAgent] = useState(false);
   const [isSearchingSkills, setIsSearchingSkills] = useState(false);
+  const [isManagingProjectSkills, setIsManagingProjectSkills] = useState(false);
   const [isCreatingBundle, setIsCreatingBundle] = useState(false);
   const [isRunningBatch, setIsRunningBatch] = useState(false);
   const [isCreatingBenchmark, setIsCreatingBenchmark] = useState(false);
@@ -216,6 +219,9 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const workflowState: WorkflowState = isRunningBatch ? "running" : blockers.length > 0 ? "blocked" : lastBatchResult?.failedRuns ? "completed-with-failures" : lastBatchResult ? "completed-clean" : "ready";
 
   async function refreshSnapshot() { const nextSnapshot = await getJson<WorkbenchSnapshot>("/api/workbench"); startTransition(() => setSnapshot(nextSnapshot)); }
+  function replaceProjectSkills(skills: InstalledSkillRecord[]) {
+    startTransition(() => setSnapshot((current) => ({ ...current, projectSkills: skills })));
+  }
   async function openRun(runKey: string) { setActiveRunAction(`open:${runKey}`); try { const nextDetail = await getJson<RunResultPayload>(`/api/run/${runKey}/result`); startTransition(() => setDetail(nextDetail)); } finally { setActiveRunAction(null); } }
   async function showRunJson(runKey: string) { setActiveRunAction(`json:${runKey}`); try { const nextDetail = await getJson<RunResultPayload>(`/api/run/${runKey}/result`); setResultJson((current) => ({ ...current, [runKey]: JSON.stringify(nextDetail.summary ?? nextDetail.run, null, 2) })); } finally { setActiveRunAction(null); } }
   async function deleteRunAction(runKey: string) { if (!window.confirm(`Delete run ${runKey}?`)) return; setActiveRunAction(`delete:${runKey}`); try { await mutateJson(`/api/run/${runKey}`, "DELETE"); if (detail?.run.runKey === runKey) setDetail(null); await refreshSnapshot(); } finally { setActiveRunAction(null); } }
@@ -250,6 +256,61 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
       setSkillState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
       setIsSearchingSkills(false);
+    }
+  }
+
+  async function installSelectedSkillsAction() {
+    if (selectedSkills.length === 0) {
+      setProjectSkillState({ tone: "error", message: "Select at least one search result to install into the project." });
+      return;
+    }
+
+    setIsManagingProjectSkills(true);
+    setProjectSkillState({ tone: "neutral", message: `Installing ${selectedSkills.length} skill(s) into ./.agents...` });
+    try {
+      const response = await mutateJson<ProjectSkillsResponse>("/api/skills", "POST", { skills: selectedSkills });
+      replaceProjectSkills(response.skills);
+      setProjectSkillState({ tone: "success", message: `Installed ${selectedSkills.length} skill(s) into the project.` });
+    } catch (error: unknown) {
+      setProjectSkillState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsManagingProjectSkills(false);
+    }
+  }
+
+  async function updateProjectSkillsAction(names?: string[]) {
+    setIsManagingProjectSkills(true);
+    setProjectSkillState({ tone: "neutral", message: names?.length ? `Updating ${names.length} installed skill(s)...` : "Updating installed project skills..." });
+    try {
+      const response = await mutateJson<ProjectSkillsResponse>("/api/skills", "PATCH", { names });
+      replaceProjectSkills(response.skills);
+      setProjectSkillState({ tone: "success", message: names?.length ? `Updated ${names.length} installed skill(s).` : "Updated installed project skills." });
+    } catch (error: unknown) {
+      setProjectSkillState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsManagingProjectSkills(false);
+    }
+  }
+
+  async function removeProjectSkillsAction(names: string[]) {
+    if (names.length === 0) {
+      setProjectSkillState({ tone: "error", message: "Select at least one installed skill to remove." });
+      return;
+    }
+    if (!window.confirm(`Remove ${names.join(", ")} from this project's .agents skills?`)) {
+      return;
+    }
+
+    setIsManagingProjectSkills(true);
+    setProjectSkillState({ tone: "neutral", message: `Removing ${names.length} installed skill(s)...` });
+    try {
+      const response = await mutateJson<ProjectSkillsResponse>("/api/skills", "DELETE", { names });
+      replaceProjectSkills(response.skills);
+      setProjectSkillState({ tone: "success", message: `Removed ${names.length} installed skill(s).` });
+    } catch (error: unknown) {
+      setProjectSkillState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsManagingProjectSkills(false);
     }
   }
 
@@ -405,7 +466,8 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                         <div className="agent-meta">
                           <span>{agent.path}</span>
                           <span>{agent.executionMode === "sandbox" ? "Sandbox-capable" : "Review-only"}</span>
-                          <span>{agent.system.bundleMode === "bundle" ? `${agent.system.skillCount} skills / ${agent.system.assetFileCount} assets` : "Single-file agent"}</span>
+                          <span>{agent.system.bundleMode === "bundle" ? `${agent.system.skillCount} skills / ${agent.system.assetFileCount} assets` : agent.system.skillCount > 0 || agent.system.assetFileCount > 0 ? `${agent.system.skillCount} shared skills / ${agent.system.assetFileCount} assets` : "Single-file agent"}</span>
+                          {agent.system.sharedAgentsPath ? <span>Shared .agents layer</span> : null}
                           <span>{agent.source === "manual" ? "Added manually" : agent.source === "managed" ? "Managed bundle" : "Discovered"}</span>
                         </div>
                       </button>
@@ -416,7 +478,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                 {manualAgentState.message && <p className={toneClass(manualAgentState.tone)}>{manualAgentState.message}</p>}
                 <div className="callout callout-muted">
                   <strong>Bundle skills and workflows</strong>
-                  <span>Create a managed agent bundle by starting from an existing AGENTS.md or agent file, then attaching uploaded `.agents` content and extra skills from skills.sh.</span>
+                  <span>Search skills on skills.sh, install them into the project `.agents` layer, or snapshot them into a managed bundle together with uploaded workflows.</span>
                 </div>
                 <div className="config-grid">
                   <label className="field"><span>Base agent</span><select value={bundleBaseAgentPath} onChange={(event) => setBundleBaseAgentPath(event.target.value)}><option value="">Select agent</option>{snapshot.agents.map((agent) => <option key={`bundle-${agent.path}`} value={agent.path}>{agent.name} ({agent.path})</option>)}</select></label>
@@ -436,8 +498,30 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                   );
                 })}</div> : null}
                 {selectedSkills.length > 0 ? <div className="chip-row">{selectedSkills.map((skill) => <span className="mini-chip" key={`selected-${skill.installSpec}`}>{skill.installSpec}</span>)}</div> : null}
-                <div className="action-row"><button type="button" className="secondary-action" onClick={createManagedBundleAction} disabled={isCreatingBundle}>{isCreatingBundle ? "Creating..." : "Create managed bundle"}</button></div>
+                <div className="action-row">
+                  <button type="button" className="secondary-action" onClick={installSelectedSkillsAction} disabled={isManagingProjectSkills || selectedSkills.length === 0}>{isManagingProjectSkills ? "Installing..." : "Install into project"}</button>
+                  <button type="button" className="secondary-action" onClick={createManagedBundleAction} disabled={isCreatingBundle}>{isCreatingBundle ? "Creating..." : "Create managed bundle"}</button>
+                </div>
                 {bundleState.message && <p className={toneClass(bundleState.tone)}>{bundleState.message}</p>}
+                <div className="callout callout-muted">
+                  <strong>Project skills</strong>
+                  <span>Installed project skills live under `./.agents` and are included as a shared system layer when flat agents from `./agents` are reviewed or sandboxed.</span>
+                </div>
+                <div className="action-row">
+                  <button type="button" className="secondary-action" onClick={() => updateProjectSkillsAction()} disabled={isManagingProjectSkills || snapshot.projectSkills.length === 0}>{isManagingProjectSkills ? "Working..." : "Update all project skills"}</button>
+                  <button type="button" className="secondary-action" onClick={() => refreshSnapshot()} disabled={isManagingProjectSkills}>Refresh skills</button>
+                </div>
+                {projectSkillState.message && <p className={toneClass(projectSkillState.tone)}>{projectSkillState.message}</p>}
+                {snapshot.projectSkills.length > 0 ? <div className="agent-list">{snapshot.projectSkills.map((skill) => (
+                  <article key={`project-skill-${skill.name}`} className="agent-card">
+                    <div className="agent-card-head"><div><div className="agent-title">{skill.name}</div><div className="agent-summary">{skill.path}</div></div><span className="status-chip status-chip-active">{skill.scope}</span></div>
+                    <div className="agent-meta"><span>Agents: {skill.agents.join(", ") || "none"}</span></div>
+                    <div className="action-row">
+                      <button type="button" className="text-link button-reset" onClick={() => updateProjectSkillsAction([skill.name])} disabled={isManagingProjectSkills}>Update</button>
+                      <button type="button" className="text-link button-reset" onClick={() => removeProjectSkillsAction([skill.name])} disabled={isManagingProjectSkills}>Remove</button>
+                    </div>
+                  </article>
+                ))}</div> : <div className="empty-state">No project skills installed yet. Search skills.sh, then install selected results into `./.agents`.</div>}
               </article>
 
               <article className="panel">
@@ -517,7 +601,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                         <div className="detail-cell">Execution <strong>{detailSummary?.executionMode ?? "review-only"}</strong></div><div className="detail-cell">Sandbox <strong>{detailSummary?.sandbox?.provider ?? "n/a"}</strong></div>
                         <div className="detail-cell">Network <strong>{detailSummary?.sandbox?.networkAccess ?? "n/a"}</strong></div><div className="detail-cell">Review mode <strong>{detailSummary?.reviewMode ?? "unknown"}</strong></div>
                       </div>
-                      {detailSummary?.agentSystem ? <div className="detail-stack"><strong>Agent system</strong><span>{detailSummary.agentSystem.bundleMode === "bundle" ? `Bundle with ${detailSummary.agentSystem.skillCount ?? 0} skills and ${detailSummary.agentSystem.assetFileCount ?? 0} asset files` : "Single-file agent definition"}</span>{detailSummary.agentSystem.skills?.length ? <span>{detailSummary.agentSystem.skills.map((skill) => skill.installSpec).join(" / ")}</span> : null}</div> : null}
+                      {detailSummary?.agentSystem ? <div className="detail-stack"><strong>Agent system</strong><span>{detailSummary.agentSystem.bundleMode === "bundle" ? `Bundle with ${detailSummary.agentSystem.skillCount ?? 0} skills and ${detailSummary.agentSystem.assetFileCount ?? 0} asset files` : detailSummary.agentSystem.sharedAgentsPath ? `Flat agent plus shared .agents with ${detailSummary.agentSystem.skillCount ?? 0} skills and ${detailSummary.agentSystem.assetFileCount ?? 0} asset files` : "Single-file agent definition"}</span>{detailSummary.agentSystem.skills?.length ? <span>{detailSummary.agentSystem.skills.map((skill) => skill.installSpec).join(" / ")}</span> : null}</div> : null}
                       {detailSummary?.objectiveChecks && <div className="detail-stack"><strong>Objective checks</strong><span>{detailSummary.objectiveChecks.passed ?? 0}/{detailSummary.objectiveChecks.available ?? 0}{detailSummary.objectiveChecks.deterministic ? " deterministic" : " advisory"}</span>{detailSummary.objectiveChecks.items?.length ? <span>{detailSummary.objectiveChecks.items.join(" / ")}</span> : null}</div>}
                       {detailSummary?.taskContract?.deliverableFormat && <div className="detail-stack"><strong>Deliverable format</strong><span>{detailSummary.taskContract.deliverableFormat}</span></div>}
                       {detailSummary?.evidence?.matchedSignals?.length ? <div className="detail-stack"><strong>Matched evidence</strong><span>{detailSummary.evidence.matchedSignals.join(" / ")}</span></div> : null}

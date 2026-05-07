@@ -21,7 +21,10 @@ export interface ResolvedAgentExecutionContext {
   content: string;
   runnerCommand?: string;
   assetFileCount: number;
+  assetFiles: string[];
   skills: AgentSkillReference[];
+  sharedAgentsPath?: string;
+  systemRoots: string[];
 }
 
 function toAgentKey(relativePath: string): string {
@@ -144,18 +147,28 @@ function walkFiles(currentDir: string, results: string[], excludedDirs = EXCLUDE
   });
 }
 
-function listBundleFiles(bundleRoot: string, entryPath: string, bundleMode: "flat" | "bundle"): string[] {
-  if (bundleMode === "flat") {
+function uniquePaths(input: string[]): string[] {
+  const seen = new Set<string>();
+  return input.filter((value) => {
+    const key = path.resolve(value).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function listFilesUnder(rootPath: string): string[] {
+  if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) {
     return [];
   }
 
   const files: string[] = [];
-  walkFiles(bundleRoot, files);
-  return files.filter((filePath) => filePath !== entryPath);
+  walkFiles(rootPath, files);
+  return files;
 }
 
-function inferBundledSkillReferences(bundleRoot: string): AgentSkillReference[] {
-  const skillsDir = path.join(bundleRoot, ".agents", "skills");
+function inferSkillReferencesFromAgentsDir(agentsDir: string, origin: AgentSkillReference["origin"]): AgentSkillReference[] {
+  const skillsDir = path.join(agentsDir, "skills");
   if (!existsSync(skillsDir) || !statSync(skillsDir).isDirectory()) {
     return [];
   }
@@ -167,7 +180,7 @@ function inferBundledSkillReferences(bundleRoot: string): AgentSkillReference[] 
       skillName: entry.name,
       installSpec: entry.name,
       title: entry.name,
-      origin: "bundled" as const
+      origin
     }))
     .sort((left, right) => left.skillName.localeCompare(right.skillName));
 }
@@ -181,10 +194,51 @@ function resolveBundledSkills(bundleRoot: string): AgentSkillReference[] {
     }));
   }
 
-  return inferBundledSkillReferences(bundleRoot);
+  return inferSkillReferencesFromAgentsDir(path.join(bundleRoot, ".agents"), "bundled");
 }
 
-export function resolveAgentExecutionContext(agentPath: string): ResolvedAgentExecutionContext {
+function mergeSkillReferences(left: AgentSkillReference[], right: AgentSkillReference[]): AgentSkillReference[] {
+  const merged = new Map<string, AgentSkillReference>();
+
+  [...left, ...right].forEach((skill) => {
+    merged.set(`${skill.source}::${skill.skillName}`, skill);
+  });
+
+  return [...merged.values()].sort((a, b) => a.installSpec.localeCompare(b.installSpec));
+}
+
+function resolveSharedAgentsPath(workspaceRoot: string | undefined, absoluteEntryPath: string, bundleMode: "flat" | "bundle"): string | undefined {
+  if (!workspaceRoot || bundleMode !== "flat") return undefined;
+
+  const workspaceAgentsDir = path.join(workspaceRoot, "agents");
+  if (!isSameOrNestedPath(workspaceAgentsDir, absoluteEntryPath)) {
+    return undefined;
+  }
+
+  const sharedAgentsDir = path.join(workspaceRoot, ".agents");
+  if (!existsSync(sharedAgentsDir) || !statSync(sharedAgentsDir).isDirectory()) {
+    return undefined;
+  }
+
+  return sharedAgentsDir;
+}
+
+function listAgentSystemFiles(input: {
+  entryPath: string;
+  bundleRoot: string;
+  sharedAgentsPath?: string;
+}): string[] {
+  const files = uniquePaths([
+    ...listFilesUnder(input.bundleRoot),
+    ...(input.sharedAgentsPath ? listFilesUnder(input.sharedAgentsPath) : [])
+  ]);
+
+  return files
+    .filter((filePath) => path.resolve(filePath) !== path.resolve(input.entryPath))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function resolveAgentExecutionContext(agentPath: string, workspaceRoot?: string): ResolvedAgentExecutionContext {
   const absoluteInputPath = path.resolve(agentPath);
   if (!existsSync(absoluteInputPath)) {
     throw new Error(`Agent file not found: ${agentPath}`);
@@ -201,10 +255,22 @@ export function resolveAgentExecutionContext(agentPath: string): ResolvedAgentEx
     || existsSync(path.join(absoluteBundlePath, ".agents"))
     || existsSync(path.join(absoluteBundlePath, AGENT_BUNDLE_MANIFEST))
   ) ? "bundle" : "flat";
+  const sharedAgentsPath = resolveSharedAgentsPath(workspaceRoot, absoluteEntryPath, bundleMode);
   const content = readFileSync(absoluteEntryPath, "utf8");
   const runnerCommand = extractRunnerCommand(content);
-  const bundleFiles = listBundleFiles(absoluteBundlePath, absoluteEntryPath, bundleMode);
-  const skills = resolveBundledSkills(absoluteBundlePath);
+  const assetFiles = listAgentSystemFiles({
+    entryPath: absoluteEntryPath,
+    bundleRoot: absoluteBundlePath,
+    sharedAgentsPath
+  });
+  const skills = mergeSkillReferences(
+    resolveBundledSkills(absoluteBundlePath),
+    sharedAgentsPath ? inferSkillReferencesFromAgentsDir(sharedAgentsPath, "skills.sh") : []
+  );
+  const systemRoots = uniquePaths([
+    absoluteBundlePath,
+    ...(sharedAgentsPath ? [sharedAgentsPath] : [])
+  ]);
 
   return {
     absoluteEntryPath,
@@ -212,17 +278,23 @@ export function resolveAgentExecutionContext(agentPath: string): ResolvedAgentEx
     bundleMode,
     content,
     runnerCommand,
-    assetFileCount: bundleFiles.length,
-    skills
+    assetFileCount: assetFiles.length,
+    assetFiles,
+    skills,
+    sharedAgentsPath,
+    systemRoots
   };
 }
 
 function buildAgentRecord(workspaceRoot: string, absoluteEntryPath: string, source: AgentRecord["source"]): AgentRecord {
   const relativePath = toWorkspaceRelative(workspaceRoot, absoluteEntryPath);
-  const executionContext = resolveAgentExecutionContext(absoluteEntryPath);
+  const executionContext = resolveAgentExecutionContext(absoluteEntryPath, workspaceRoot);
   const fallbackName = path.basename(relativePath, path.extname(relativePath));
   const bundleRelativePath = executionContext.bundleMode === "bundle"
     ? toWorkspaceRelative(workspaceRoot, executionContext.absoluteBundlePath)
+    : undefined;
+  const sharedAgentsPath = executionContext.sharedAgentsPath
+    ? toWorkspaceRelative(workspaceRoot, executionContext.sharedAgentsPath)
     : undefined;
 
   return {
@@ -234,6 +306,7 @@ function buildAgentRecord(workspaceRoot: string, absoluteEntryPath: string, sour
       entryFile: relativePath,
       bundleMode: executionContext.bundleMode,
       bundlePath: bundleRelativePath && bundleRelativePath !== relativePath ? bundleRelativePath : undefined,
+      sharedAgentsPath,
       skillCount: executionContext.skills.length,
       assetFileCount: executionContext.assetFileCount,
       skills: executionContext.skills

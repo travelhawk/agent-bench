@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { inspectAgentFile, listAgentFiles } from "../agents/files";
 import { createManagedAgentBundle } from "../agents/bundles";
-import { searchSkillsRegistry, SkillSearchResult } from "../agents/skills";
+import {
+  installProjectSkills,
+  listInstalledProjectSkills,
+  removeProjectSkills,
+  searchSkillsRegistry,
+  SkillSearchResult,
+  updateProjectSkills
+} from "../agents/skills";
 import { normalizeSuiteMetadataInput, normalizeTaskMetadataInput } from "../benchmarks/metadata";
 import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesFromFiles } from "../benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
@@ -14,6 +21,7 @@ import {
   BatchRunResult,
   BenchmarkSuiteRecord,
   BenchmarkTaskRecord,
+  InstalledSkillRecord,
   RunEvaluationResult,
   RunMode,
   RunRecord,
@@ -100,6 +108,17 @@ interface ManagedAgentBundleInput {
     installs?: number;
     title?: string;
   }>;
+}
+
+interface ManageProjectSkillsInput {
+  skills?: Array<{
+    source?: string;
+    skillName?: string;
+    registryUrl?: string;
+    installs?: number;
+    title?: string;
+  }>;
+  names?: string[];
 }
 
 function withContext<T>(fn: (context: ServiceContext) => Promise<T> | T, dbPathInput?: string): Promise<T> {
@@ -322,6 +341,7 @@ async function executeRun(context: ServiceContext, input: {
   const bestBefore = getBestScore(context.db);
   const runInput = await runEvaluationInRuntime({
     runKey: newRunKey(),
+    workspaceRoot: context.workspaceRoot,
     agentPath: input.agentPath,
     agentMarkdown: input.agentMarkdown,
     agentRunnerCommand: input.agentRunnerCommand,
@@ -348,6 +368,13 @@ export function getWorkbenchSnapshot(dbPathInput?: string): Promise<WorkbenchSna
     const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
     const agents = listAgentFiles(context.workspaceRoot);
     const runs = listRuns(context.db, 100);
+    let projectSkills: InstalledSkillRecord[] = [];
+
+    try {
+      projectSkills = listInstalledProjectSkills(context.workspaceRoot);
+    } catch {
+      projectSkills = [];
+    }
 
     return {
       summary: {
@@ -358,6 +385,7 @@ export function getWorkbenchSnapshot(dbPathInput?: string): Promise<WorkbenchSna
       runs,
       benchmarks,
       agents,
+      projectSkills,
       latestLogText: runs[0]?.logText ?? "No runs yet. Start an evaluation from the Test Lab."
     };
   }, dbPathInput);
@@ -372,6 +400,54 @@ export function searchSkills(query: string, dbPathInput?: string): Promise<Skill
     const normalizedQuery = readBoundedString(query, "query", INPUT_LIMITS.maxSkillQueryLength, true)!;
     return searchSkillsRegistry(normalizedQuery, context.workspaceRoot);
   }, dbPathInput);
+}
+
+function normalizeSkillSelection(input: ManageProjectSkillsInput["skills"]): Array<{
+  source: string;
+  skillName: string;
+  registryUrl?: string;
+  installs?: number;
+  title?: string;
+}> {
+  const skills = Array.isArray(input) ? input : [];
+  return skills.map((skill, index) => ({
+    source: readBoundedString(skill?.source, `skills[${index}].source`, INPUT_LIMITS.maxDescriptionLength, true)!,
+    skillName: readBoundedString(skill?.skillName, `skills[${index}].skillName`, INPUT_LIMITS.maxTitleLength, true)!,
+    registryUrl: readBoundedString(skill?.registryUrl, `skills[${index}].registryUrl`, INPUT_LIMITS.maxDescriptionLength),
+    installs: readOptionalNumber(skill?.installs),
+    title: readBoundedString(skill?.title, `skills[${index}].title`, INPUT_LIMITS.maxTitleLength)
+  }));
+}
+
+function normalizeSkillNames(input: ManageProjectSkillsInput["names"]): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.map((name, index) => readBoundedString(name, `names[${index}]`, INPUT_LIMITS.maxTitleLength, true)!);
+}
+
+export function listProjectSkills(dbPathInput?: string): Promise<InstalledSkillRecord[]> {
+  return withContext((context) => listInstalledProjectSkills(context.workspaceRoot), dbPathInput);
+}
+
+export function installProjectSkillsSelection(input: ManageProjectSkillsInput, dbPathInput?: string): Promise<InstalledSkillRecord[]> {
+  return withContext((context) => {
+    const skills = normalizeSkillSelection(input.skills);
+    if (skills.length === 0) {
+      throw new Error("Select at least one skills.sh result to install.");
+    }
+
+    return installProjectSkills(context.workspaceRoot, skills);
+  }, dbPathInput);
+}
+
+export function updateProjectSkillsSelection(input: ManageProjectSkillsInput, dbPathInput?: string): Promise<InstalledSkillRecord[]> {
+  return withContext((context) => updateProjectSkills(context.workspaceRoot, normalizeSkillNames(input.names)), dbPathInput);
+}
+
+export function removeProjectSkillsSelection(input: ManageProjectSkillsInput, dbPathInput?: string): Promise<InstalledSkillRecord[]> {
+  return withContext((context) => removeProjectSkills(context.workspaceRoot, normalizeSkillNames(input.names)), dbPathInput);
 }
 
 export function createAgentBundle(input: ManagedAgentBundleInput, dbPathInput?: string): Promise<AgentRecord> {

@@ -91,6 +91,9 @@ interface ResolvedAgentMaterial {
   bundleMode: "flat" | "bundle";
   skills: AgentSkillReference[];
   assetFileCount: number;
+  assetFiles: string[];
+  sharedAgentsPath?: string;
+  systemRoots: string[];
 }
 
 function clampScore(raw: number): number {
@@ -204,36 +207,6 @@ export async function judgeWithVercelAiSdk(input: {
   };
 }
 
-function collectAgentPreviewFiles(bundleRoot: string, limit = 8): string[] {
-  const results: string[] = [];
-  const excludedDirs = new Set(["node_modules", ".git", ".next", "dist", "test-results"]);
-
-  function walk(currentDir: string): void {
-    const entries = readdirSync(currentDir, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name));
-
-    entries.forEach((entry) => {
-      if (results.length >= limit) return;
-
-      const absolutePath = path.join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        if (excludedDirs.has(entry.name)) return;
-        walk(absolutePath);
-        return;
-      }
-
-      const extension = path.extname(entry.name).toLowerCase();
-      if (![".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".js", ".ts", ".py"].includes(extension)) {
-        return;
-      }
-      results.push(absolutePath);
-    });
-  }
-
-  walk(bundleRoot);
-  return results;
-}
-
 function buildAgentSystemPreview(input: {
   bundleRoot: string;
   entryPath: string;
@@ -241,8 +214,10 @@ function buildAgentSystemPreview(input: {
   bundleMode: "flat" | "bundle";
   skills: AgentSkillReference[];
   assetFileCount: number;
+  assetFiles: string[];
+  sharedAgentsPath?: string;
 }): string {
-  if (input.bundleMode === "flat") {
+  if (input.bundleMode === "flat" && input.assetFileCount === 0 && input.skills.length === 0 && !input.sharedAgentsPath) {
     return input.entryMarkdown.trim().slice(0, 16000);
   }
 
@@ -253,6 +228,9 @@ function buildAgentSystemPreview(input: {
     `Bundle Mode: ${input.bundleMode}`,
     `Skill Count: ${input.skills.length}`,
     `Asset File Count: ${input.assetFileCount}`,
+    ...(input.sharedAgentsPath
+      ? ["Shared .agents Path: .agents"]
+      : []),
     ...(input.skills.length > 0
       ? ["", "## Attached Skills", ...input.skills.map((skill) => `- ${skill.installSpec}`)]
       : []),
@@ -260,11 +238,14 @@ function buildAgentSystemPreview(input: {
     "## Entry Markdown",
     input.entryMarkdown.trim()
   ];
-  const previewFiles = collectAgentPreviewFiles(input.bundleRoot)
-    .filter((filePath) => filePath !== input.entryPath);
+  const previewFiles = input.assetFiles
+    .filter((filePath) => filePath !== input.entryPath)
+    .slice(0, 8);
 
   previewFiles.forEach((filePath) => {
-    const relativePath = path.relative(input.bundleRoot, filePath).replace(/\\/g, "/");
+    const relativePath = input.sharedAgentsPath && filePath.startsWith(input.sharedAgentsPath)
+      ? path.join(".agents", path.relative(input.sharedAgentsPath, filePath)).replace(/\\/g, "/")
+      : path.relative(input.bundleRoot, filePath).replace(/\\/g, "/");
     const content = readFileSync(filePath, "utf8").trim();
     if (!content) return;
     sections.push("", `## File: ${relativePath}`, content.slice(0, 2400));
@@ -295,7 +276,9 @@ function resolveAgentMaterial(input: RuntimeEvaluationRequest): ResolvedAgentMat
       previewMarkdown: entryMarkdown,
       bundleMode: "flat",
       skills: [],
-      assetFileCount: 0
+      assetFileCount: 0,
+      assetFiles: [],
+      systemRoots: []
     };
   }
 
@@ -303,7 +286,7 @@ function resolveAgentMaterial(input: RuntimeEvaluationRequest): ResolvedAgentMat
     throw new Error("Run request requires either agentPath or agentMarkdown.");
   }
 
-  const resolved = resolveAgentExecutionContext(input.agentPath);
+  const resolved = resolveAgentExecutionContext(input.agentPath, input.workspaceRoot);
   return {
     agentPathLabel: input.agentPath,
     entryMarkdown: resolved.content.trim().slice(0, 12000),
@@ -313,13 +296,18 @@ function resolveAgentMaterial(input: RuntimeEvaluationRequest): ResolvedAgentMat
       entryMarkdown: resolved.content,
       bundleMode: resolved.bundleMode,
       skills: resolved.skills,
-      assetFileCount: resolved.assetFileCount
+      assetFileCount: resolved.assetFileCount,
+      assetFiles: resolved.assetFiles,
+      sharedAgentsPath: resolved.sharedAgentsPath
     }),
     absoluteEntryPath: resolved.absoluteEntryPath,
     absoluteBundlePath: resolved.absoluteBundlePath,
     bundleMode: resolved.bundleMode,
     skills: resolved.skills,
-    assetFileCount: resolved.assetFileCount
+    assetFileCount: resolved.assetFileCount,
+    assetFiles: resolved.assetFiles,
+    sharedAgentsPath: resolved.sharedAgentsPath,
+    systemRoots: resolved.systemRoots
   };
 }
 
@@ -495,11 +483,29 @@ function summarizeSandboxExecution(
   };
 }
 
+function copyDirectoryContents(sourceDir: string, targetDir: string): void {
+  const entries = readdirSync(sourceDir, { withFileTypes: true });
+
+  entries.forEach((entry) => {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    cpSync(sourcePath, targetPath, {
+      recursive: true,
+      filter: (candidatePath) => {
+        const baseName = path.basename(candidatePath);
+        return !["node_modules", ".git", ".next", "dist", "test-results"].includes(baseName);
+      }
+    });
+  });
+}
+
 function copyAgentSystemToArtifacts(input: {
   artifactsPath: string;
   agentPath?: string;
   bundlePath?: string;
+  sharedAgentsPath?: string;
   bundleMode: "flat" | "bundle";
+  systemRoots: string[];
 }): string | undefined {
   if (!input.agentPath) return undefined;
 
@@ -507,18 +513,28 @@ function copyAgentSystemToArtifacts(input: {
   mkdirSync(targetDir, { recursive: true });
 
   if (input.bundleMode === "bundle" && input.bundlePath) {
-    cpSync(input.bundlePath, targetDir, {
-      recursive: true,
-      filter: (sourcePath) => {
-        const baseName = path.basename(sourcePath);
-        return !["node_modules", ".git", ".next", "dist", "test-results"].includes(baseName);
-      }
-    });
+    copyDirectoryContents(input.bundlePath, targetDir);
     return targetDir;
   }
 
-  const fileName = path.basename(input.agentPath);
-  cpSync(input.agentPath, path.join(targetDir, fileName));
+  const primaryRoot = input.systemRoots[0];
+  if (primaryRoot && existsSync(primaryRoot)) {
+    copyDirectoryContents(primaryRoot, targetDir);
+  } else {
+    const fileName = path.basename(input.agentPath);
+    cpSync(input.agentPath, path.join(targetDir, fileName));
+  }
+
+  if (input.sharedAgentsPath && existsSync(input.sharedAgentsPath)) {
+    cpSync(input.sharedAgentsPath, path.join(targetDir, ".agents"), {
+      recursive: true,
+      filter: (candidatePath) => {
+        const baseName = path.basename(candidatePath);
+        return !["node_modules", ".git", ".next", "dist", "test-results"].includes(baseName);
+      }
+    });
+  }
+
   return targetDir;
 }
 
@@ -533,6 +549,8 @@ async function maybeRunSandboxExecution(input: {
   agentBundleMode: "flat" | "bundle";
   agentSkills: AgentSkillReference[];
   agentAssetFileCount: number;
+  agentSharedAgentsPath?: string;
+  agentSystemRoots: string[];
   agentPathLabel: string;
   agentMarkdown: string;
   agentRunnerCommand?: string;
@@ -569,13 +587,18 @@ async function maybeRunSandboxExecution(input: {
   const agentFilePath = path.join(input.artifactsPath, "agent.md");
   const agentDir = input.agentPath ? path.dirname(input.agentPath) : workspaceDir;
   const agentBundleDir = input.agentBundlePath ?? agentDir;
-  const agentSkillsDir = path.join(agentBundleDir, ".agents", "skills");
+  const sharedAgentsDir = input.agentSharedAgentsPath;
+  const skillsRootDir = sharedAgentsDir ?? agentBundleDir;
+  const agentSkillsDir = path.join(skillsRootDir, ".agents", "skills");
   const agentArtifactDir = copyAgentSystemToArtifacts({
     artifactsPath: input.artifactsPath,
     agentPath: input.agentPath,
     bundlePath: input.agentBundlePath,
-    bundleMode: input.agentBundleMode
+    sharedAgentsPath: input.agentSharedAgentsPath,
+    bundleMode: input.agentBundleMode,
+    systemRoots: input.agentSystemRoots
   });
+  const readOnlyDirs = [...new Set(input.agentSystemRoots.filter(Boolean))];
   const allowNetwork = input.task.metadata.requiresNetwork;
   cpSync(fixtureDir, workspaceDir, { recursive: true });
   writeFileSync(taskBriefPath, buildTaskBrief(input.benchmark, input.task), "utf8");
@@ -600,6 +623,9 @@ async function maybeRunSandboxExecution(input: {
   if (existsSync(agentSkillsDir)) {
     commandEnv.AGENT_BENCH_AGENT_SKILLS_DIR = agentSkillsDir;
   }
+  if (sharedAgentsDir) {
+    commandEnv.AGENT_BENCH_AGENT_SHARED_AGENTS_DIR = sharedAgentsDir;
+  }
   if (agentArtifactDir) {
     commandEnv.AGENT_BENCH_AGENT_ARTIFACT_DIR = agentArtifactDir;
   }
@@ -614,7 +640,7 @@ async function maybeRunSandboxExecution(input: {
     cwd: agentDir,
     workspaceDir,
     artifactsDir: input.artifactsPath,
-    readOnlyDirs: [agentBundleDir],
+    readOnlyDirs,
     timeoutMs,
     allowNetwork,
     label: "runner",
@@ -630,7 +656,7 @@ async function maybeRunSandboxExecution(input: {
       cwd: workspaceDir,
       workspaceDir,
       artifactsDir: input.artifactsPath,
-      readOnlyDirs: [agentBundleDir],
+      readOnlyDirs,
       timeoutMs,
       allowNetwork,
       label: "verifier",
@@ -923,6 +949,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     agentBundleMode: material.bundleMode,
     agentSkills: material.skills,
     agentAssetFileCount: material.assetFileCount,
+    agentSharedAgentsPath: material.sharedAgentsPath,
+    agentSystemRoots: material.systemRoots,
     agentPathLabel: material.agentPathLabel,
     agentMarkdown: material.entryMarkdown,
     agentRunnerCommand: input.agentRunnerCommand,
@@ -1117,6 +1145,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       entryFile: material.agentPathLabel,
       bundleMode: material.bundleMode,
       bundlePath: material.absoluteBundlePath ?? null,
+      sharedAgentsPath: material.sharedAgentsPath ? ".agents" : null,
       skillCount: material.skills.length,
       assetFileCount: material.assetFileCount,
       skills: material.skills
@@ -1146,7 +1175,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         "summary.json",
         "session.log",
         "report.svg",
-        ...(material.bundleMode === "bundle" ? ["agent-system/"] : []),
+        ...(material.bundleMode === "bundle" || material.assetFileCount > 0 || material.skills.length > 0 || material.sharedAgentsPath ? ["agent-system/"] : []),
         ...(sandbox.taskBriefPath ? ["task-brief.md"] : []),
         ...(sandbox.workspaceDir ? ["workspace/"] : [])
       ]

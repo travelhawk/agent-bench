@@ -8,6 +8,8 @@
 - Added strict sandbox-provider enforcement support and clarified that `process` mode is a fresh workspace, not a dedicated sandbox
 - Fixed GitHub Actions pnpm setup to defer to `package.json#packageManager`, avoiding cross-platform CI failures from mismatched pinned versions
 - Added managed AGENTS.md bundles with optional uploaded `.agents` files plus `skills.sh` discovery and installation for bundle-based agent comparisons
+- Integrated project-scoped `skills.sh` management in the workbench, including search, install, update, and removal flows plus shared `./.agents` context for flat-agent review and sandbox runs
+- Fixed Windows `skills.sh` execution inside the Node server by routing `npx` calls through `cmd.exe` instead of direct `npx.cmd` spawning
 - Fixed legacy SQLite schema startup by migrating new experiment/run columns before creating indexes that depend on them
 - Restored environment-based provider configuration via `AI_GATEWAY_API_KEY` and `AGENT_BENCH_JUDGE_MODEL` fallbacks
 - Added a guided local runner flow in the Next.js workbench with explicit readiness states, blocker callouts, and next-step guidance

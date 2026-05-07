@@ -73,6 +73,7 @@ export interface RunInput {
 export interface RuntimeEvaluationRequest {
   runKey: string;
   experimentKey?: string | null;
+  workspaceRoot?: string;
   agentPath?: string;
   agentMarkdown?: string;
   agentRunnerCommand?: string;
@@ -104,10 +105,18 @@ export interface AgentSkillReference {
   origin: "bundled" | "skills.sh";
 }
 
+export interface InstalledSkillRecord {
+  name: string;
+  path: string;
+  scope: "project" | "global";
+  agents: string[];
+}
+
 export interface AgentSystemSummary {
   entryFile: string;
   bundleMode: "flat" | "bundle";
   bundlePath?: string;
+  sharedAgentsPath?: string;
   skillCount: number;
   assetFileCount: number;
   skills: AgentSkillReference[];
@@ -195,6 +204,7 @@ export interface WorkbenchSnapshot {
   runs: RunRecord[];
   benchmarks: BenchmarkSuiteRecord[];
   agents: AgentRecord[];
+  projectSkills: InstalledSkillRecord[];
   latestLogText: string;
 }
 

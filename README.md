@@ -104,6 +104,7 @@ pnpm exec agent-bench compare --left <run-key> --right <run-key>
 ## Full-Stack Surface
 
 - `/` renders the Test Lab shell and current workbench state.
+- `/api/skills` lists, installs, updates, and removes project-scoped `skills.sh` skills under `./.agents`.
 - `/api/workbench` returns the current dashboard snapshot.
 - `/api/skills/search` searches `skills.sh` through the official `skills` CLI.
 - `/api/agents/bundles` creates managed agent bundles under `./.agent-bench/agents`.
@@ -326,6 +327,7 @@ Important:
 - Agents without `Runner:` stay in review-only mode; agents with `Runner:` become sandbox-capable when paired with a sandboxed task.
 - Bundle agents can carry `.agents/skills/*/SKILL.md`, workflow files, lock files, and helper scripts so the benchmark compares more than one markdown file.
 - The Test Lab can clone an existing agent into a managed bundle, attach uploaded `.agents` files, and install additional skills discovered via `skills.sh`.
+- Project-scoped `skills.sh` installs now live under `./.agents` and are treated as a shared system layer for flat agents under `./agents`, so review and sandbox runs can compare more than a single markdown file.
 - Example runnable sandbox agents live under `./examples/sample-workspace/agents`.
 
 ## Defaults
@@ -349,6 +351,7 @@ Important:
 ## Troubleshooting
 
 - If the Next.js app fails to start after dependency changes, run `pnpm install` again. If the local Node version changed, run `pnpm rebuild better-sqlite3` before retrying.
+- If skills search or project skill management fails on Windows, retry after `pnpm install`; the app now invokes `skills.sh` through `cmd.exe` because direct `spawnSync("npx.cmd", ...)` is not reliable inside the Node server process.
 - Existing SQLite databases are migrated on startup. If startup reports a missing run column, stop duplicate `next dev` processes and restart so the latest schema migration can run once.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
 - Keep local agent definitions under `./agents`; the repo ignores that folder for day-to-day work.

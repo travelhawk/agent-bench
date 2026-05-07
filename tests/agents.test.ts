@@ -80,3 +80,28 @@ test("inspectAgentFile accepts a nested AGENTS.md bundle directory with attached
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("inspectAgentFile includes project .agents skills for flat workspace agents", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-agents-"));
+
+  try {
+    const agentPath = path.join(workspace, "agents", "sandbox", "coder.md");
+    const helperPath = path.join(workspace, "agents", "sandbox", "runner.js");
+    const sharedSkillPath = path.join(workspace, ".agents", "skills", "find-skills", "SKILL.md");
+    mkdirSync(path.dirname(agentPath), { recursive: true });
+    mkdirSync(path.dirname(helperPath), { recursive: true });
+    mkdirSync(path.dirname(sharedSkillPath), { recursive: true });
+    writeFileSync(agentPath, "# Shared Skill Agent\nRunner: node ./runner.js\n");
+    writeFileSync(helperPath, "console.log('runner');\n");
+    writeFileSync(sharedSkillPath, "# Find Skills\n");
+
+    const agent = inspectAgentFile(workspace, "./agents/sandbox/coder.md");
+
+    assert.equal(agent.system.bundleMode, "flat");
+    assert.equal(agent.system.sharedAgentsPath, ".agents");
+    assert.equal(agent.system.skillCount, 1);
+    assert.ok(agent.system.assetFileCount >= 2);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});

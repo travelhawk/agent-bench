@@ -272,3 +272,56 @@ test("runEvaluationInRuntime persists agent bundle files into artifacts for sand
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("runEvaluationInRuntime persists shared project .agents files for flat agents", async () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+
+  try {
+    const agentDir = path.join(workspace, "agents", "flat-agent");
+    const agentPath = path.join(agentDir, "agent.md");
+    const runnerScriptPath = path.join(agentDir, "runner.js");
+    const sharedSkillFilePath = path.join(workspace, ".agents", "skills", "find-skills", "SKILL.md");
+    const artifactsRoot = path.join(workspace, "artifacts");
+    const benchmarksDir = path.join(workspace, "benchmarks");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "repo-maintenance");
+
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(path.dirname(sharedSkillFilePath), { recursive: true });
+    mkdirSync(artifactsRoot, { recursive: true });
+    mkdirSync(benchmarksDir, { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "repo-maintenance"), { recursive: true });
+    writeFileSync(agentPath, "# Flat Agent\nRunner: node ./runner.js\n");
+    writeFileSync(runnerScriptPath, [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const target = path.join(process.env.AGENT_BENCH_WORKSPACE, 'Counter.js');",
+      "const next = fs.readFileSync(target, 'utf8').replace(/(next = current \\+ 1;)(\\r?\\n)  next = current \\+ 1;/, '$1$2  next = next + 1;');",
+      "fs.writeFileSync(target, next);"
+    ].join("\n"));
+    writeFileSync(sharedSkillFilePath, "# Find Skills\n");
+
+    await runEvaluationInRuntime({
+      runKey: "run-flat-shared-system",
+      workspaceRoot: workspace,
+      agentPath,
+      agentRunnerCommand: "node ./runner.js",
+      benchmarkKey: "repo-maintenance",
+      taskKey: "fix-react-bug",
+      artifactsRoot,
+      benchmarksDir,
+      benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
+    });
+
+    const summary = JSON.parse(readFileSync(path.join(artifactsRoot, "run-flat-shared-system", "summary.json"), "utf8")) as {
+      agentSystem?: { bundleMode?: string; sharedAgentsPath?: string | null; skillCount?: number };
+    };
+
+    assert.equal(summary.agentSystem?.bundleMode, "flat");
+    assert.equal(summary.agentSystem?.sharedAgentsPath, ".agents");
+    assert.equal(summary.agentSystem?.skillCount, 1);
+    assert.ok(existsSync(path.join(artifactsRoot, "run-flat-shared-system", "agent-system", "agent.md")));
+    assert.ok(existsSync(path.join(artifactsRoot, "run-flat-shared-system", "agent-system", ".agents", "skills", "find-skills", "SKILL.md")));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});

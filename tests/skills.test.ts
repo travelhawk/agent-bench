@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createManagedAgentBundle } from "../src/agents/bundles";
-import { parseSkillsSearchOutput } from "../src/agents/skills";
+import { parseInstalledSkillsOutput, parseSkillsSearchOutput } from "../src/agents/skills";
 
 test("parseSkillsSearchOutput extracts skills.sh search results", () => {
   const output = [
@@ -35,6 +35,28 @@ test("parseSkillsSearchOutput extracts skills.sh search results", () => {
       registryUrl: "https://skills.sh/github/awesome-copilot/typescript-mcp-server-generator",
       installs: 9600,
       title: "typescript-mcp-server-generator"
+    }
+  ]);
+});
+
+test("parseInstalledSkillsOutput extracts project-installed skills", () => {
+  const output = JSON.stringify([
+    {
+      name: "find-skills",
+      path: "C:\\repo\\.agents\\skills\\find-skills",
+      scope: "project",
+      agents: ["Codex"]
+    }
+  ]);
+
+  const results = parseInstalledSkillsOutput(output);
+
+  assert.deepEqual(results, [
+    {
+      name: "find-skills",
+      path: "C:\\repo\\.agents\\skills\\find-skills",
+      scope: "project",
+      agents: ["Codex"]
     }
   ]);
 });
