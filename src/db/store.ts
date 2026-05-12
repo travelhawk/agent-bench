@@ -11,11 +11,13 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
   db.prepare(`
     INSERT INTO runs (
       run_key, agent_name, agent_version, suite_name, status,
-      score, tests_score, llm_score, perf_score,
+      score, process_score, tests_score, llm_score, perf_score,
+      score_profile, score_confidence, failure_reason,
       latency_ms, cost_usd, duration_ms, artifacts_path, log_text
     ) VALUES (
-      @run_key, @agent_name, @agent_version, @suite_name, 'completed',
-      @score, @tests_score, @llm_score, @perf_score,
+      @run_key, @agent_name, @agent_version, @suite_name, @status,
+      @score, @process_score, @tests_score, @llm_score, @perf_score,
+      @score_profile, @score_confidence, @failure_reason,
       @latency_ms, @cost_usd, @duration_ms, @artifacts_path, @log_text
     )
   `).run({
@@ -23,10 +25,15 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
     agent_name: input.agentName,
     agent_version: input.agentVersion,
     suite_name: input.suiteName,
+    status: input.status,
     score: input.scores.total,
-    tests_score: input.scores.tests,
-    llm_score: input.scores.judge,
-    perf_score: input.scores.performance,
+    process_score: input.scores.process,
+    tests_score: input.scores.outcome,
+    llm_score: input.scores.review,
+    perf_score: input.scores.efficiency,
+    score_profile: input.scoreProfile,
+    score_confidence: input.scoreConfidence,
+    failure_reason: input.failureReason ?? null,
     latency_ms: input.latencyMs,
     cost_usd: input.costUsd,
     duration_ms: input.durationMs,
@@ -84,6 +91,11 @@ export function getDashboardSummary(db: Database.Database): DashboardSummary {
 }
 
 function mapRun(row: Record<string, unknown>): RunRecord {
+  const outcomeScore = Number(row.tests_score);
+  const processScore = Number(row.process_score ?? 0);
+  const reviewScore = Number(row.llm_score);
+  const efficiencyScore = Number(row.perf_score);
+
   return {
     id: Number(row.id),
     runKey: String(row.run_key),
@@ -92,9 +104,16 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     suiteName: String(row.suite_name),
     status: String(row.status) as RunRecord["status"],
     score: Number(row.score),
-    testsScore: Number(row.tests_score),
-    llmScore: Number(row.llm_score),
-    perfScore: Number(row.perf_score),
+    outcomeScore,
+    processScore,
+    reviewScore,
+    efficiencyScore,
+    testsScore: outcomeScore,
+    llmScore: reviewScore,
+    perfScore: efficiencyScore,
+    scoreProfile: String(row.score_profile ?? "hybrid") as RunRecord["scoreProfile"],
+    scoreConfidence: String(row.score_confidence ?? "low") as RunRecord["scoreConfidence"],
+    failureReason: row.failure_reason == null ? null : String(row.failure_reason),
     latencyMs: Number(row.latency_ms),
     costUsd: Number(row.cost_usd),
     durationMs: Number(row.duration_ms),

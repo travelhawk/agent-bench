@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
+            sandbox_provider: process
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+        env:
+          AGENT_BENCH_SANDBOX_PROVIDER: ${{ matrix.sandbox_provider }}
+
+      - name: Build app
+        run: pnpm run build
+
+      - name: Setup Chrome
+        if: matrix.os == 'ubuntu-latest'
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Run E2E tests
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm run test:e2e
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}

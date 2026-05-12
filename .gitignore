@@ -1,8 +1,12 @@
 node_modules/
 dist/
+.next/
+*.tsbuildinfo
 .agent-bench/
+/agents/
 npm-debug.log*
 .zencoder
 .zenflow
 .env.local
 .env
+next-env.d.ts

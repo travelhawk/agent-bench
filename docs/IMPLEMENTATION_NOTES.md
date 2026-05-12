@@ -11,13 +11,13 @@ Date: 2026-03-05
 
 ## Risks
 
-- Full sandboxed code execution is a large feature; this MVP currently simulates run execution while keeping the persistence/API model ready for real sandbox integration.
+- The provider story is materially stronger now, but browser-capable isolation is still uneven: Docker covers non-macOS hosts better, while browser tasks may still need host-process execution.
 - LLM-judge integration requires provider keys and a stable API contract; this MVP keeps weighted scoring and a replaceable scoring pipeline.
 - Diff viewer and full run explorer are broader than a single-pass MVP; current implementation focuses on dashboard + run history/compare commands as the first vertical slice.
 
 ## Open Questions
 
-- Which sandbox runtime should be the default (Docker, Firecracker, or Node VM wrappers)?
+- Should browser fixtures move to a dedicated browser-capable container image, or stay on explicit host-process overrides?
 - Which LLM provider and rubric schema should be canonical for judge scoring?
 - What artifact retention policy is expected by default for local dev machines?
 
@@ -45,7 +45,7 @@ Option B was chosen for minimal complexity while still meeting PRD dashboard vis
 ## Diagram (Text)
 
 User -> `agent-bench` CLI (Commander)
-CLI -> Runner (simulate now, sandbox later)
+CLI -> Runner (sandbox when configured, review-only otherwise)
 Runner -> Scoring Engine (60/30/10 weighted)
 Runner -> Artifact Writer (`.agent-bench/artifacts/run-*`)
 CLI -> SQLite Store (`.agent-bench/data.db`)
@@ -99,10 +99,15 @@ HTTP API:
 
 ## Security Notes
 
-- Current implementation does not execute arbitrary agent code in-process; runner is simulated.
-- Future sandbox integration should isolate filesystem/network per run and enforce resource limits.
+- The current implementation does not execute arbitrary agent code in-process; sandboxed runs launch external commands against a copied task fixture.
+- On macOS, sandboxed runs use `sandbox-exec` to limit writes to the task workspace and run artifacts while denying network unless a task explicitly requires it.
+- On hosts without macOS seatbelt, sandboxed runs now prefer Docker and run with a read-only rootfs plus explicit writable mounts for the task workspace and artifacts.
+- Browser fixtures can opt into `Provider: process` when a host browser is required; that tradeoff is explicit in the task metadata rather than hidden in fallback code.
+- Windows execution now uses `where` for binary discovery, keeps Docker container commands on a POSIX shell even when the host is Windows, and uses explicit relative `node --test tests/*.test.js` verifier paths that stay stable across the sandbox shell contract.
+- `auto` sandbox selection now requires both a ready Docker daemon and a locally available configured image before switching away from `process` on non-macOS hosts; explicit `Provider: docker` still opts into container execution directly.
+- Runner environments are scrubbed before launch; the sandbox only receives a small safe host env plus explicit `AGENT_BENCH_*` variables.
 
 ## Decisions & Assumptions
 
-- Assumption: first deliverable should be a production-like scaffold that is runnable and extensible rather than complete sandbox/LLM integration.
-- Decision: prioritize PRD dashboard parity and persistence/scoring contract as stable foundation.
+- Assumption: the first real execution contract should be simple and inspectable, so task fixtures + runner commands + verify commands were chosen over framework-specific agent adapters.
+- Decision: prioritize local-first reproducibility and honest reporting over pretending every benchmark task is already executable end-to-end.
