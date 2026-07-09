@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added lines-of-code diff metrics per run (files changed, insertions, deletions) via a host-side git baseline commit and post-run diff, exposed in the CLI, summary artifacts, and workbench UI
+- Added structured test pass/fail counts for `node --test`-based verify commands, parsed from TAP summary lines, with an explicit "unavailable" state for tasks using custom verify scripts
+- Added an independent judge-scored code-quality metric (`qualityScore`), separate from the existing task-fit review score, backed by real diff evidence in the judge prompt and a low-confidence rules-based fallback when no gateway key is configured
+- Added an opt-in agent-under-test token usage/cost self-report contract (`result/usage.json`) so runners can report their own LLM token usage and cost, tracked separately from judge cost
+- Removed the dead legacy Express-era static UI assets (`src/ui/public`, `src/ui/styles`) and the now-unused Tailwind config/dependency, since the Next.js app is the only live UI surface
 - Replaced the default seeded suites with a faster benchmark set built around `repo-maintenance`, `product-builds`, and `creative-frontend`
 - Added executable fixtures for `security-audit-report`, `release-notes-cli`, `simple-feedback-web-app`, and `landing-page-refresh`
 - Restored benchmark metadata fields for reliability, time budget, cost budget, and default trials

@@ -55,6 +55,28 @@ test("judgeWithVercelAiSdk fails on empty model text", async () => {
   );
 });
 
+test("judgeWithVercelAiSdk parses qualityScore when the model includes it", async () => {
+  const mockGenerateText = (async () => ({
+    text: "{\"score\": 7.1, \"qualityScore\": 8.9, \"reason\": \"Solid diff\"}",
+    usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 }
+  })) as unknown as typeof import("ai").generateText;
+
+  const result = await judgeWithVercelAiSdk({
+    apiKey: "test-key",
+    model: "openai/gpt-4.1-mini",
+    benchmarkKey: "creative-frontend",
+    taskKey: "landing-page-refresh",
+    agentPath: "/tmp/agent.md",
+    agentName: "agent",
+    agentVersion: "v1",
+    agentTextPreview: "agent markdown",
+    generateTextFn: mockGenerateText
+  });
+
+  assert.equal(result.score, 7.1);
+  assert.equal(result.qualityScore, 8.9);
+});
+
 test("resolveGatewayApiKey falls back to AI_GATEWAY_API_KEY", () => {
   const previousKey = process.env.AI_GATEWAY_API_KEY;
 

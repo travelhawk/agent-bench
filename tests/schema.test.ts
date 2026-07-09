@@ -44,6 +44,15 @@ test("initializeSchema migrates legacy run tables before creating new run indexe
     assert.ok(columns.some((column) => column.name === "setup_key"));
     assert.ok(indexes.some((index) => index.name === "idx_runs_experiment_key"));
     assert.ok(indexes.some((index) => index.name === "idx_runs_setup_key"));
+
+    const newColumnNames = [
+      "diff_available", "diff_files_changed", "diff_insertions", "diff_deletions",
+      "verifier_tests_available", "verifier_tests_total", "verifier_tests_passed",
+      "quality_score", "agent_usage_available", "agent_input_tokens", "agent_output_tokens", "agent_cost_usd"
+    ];
+    newColumnNames.forEach((name) => {
+      assert.ok(columns.some((column) => column.name === name), `expected migrated column ${name}`);
+    });
   } finally {
     db.close();
     rmSync(workspace, { recursive: true, force: true });

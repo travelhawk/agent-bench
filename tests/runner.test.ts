@@ -93,6 +93,9 @@ test("runEvaluationInRuntime can execute a sandboxed runner against a task fixtu
       executionMode?: string;
       sandbox?: { provider?: string; runner?: { cwd?: string }; verifier?: { exitCode?: number } };
       scores?: { tests?: number };
+      diff?: { available?: boolean; filesChanged?: number; insertions?: number };
+      testMetrics?: { available?: boolean; total?: number; passed?: number };
+      agentUsage?: { available?: boolean };
     };
 
     assert.equal(result.runKey, "run-sandbox");
@@ -102,6 +105,14 @@ test("runEvaluationInRuntime can execute a sandboxed runner against a task fixtu
     assert.equal(summary.sandbox?.verifier?.exitCode, 0);
     assert.ok((summary.scores?.tests ?? 0) >= 9.5);
     assert.ok(existsSync(path.join(runArtifactsDir, "workspace", "Counter.js")));
+    assert.equal(summary.diff?.available, true);
+    assert.ok((summary.diff?.filesChanged ?? 0) >= 1);
+    assert.equal(summary.testMetrics?.available, true);
+    assert.ok((summary.testMetrics?.passed ?? 0) >= 1);
+    assert.equal(summary.agentUsage?.available, false);
+    assert.equal(result.diffAvailable, true);
+    assert.equal(result.verifierTestsAvailable, true);
+    assert.equal(result.agentUsageAvailable, false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -211,6 +222,8 @@ test("runEvaluationInRuntime can execute the security audit fixture", async () =
       executionMode?: string;
       sandbox?: { verifier?: { exitCode?: number } };
       scores?: { tests?: number };
+      diff?: { available?: boolean; filesChanged?: number };
+      testMetrics?: { available?: boolean };
     };
 
     assert.equal(result.runKey, "run-security-audit");
@@ -218,6 +231,10 @@ test("runEvaluationInRuntime can execute the security audit fixture", async () =
     assert.equal(summary.sandbox?.verifier?.exitCode, 0);
     assert.ok((summary.scores?.tests ?? 0) >= 9.5);
     assert.ok(existsSync(path.join(runArtifactsDir, "workspace", "audit-findings.json")));
+    assert.equal(summary.diff?.available, true);
+    assert.ok((summary.diff?.filesChanged ?? 0) >= 1);
+    assert.equal(summary.testMetrics?.available, false);
+    assert.equal(result.verifierTestsAvailable, false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -268,6 +285,52 @@ test("runEvaluationInRuntime persists agent bundle files into artifacts for sand
     assert.equal(summary.agentSystem?.skillCount, 1);
     assert.ok(existsSync(path.join(artifactsRoot, "run-agent-bundle", "agent-system", "AGENTS.md")));
     assert.ok(existsSync(path.join(artifactsRoot, "run-agent-bundle", "agent-system", ".agents", "skills", "patch-guide", "SKILL.md")));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runEvaluationInRuntime reads a runner's self-reported token usage from result/usage.json", async () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+
+  try {
+    const agentPath = path.join(workspace, "agents", "sandbox", "agent.md");
+    const runnerScriptPath = path.join(path.dirname(agentPath), "runner.js");
+    const artifactsRoot = path.join(workspace, "artifacts");
+    const benchmarksDir = path.join(workspace, "benchmarks");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "repo-maintenance");
+
+    mkdirSync(path.dirname(agentPath), { recursive: true });
+    mkdirSync(artifactsRoot, { recursive: true });
+    mkdirSync(benchmarksDir, { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "repo-maintenance"), { recursive: true });
+    writeFileSync(agentPath, "# Agent\nRunner: node ./runner.js\n");
+    writeFileSync(runnerScriptPath, [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const workspace = process.env.AGENT_BENCH_WORKSPACE;",
+      "const target = path.join(workspace, 'Counter.js');",
+      "const next = fs.readFileSync(target, 'utf8').replace(/(next = current \\+ 1;)(\\r?\\n)  next = current \\+ 1;/, '$1$2  next = next + 1;');",
+      "fs.writeFileSync(target, next);",
+      "fs.mkdirSync(path.join(workspace, 'result'), { recursive: true });",
+      "fs.writeFileSync(path.join(workspace, 'result', 'usage.json'), JSON.stringify({ inputTokens: 500, outputTokens: 150, costUsd: 0.0042 }));"
+    ].join("\n"));
+
+    const result = await runEvaluationInRuntime({
+      runKey: "run-agent-usage",
+      agentPath,
+      agentRunnerCommand: "node ./runner.js",
+      benchmarkKey: "repo-maintenance",
+      taskKey: "fix-react-bug",
+      artifactsRoot,
+      benchmarksDir,
+      benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
+    });
+
+    assert.equal(result.agentUsageAvailable, true);
+    assert.equal(result.agentInputTokens, 500);
+    assert.equal(result.agentOutputTokens, 150);
+    assert.equal(result.agentCostUsd, 0.0042);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

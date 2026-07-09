@@ -81,6 +81,14 @@ program
     console.log(`Run ${inserted.runKey} completed with score ${inserted.score}`);
     // eslint-disable-next-line no-console
     console.log(`Duration: ${(inserted.durationMs / 1000).toFixed(1)}s | Cost: $${inserted.costUsd.toFixed(2)}`);
+    // eslint-disable-next-line no-console
+    console.log(`Diff: ${inserted.diffAvailable ? `${inserted.diffFilesChanged} files (+${inserted.diffInsertions}/-${inserted.diffDeletions})` : "n/a"}`);
+    // eslint-disable-next-line no-console
+    console.log(`Tests: ${inserted.verifierTestsAvailable ? `${inserted.verifierTestsPassed}/${inserted.verifierTestsTotal} passed` : "n/a"}`);
+    // eslint-disable-next-line no-console
+    console.log(`Quality: ${inserted.qualityScore != null ? inserted.qualityScore.toFixed(2) : "n/a"}`);
+    // eslint-disable-next-line no-console
+    console.log(`Agent usage: ${inserted.agentUsageAvailable ? `${inserted.agentInputTokens}in/${inserted.agentOutputTokens}out, $${inserted.agentCostUsd.toFixed(4)}` : "n/a (self-report not implemented by this runner)"}`);
 
     if (bestBefore !== null && inserted.score < bestBefore) {
       // eslint-disable-next-line no-console
@@ -100,8 +108,11 @@ program
     const runs = listRuns(db, Number.isFinite(limit) ? limit : 10);
 
     runs.forEach((run) => {
+      const diffLabel = run.diffAvailable ? `${run.diffFilesChanged}f` : "n/a";
+      const testsLabel = run.verifierTestsAvailable ? `${run.verifierTestsPassed}/${run.verifierTestsTotal}` : "n/a";
+      const qualityLabel = run.qualityScore ?? "n/a";
       // eslint-disable-next-line no-console
-      console.log(`${run.runKey} | ${run.agentName} | score=${run.score} | ${run.durationMs}ms | $${run.costUsd.toFixed(2)}`);
+      console.log(`${run.runKey} | ${run.agentName} | score=${run.score} | ${run.durationMs}ms | $${run.costUsd.toFixed(2)} | diff=${diffLabel} | tests=${testsLabel} | quality=${qualityLabel}`);
     });
   });
 
@@ -128,6 +139,21 @@ program
     console.log(`${opts.left} (${left.score}) -> ${opts.right} (${right.score})`);
     // eslint-disable-next-line no-console
     console.log(`Performance change: ${delta > 0 ? "+" : ""}${delta} (${direction})`);
+
+    if (left.diffAvailable && right.diffAvailable) {
+      const filesDelta = right.diffFilesChanged - left.diffFilesChanged;
+      // eslint-disable-next-line no-console
+      console.log(`Diff size change: ${filesDelta > 0 ? "+" : ""}${filesDelta} files (${left.diffFilesChanged} -> ${right.diffFilesChanged})`);
+    }
+    if (left.verifierTestsAvailable && right.verifierTestsAvailable) {
+      // eslint-disable-next-line no-console
+      console.log(`Test pass rate: ${left.verifierTestsPassed}/${left.verifierTestsTotal} -> ${right.verifierTestsPassed}/${right.verifierTestsTotal}`);
+    }
+    if (left.qualityScore != null && right.qualityScore != null) {
+      const qualityDelta = Number((right.qualityScore - left.qualityScore).toFixed(2));
+      // eslint-disable-next-line no-console
+      console.log(`Quality change: ${qualityDelta > 0 ? "+" : ""}${qualityDelta} (${left.qualityScore} -> ${right.qualityScore})`);
+    }
   });
 
 program

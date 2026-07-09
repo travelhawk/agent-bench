@@ -207,6 +207,15 @@ Current runs now come in two honest modes:
 
 This means the workbench now performs real sandboxed execution for the default seeded tasks, with the landing-page task intentionally retaining a human-review component on top of a structural verifier.
 
+### Metrics per run
+
+Every run now also carries automatically-derived and judge-scored metrics, all with an explicit "unavailable" state rather than a guessed value:
+
+- **Diff**: files changed / insertions / deletions, computed by git-diffing the sandboxed workspace before and after the agent runs. Requires `git` on the host running `agent-bench` (not inside the sandbox); degrades to unavailable if git is missing.
+- **Tests**: pass/fail/total counts, parsed from `node --test` TAP output when a task's `Verify Command` invokes it. Tasks that use a custom verify script report "unavailable" rather than a guessed count.
+- **Quality**: an LLM-judge-scored 0–10 rating of the produced code's readability, style, and error handling, kept separate from the existing task-fit review score so the two are independently comparable. Falls back to a clearly-labeled low-confidence heuristic when no `AI_GATEWAY_API_KEY` is configured.
+- **Agent usage**: the agent-under-test's own token usage/cost, self-reported by the runner writing `result/usage.json` (`{"inputTokens": ..., "outputTokens": ..., "costUsd": ...}` — `costUsd` is optional) into `$AGENT_BENCH_WORKSPACE`. Most runners don't implement this yet, so it reports "unavailable" by default.
+
 ## Benchmarks
 
 Benchmarks live in markdown files:
@@ -347,6 +356,8 @@ Important:
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
 - Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
+- Test-count parsing only understands `node --test` TAP output today; tasks with custom verify scripts report tests as unavailable instead of a guessed count.
+- Agent-under-test token usage is opt-in and voluntary (`result/usage.json`); `agent-bench` cannot observe LLM calls made from inside an opaque runner process or container.
 
 ## Troubleshooting
 

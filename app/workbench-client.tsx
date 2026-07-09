@@ -29,6 +29,10 @@ interface RunSummaryView {
   evidence?: { matchedSignals?: string[]; missingSignals?: string[]; artifacts?: string[] };
   recommendedNextActions?: string[];
   taskContract?: { whyThisTask?: string; inputs?: string; deliverableFormat?: string; successChecks?: string[]; failureModes?: string[] };
+  diff?: { available?: boolean; filesChanged?: number; insertions?: number; deletions?: number };
+  testMetrics?: { available?: boolean; total?: number; passed?: number; failed?: number };
+  qualityScore?: number | null;
+  agentUsage?: { available?: boolean; inputTokens?: number; outputTokens?: number; costUsd?: number | null };
 }
 
 interface StatusMessage { tone: AsyncTone; message: string; }
@@ -126,6 +130,7 @@ function RunCard({ run, busyAction, onOpen, onJson, onDelete }: { run: RunRecord
       <div className="metric-strip">
         <span>Outcome {run.outcomeScore.toFixed(2)}</span><span>Process {run.processScore.toFixed(2)}</span>
         <span>Review {run.reviewScore.toFixed(2)}</span><span>Efficiency {run.efficiencyScore.toFixed(2)}</span>
+        <span>Quality {run.qualityScore != null ? run.qualityScore.toFixed(2) : "n/a"}</span>
       </div>
       {run.failureReason && <div className="callout callout-error">{run.failureReason}</div>}
       <div className="action-row">
@@ -600,6 +605,8 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                         <div className="detail-cell">Latency <strong>{Number(detailSummary?.latencyMs ?? detail.run.latencyMs)}ms</strong></div><div className="detail-cell">Cost <strong>{Number(detailSummary?.costUsd ?? detail.run.costUsd).toFixed(4)}</strong></div>
                         <div className="detail-cell">Execution <strong>{detailSummary?.executionMode ?? "review-only"}</strong></div><div className="detail-cell">Sandbox <strong>{detailSummary?.sandbox?.provider ?? "n/a"}</strong></div>
                         <div className="detail-cell">Network <strong>{detailSummary?.sandbox?.networkAccess ?? "n/a"}</strong></div><div className="detail-cell">Review mode <strong>{detailSummary?.reviewMode ?? "unknown"}</strong></div>
+                        <div className="detail-cell">Diff <strong>{detailSummary?.diff?.available ? `${detailSummary.diff.filesChanged} files (+${detailSummary.diff.insertions}/-${detailSummary.diff.deletions})` : "n/a"}</strong></div><div className="detail-cell">Tests <strong>{detailSummary?.testMetrics?.available ? `${detailSummary.testMetrics.passed}/${detailSummary.testMetrics.total}` : "n/a"}</strong></div>
+                        <div className="detail-cell">Quality <strong>{detailSummary?.qualityScore != null ? detailSummary.qualityScore.toFixed(2) : "n/a"}</strong></div><div className="detail-cell">Agent usage <strong>{detailSummary?.agentUsage?.available ? `${detailSummary.agentUsage.inputTokens}in/${detailSummary.agentUsage.outputTokens}out` : "n/a"}</strong></div>
                       </div>
                       {detailSummary?.agentSystem ? <div className="detail-stack"><strong>Agent system</strong><span>{detailSummary.agentSystem.bundleMode === "bundle" ? `Bundle with ${detailSummary.agentSystem.skillCount ?? 0} skills and ${detailSummary.agentSystem.assetFileCount ?? 0} asset files` : detailSummary.agentSystem.sharedAgentsPath ? `Flat agent plus shared .agents with ${detailSummary.agentSystem.skillCount ?? 0} skills and ${detailSummary.agentSystem.assetFileCount ?? 0} asset files` : "Single-file agent definition"}</span>{detailSummary.agentSystem.skills?.length ? <span>{detailSummary.agentSystem.skills.map((skill) => skill.installSpec).join(" / ")}</span> : null}</div> : null}
                       {detailSummary?.objectiveChecks && <div className="detail-stack"><strong>Objective checks</strong><span>{detailSummary.objectiveChecks.passed ?? 0}/{detailSummary.objectiveChecks.available ?? 0}{detailSummary.objectiveChecks.deterministic ? " deterministic" : " advisory"}</span>{detailSummary.objectiveChecks.items?.length ? <span>{detailSummary.objectiveChecks.items.join(" / ")}</span> : null}</div>}
