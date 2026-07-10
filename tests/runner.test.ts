@@ -290,6 +290,70 @@ test("runEvaluationInRuntime persists agent bundle files into artifacts for sand
   }
 });
 
+test("runEvaluationInRuntime grades the outcome by verifier test-pass ratio for partial passes", async () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+
+  try {
+    const agentPath = path.join(workspace, "agents", "sandbox", "agent.md");
+    const runnerScriptPath = path.join(path.dirname(agentPath), "runner.js");
+    const artifactsRoot = path.join(workspace, "artifacts");
+    const benchmarksDir = path.join(workspace, "benchmarks");
+    const sourceBenchmarksDir = path.resolve(process.cwd(), "benchmarks", "product-builds");
+
+    mkdirSync(path.dirname(agentPath), { recursive: true });
+    mkdirSync(artifactsRoot, { recursive: true });
+    mkdirSync(benchmarksDir, { recursive: true });
+    cpSync(sourceBenchmarksDir, path.join(benchmarksDir, "product-builds"), { recursive: true });
+    writeFileSync(agentPath, "# Agent\nRunner: node ./runner.js\n");
+
+    // Implement groupChanges correctly but leave renderReleaseNotes as a stub, so
+    // only 1 of the 3 seeded tests passes.
+    const partialImpl = [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const ORDER = ['added','fixed','docs','removed'];",
+      "const LABELS = { added:'Added', fixed:'Fixed', docs:'Docs', removed:'Removed' };",
+      "function groupChanges(changes){ const g={}; for (const c of changes||[]){ if(!ORDER.includes(c.type)) continue; (g[c.type]=g[c.type]||[]).push(c.text);} for(const k of Object.keys(g)) g[k].sort(); return g; }",
+      "function renderReleaseNotes(data){ void data; return 'TODO'; }",
+      "function main(argv=process.argv.slice(2)){ const p=argv[0]; if(!p){ console.error('usage'); return 1;} const payload=JSON.parse(fs.readFileSync(path.resolve(process.cwd(),p),'utf8')); process.stdout.write(renderReleaseNotes(payload)+'\\n'); return 0; }",
+      "if(require.main===module){ process.exitCode=main(); }",
+      "module.exports={ORDER,LABELS,groupChanges,renderReleaseNotes,main};"
+    ].join("\n");
+    writeFileSync(runnerScriptPath, [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      `fs.writeFileSync(path.join(process.env.AGENT_BENCH_WORKSPACE, 'src', 'index.js'), ${JSON.stringify(partialImpl)});`
+    ].join("\n"));
+
+    const result = await runEvaluationInRuntime({
+      runKey: "run-partial-grade",
+      agentPath,
+      agentRunnerCommand: "node ./runner.js",
+      benchmarkKey: "product-builds",
+      taskKey: "release-notes-cli",
+      artifactsRoot,
+      benchmarksDir,
+      benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
+    });
+
+    const summary = JSON.parse(readFileSync(path.join(artifactsRoot, "run-partial-grade", "summary.json"), "utf8")) as {
+      testMetrics?: { available?: boolean; total?: number; passed?: number };
+      scores?: { outcome?: number };
+      objectivePass?: boolean;
+    };
+
+    assert.equal(result.verifierTestsAvailable, true);
+    assert.equal(result.verifierTestsTotal, 3);
+    assert.equal(result.verifierTestsPassed, 1);
+    assert.equal(summary.testMetrics?.passed, 1);
+    // Runner exited 0 (+4.5) plus a graded 1/3 of the 5.5 verifier weight ≈ 6.33.
+    assert.ok((summary.scores?.outcome ?? 0) > 5.5 && (summary.scores?.outcome ?? 0) < 8, `graded outcome was ${summary.scores?.outcome}`);
+    assert.equal(summary.objectivePass, false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("runEvaluationInRuntime reads a runner's self-reported token usage from result/usage.json", async () => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
 

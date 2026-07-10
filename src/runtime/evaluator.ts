@@ -23,12 +23,10 @@ const DEFAULT_COST_PER_1K_TOKENS_USD = 0.003;
 const UNAVAILABLE_TEST_METRICS: TestRunSummary = { available: false, total: 0, passed: 0, failed: 0 };
 const UNAVAILABLE_AGENT_USAGE: AgentUsageReport = { available: false, inputTokens: 0, outputTokens: 0, costUsd: null };
 const DEFAULT_SYSTEM_PROMPT = [
-  "You are AgentBenchReview, a strict evaluator for agent specifications.",
-  "Assess whether the provided agent instructions appear capable of completing the requested benchmark task.",
-  "Score task fit, workflow clarity, verification steps, and operational safety.",
-  "Additionally rate the quality of any code changes shown in the Workspace Diff section on readability, idiomatic style, and error handling, from 0 to 10, as qualityScore.",
-  "If no diff evidence is provided, give a best-effort qualityScore estimate from the agent specification and note the lack of evidence in the reason.",
-  "Do not invent execution results, tests, or artifacts that are not present.",
+  "You are AgentBenchReview, a strict evaluator of an agent's work on a benchmark task.",
+  "Ground every judgement in concrete evidence: the task's Success Checks and Failure Modes, the Sandbox Execution outcome (including how many verifier tests passed), and the Workspace Diff. Do not reward a specification whose run failed its checks, and do not invent results, tests, or artifacts that are not present.",
+  "score (0-10): how well the observed result satisfies the task's Success Checks while avoiding its Failure Modes. If the run passed all checks, score high; if verifier tests partially passed, scale accordingly; if it failed, score low even when the instructions read well.",
+  "qualityScore (0-10): rate the produced code changes in the Workspace Diff on readability, idiomatic style, error handling, and absence of hacks. If no diff evidence is provided, give a best-effort estimate from the specification and say so in the reason.",
   "Return compact JSON only in this exact format:",
   "{\"score\": number, \"qualityScore\": number, \"reason\": string}"
 ].join(" ");
@@ -460,14 +458,32 @@ function summarizeSandboxExecution(
     objectiveItems.push("runner exit code non-zero");
   }
 
+  // Parse the test summary up front so the outcome score can be graded by how
+  // many tests passed, not just whether the suite exited zero. This is what lets
+  // two partially-passing workflows be ranked against each other.
+  const testMetrics = verifier && verifyCommand && isNodeTestRunnerCommand(verifyCommand)
+    ? parseNodeTestTapSummary(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
+    : UNAVAILABLE_TEST_METRICS;
+  const gradedTests = testMetrics.available && testMetrics.total > 0;
+  const testRatio = gradedTests ? testMetrics.passed / testMetrics.total : 0;
+
   if (verifier) {
     availableChecks += 1;
     if (verifier.exitCode === 0) {
       outcomeScore += 5.5;
       processScore += 2.5;
       passedChecks += 1;
-      matchedSignals.push(`verify command passed: ${verifier.command}`);
+      matchedSignals.push(gradedTests
+        ? `verify command passed: ${testMetrics.passed}/${testMetrics.total} tests`
+        : `verify command passed: ${verifier.command}`);
       objectiveItems.push(`verifier passed: ${verifier.command}`);
+    } else if (gradedTests && testMetrics.passed > 0) {
+      // Partial credit: the suite failed overall but some tests passed.
+      outcomeScore += 5.5 * testRatio;
+      processScore += 2.5 * testRatio;
+      matchedSignals.push(`verify partial: ${testMetrics.passed}/${testMetrics.total} tests passed`);
+      missingSignals.push(`${testMetrics.failed} of ${testMetrics.total} verifier tests still failing`);
+      objectiveItems.push(`verifier partial: ${testMetrics.passed}/${testMetrics.total} tests`);
     } else {
       missingSignals.push(verifier.timedOut ? "verify command timed out" : `verify command failed: ${verifier.command}`);
       objectiveItems.push(`verifier failed: ${verifier.command}`);
@@ -484,17 +500,17 @@ function summarizeSandboxExecution(
     matchedSignals.push("runner produced execution logs");
   }
 
-  const reason = verifier
-    ? verifier.exitCode === 0
-      ? "Sandbox execution and verification both completed successfully."
-      : "Sandbox execution finished, but verification failed."
-    : runner.exitCode === 0
+  const reason = !verifier
+    ? runner.exitCode === 0
       ? "Sandbox execution completed without a separate verification command."
-      : "Sandbox execution failed before verification could pass.";
-
-  const testMetrics = verifier && verifyCommand && isNodeTestRunnerCommand(verifyCommand)
-    ? parseNodeTestTapSummary(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
-    : UNAVAILABLE_TEST_METRICS;
+      : "Sandbox execution failed before verification could pass."
+    : verifier.exitCode === 0
+      ? gradedTests
+        ? `Sandbox execution and verification both passed (${testMetrics.passed}/${testMetrics.total} tests).`
+        : "Sandbox execution and verification both completed successfully."
+      : gradedTests && testMetrics.passed > 0
+        ? `Sandbox execution finished; ${testMetrics.passed}/${testMetrics.total} verifier tests passed.`
+        : "Sandbox execution finished, but verification failed.";
 
   return {
     outcomeScore: clampScore(outcomeScore),
@@ -1015,6 +1031,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       outcomeScore: sandbox.outcomeScore,
       processScore: sandbox.processScore,
       objectiveChecks: sandbox.objectiveChecks,
+      testMetrics: sandbox.testMetrics,
+      diff: sandbox.diff,
       reason: sandbox.reason,
       runner: sandbox.runner
         ? {

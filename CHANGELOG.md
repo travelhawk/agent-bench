@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed a corrupted `release-notes-cli` fixture: `tests/cli.test.js` carried a stray patch artifact (`*** Add File: ...`) that made the file unparseable, so that task's verifier could never pass for any agent
+- Graded the sandbox outcome score by verifier test-pass ratio (partial credit) instead of binary pass/fail, so two partially-passing workflows are ranked by how much actually works; the deterministic objective pass/fail stays strict (all-or-nothing)
+- Sharpened the LLM-judge contract to ground `score` in the task's success checks / failure modes and the observed verifier test-pass count, and to rate `qualityScore` from the workspace diff; the parsed test metrics and diff summary are now included in the judge's evidence context
+- Added a regression test asserting graded partial-pass outcome (1/3 tests → outcome ≈ 6.3, objectivePass false)
+- Added `test-results/` and `playwright-report/` to `.gitignore`
+
 - Added lines-of-code diff metrics per run (files changed, insertions, deletions) via a host-side git baseline commit and post-run diff, exposed in the CLI, summary artifacts, and workbench UI
 - Added structured test pass/fail counts for `node --test`-based verify commands, parsed from TAP summary lines, with an explicit "unavailable" state for tasks using custom verify scripts
 - Added an independent judge-scored code-quality metric (`qualityScore`), separate from the existing task-fit review score, backed by real diff evidence in the judge prompt and a low-confidence rules-based fallback when no gateway key is configured

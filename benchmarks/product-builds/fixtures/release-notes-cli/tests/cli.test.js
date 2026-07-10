@@ -58,10 +58,3 @@ test("cli prints release notes for the seeded fixture", () => {
   assert.match(result.stdout, /## Fixed/);
 });
 
-*** Add File: D:\DevProjects\private\agent-bench\benchmarks\product-builds\fixtures\simple-feedback-web-app\package.json
-{
-  "name": "simple-feedback-web-app-fixture",
-  "private": true,
-  "type": "commonjs"
-}
-
