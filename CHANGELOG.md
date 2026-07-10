@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added an opt-in judge panel (`AGENT_BENCH_JUDGE_SAMPLES`>1): several independent judge passes with distinct reviewer lenses, aggregated by median score/qualityScore to reduce single-judge bias/variance; default 1 keeps the previous single-pass behavior and the cache is keyed per judge mode
+- Added an opt-in multimodal screenshot judge (`AGENT_BENCH_JUDGE_SCREENSHOT`): renders a visual task's `index.html` with Playwright and attaches it as image evidence so the judge can rate visual quality (guarded/dynamic import; falls back to text-only if unavailable). Optional `AGENT_BENCH_CHROMIUM_PATH` to pin the browser binary
 - Generalized graded scoring to custom (non-`node --test`) verifiers: a verify script may print `AGENT_BENCH_CHECKS: <passed>/<total>` and the outcome is graded by that ratio. Rewrote the `security-audit-report` and `landing-page-refresh` verifiers to emit per-check counts, so those tasks now discriminate partially-correct work instead of scoring binary
 - Fixed a corrupted `release-notes-cli` fixture: `tests/cli.test.js` carried a stray patch artifact (`*** Add File: ...`) that made the file unparseable, so that task's verifier could never pass for any agent
 - Graded the sandbox outcome score by verifier test-pass ratio (partial credit) instead of binary pass/fail, so two partially-passing workflows are ranked by how much actually works; the deterministic objective pass/fail stays strict (all-or-nothing)

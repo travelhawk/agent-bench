@@ -130,6 +130,14 @@ Without a key, `agent-bench` still works using deterministic rules-based review 
 That is acceptable for low-cost smoke guidance, but it should not be treated as a strong AI-capability measurement on subjective or review-only tasks.
 For benchmark-grade comparisons, prefer fixture-backed tasks with executable verifiers and treat the judge as secondary.
 
+### Judge robustness (opt-in)
+
+To harden the LLM review beyond a single pass (all require `AI_GATEWAY_API_KEY`):
+
+- `AGENT_BENCH_JUDGE_SAMPLES` (default `1`) — set `>1` to run a **judge panel**: several independent passes with distinct reviewer lenses (correctness, quality, deliverable-fit, adversarial), aggregated by **median** score/qualityScore to reduce single-judge bias and variance. The anchor pass stays at temperature 0; the rest use a little temperature so the lenses diverge. Cached per judge mode.
+- `AGENT_BENCH_JUDGE_SCREENSHOT` (default `false`) — for visual/frontend tasks, render the produced `index.html` with Playwright and attach it as **multimodal evidence** so the judge can rate visual quality, not just the HTML/CSS text. Needs Playwright and a multimodal-capable judge model; falls back silently to text-only if a screenshot can't be produced.
+- `AGENT_BENCH_CHROMIUM_PATH` — optional explicit Chromium binary for the screenshot judge (otherwise Playwright's bundled build is used).
+
 Sandboxed runners also receive:
 
 - `AGENT_BENCH_PROVIDER_API_KEY` when you launch a run with a provider key

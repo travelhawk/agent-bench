@@ -17,6 +17,7 @@ import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
 import { computeWorkspaceGitDiffStats, initWorkspaceGitBaseline } from "./git-diff";
 import { isNodeTestRunnerCommand, parseNodeTestTapSummary, parseVerifierChecksMarker, TestRunSummary } from "./test-summary";
 import { AgentUsageReport, readAgentUsageReport } from "./agent-usage";
+import { judgeScreenshotEnabled, renderWorkspaceScreenshot } from "./screenshot";
 
 const DEFAULT_MODEL = "openai/gpt-4.1-mini";
 const DEFAULT_COST_PER_1K_TOKENS_USD = 0.003;
@@ -182,6 +183,9 @@ export async function judgeWithVercelAiSdk(input: {
   agentVersion: string;
   agentTextPreview: string;
   generateTextFn?: typeof generateText;
+  temperature?: number;
+  perspective?: string;
+  imagePngPath?: string;
 }): Promise<JudgeResult> {
   const prompt = [
     `Benchmark: ${input.benchmarkKey}`,
@@ -194,19 +198,36 @@ export async function judgeWithVercelAiSdk(input: {
     `Evaluation Context:\n${input.agentTextPreview}`
   ].join("\n\n");
 
+  const perspectiveNote = input.perspective?.trim() ? `\n\nReviewer lens for this pass: ${input.perspective.trim()}` : "";
+  const system = (process.env.LLM_JUDGE_SYSTEM_PROMPT?.trim() || DEFAULT_SYSTEM_PROMPT) + perspectiveNote;
+
+  // Attach a rendered screenshot as multimodal evidence when one was produced.
+  let image: Buffer | undefined;
+  if (input.imagePngPath) {
+    try { image = readFileSync(input.imagePngPath); } catch { image = undefined; }
+  }
+
   const started = Date.now();
   const callGenerateText = input.generateTextFn ?? generateText;
-  const { text, usage } = await callGenerateText({
+  const baseArgs = {
     model: input.model,
-    prompt,
-    system: process.env.LLM_JUDGE_SYSTEM_PROMPT?.trim() || DEFAULT_SYSTEM_PROMPT,
-    temperature: 0,
-    providerOptions: {
-      gateway: {
-        apiKey: input.apiKey
-      }
+    system,
+    temperature: input.temperature ?? 0,
+    providerOptions: { gateway: { apiKey: input.apiKey } }
+  };
+  const callArgs = (image
+    ? {
+      ...baseArgs,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: `${prompt}\n\nA rendered screenshot of the produced page is attached. Judge its visual quality and layout as part of qualityScore.` },
+          { type: "image", image }
+        ]
+      }]
     }
-  });
+    : { ...baseArgs, prompt }) as Parameters<typeof generateText>[0];
+  const { text, usage } = await callGenerateText(callArgs);
   const latencyMs = Date.now() - started;
 
   const rawText = text?.trim() ?? "";
@@ -224,6 +245,81 @@ export async function judgeWithVercelAiSdk(input: {
     latencyMs,
     totalTokens,
     rawText,
+    mode: "gateway"
+  };
+}
+
+const JUDGE_PERSPECTIVES = [
+  "",
+  "Weight strict correctness against the task's Success Checks and whether the verifier checks passed.",
+  "Weight code quality, edge-case handling, and whether any of the task's Failure Modes are present.",
+  "Weight whether the deliverable format and visible output match exactly what the task asked for.",
+  "Be adversarial: actively look for reasons the result should score lower than it first appears."
+];
+
+export function resolveJudgeSampleCount(): number {
+  const raw = Number(process.env.AGENT_BENCH_JUDGE_SAMPLES ?? "1");
+  if (!Number.isFinite(raw)) return 1;
+  return Math.max(1, Math.min(5, Math.round(raw)));
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  const raw = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return Number(raw.toFixed(2));
+}
+
+/**
+ * Runs the judge once, or — when AGENT_BENCH_JUDGE_SAMPLES > 1 — as a small panel
+ * of independent passes with distinct reviewer lenses, then takes the median of
+ * the scores. The panel reduces single-judge bias/variance; the anchor pass
+ * (index 0) stays at temperature 0 for a stable baseline while the rest use a
+ * little temperature so the lenses actually diverge.
+ */
+export async function runJudgeReview(input: {
+  apiKey: string;
+  model: string;
+  benchmarkKey: string;
+  taskKey?: string;
+  agentPath: string;
+  agentName: string;
+  agentVersion: string;
+  agentTextPreview: string;
+  imagePngPath?: string;
+  generateTextFn?: typeof generateText;
+}): Promise<JudgeResult> {
+  const samples = resolveJudgeSampleCount();
+  if (samples <= 1) {
+    return judgeWithVercelAiSdk(input);
+  }
+
+  const results: JudgeResult[] = [];
+  for (let index = 0; index < samples; index += 1) {
+    results.push(await judgeWithVercelAiSdk({
+      ...input,
+      temperature: index === 0 ? 0 : 0.4,
+      perspective: JUDGE_PERSPECTIVES[index % JUDGE_PERSPECTIVES.length]
+    }));
+  }
+
+  const medianScore = median(results.map((result) => result.score));
+  const qualityValues = results
+    .map((result) => result.qualityScore)
+    .filter((value): value is number => typeof value === "number");
+  const anchor = results.reduce(
+    (best, result) => (Math.abs(result.score - medianScore) < Math.abs(best.score - medianScore) ? result : best),
+    results[0]
+  );
+
+  return {
+    score: medianScore,
+    qualityScore: qualityValues.length ? median(qualityValues) : undefined,
+    reason: `Judge panel of ${samples} (median ${medianScore.toFixed(1)}): ${anchor.reason}`,
+    latencyMs: Math.max(...results.map((result) => result.latencyMs)),
+    totalTokens: results.reduce((sum, result) => sum + result.totalTokens, 0),
+    rawText: JSON.stringify({ samples: results.map((result) => ({ score: result.score, qualityScore: result.qualityScore })) }),
     mode: "gateway"
   };
 }
@@ -355,13 +451,15 @@ export function resolveJudgeModel(model?: string): string {
   return model?.trim() || process.env.AGENT_BENCH_JUDGE_MODEL?.trim() || DEFAULT_MODEL;
 }
 
-function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string }): string {
+function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string }): string {
   return createHash("sha256")
     .update(input.benchmarkKey)
     .update("\n")
     .update(input.taskKey ?? "all")
     .update("\n")
     .update(input.model)
+    .update("\n")
+    .update(input.judgeMode ?? "single")
     .update("\n")
     .update(input.taskContext)
     .update("\n")
@@ -1065,12 +1163,21 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Workspace Diff (truncated):\n${sandbox.diffPatch?.trim() || "No diff available."}`,
     `Agent System:\n${material.previewMarkdown}`
   ].join("\n\n");
+  // Optionally render the produced page so the judge can assess it visually.
+  let judgeImagePath: string | undefined;
+  if (apiKey && sandbox.mode === "sandbox" && sandbox.workspaceDir && judgeScreenshotEnabled()) {
+    const shot = await renderWorkspaceScreenshot(sandbox.workspaceDir, path.join(artifactsPath, "page.png"));
+    judgeImagePath = shot ?? undefined;
+  }
+  const judgeSamples = resolveJudgeSampleCount();
+  const judgeMode = `s${judgeSamples}${judgeImagePath ? "+shot" : ""}`;
   const fingerprint = makeJudgeFingerprint({
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
     model,
     taskContext,
-    agentMd: material.previewMarkdown
+    agentMd: material.previewMarkdown,
+    judgeMode
   });
   const cachePath = cachePathFromArtifactsRoot(input.artifactsRoot);
   const judgeCache = loadJudgeCache(cachePath);
@@ -1089,7 +1196,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         mode: "gateway-cache"
       };
     } else {
-      judge = await judgeWithVercelAiSdk({
+      judge = await runJudgeReview({
         apiKey,
         model,
         benchmarkKey: input.benchmarkKey,
@@ -1097,7 +1204,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         agentPath: material.agentPathLabel,
         agentName,
         agentVersion,
-        agentTextPreview: judgePromptContent
+        agentTextPreview: judgePromptContent,
+        imagePngPath: judgeImagePath
       });
       if (cacheEnabled) {
         judgeCache[fingerprint] = {
