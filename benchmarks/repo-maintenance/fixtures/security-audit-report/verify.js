@@ -3,28 +3,30 @@ const path = require("node:path");
 
 const reportPath = path.join(process.cwd(), "audit-findings.json");
 
-function fail(message) {
+// Graded verifier: each content requirement is one check. A partially-correct
+// report earns partial credit via the AGENT_BENCH_CHECKS marker; the command
+// still exits non-zero unless every check passes.
+const CONTENT_CHECKS = 7;
+
+function reject(message) {
   console.error(message);
+  console.log(`AGENT_BENCH_CHECKS: 0/${CONTENT_CHECKS}`);
   process.exit(1);
 }
 
 if (!fs.existsSync(reportPath)) {
-  fail("Expected audit-findings.json in the workspace root.");
+  reject("Expected audit-findings.json in the workspace root.");
 }
 
 let parsed;
 try {
   parsed = JSON.parse(fs.readFileSync(reportPath, "utf8"));
 } catch (error) {
-  fail(`audit-findings.json is not valid JSON: ${error.message}`);
+  reject(`audit-findings.json is not valid JSON: ${error.message}`);
 }
 
-if (!Array.isArray(parsed)) {
-  fail("audit-findings.json must be a JSON array.");
-}
-
-if (parsed.length !== 1) {
-  fail("audit-findings.json must contain exactly one finding.");
+if (!Array.isArray(parsed) || parsed.length !== 1) {
+  reject("audit-findings.json must be a JSON array with exactly one finding.");
 }
 
 const finding = parsed[0] || {};
@@ -33,33 +35,22 @@ const title = String(finding.title || "").toLowerCase();
 const evidence = String(finding.evidence || "").toLowerCase();
 const remediation = String(finding.remediation || "").toLowerCase();
 
-if (finding.id !== "command-injection") {
-  fail("Expected finding id to be command-injection.");
-}
+const checks = [
+  ["id is command-injection", finding.id === "command-injection"],
+  ["severity is high", String(finding.severity || "").toLowerCase() === "high"],
+  ["file points at src/server.js", file.endsWith("src/server.js")],
+  ["line is a plausible number", typeof finding.line === "number" && finding.line >= 1 && finding.line <= 20],
+  ["title mentions command injection", title.includes("command injection")],
+  ["evidence cites exec and req.query.cmd", evidence.includes("exec") && evidence.includes("req.query.cmd")],
+  ["remediation describes a safe replacement", remediation.includes("allowlist") || remediation.includes("execfile") || remediation.includes("avoid shell")]
+];
 
-if (String(finding.severity || "").toLowerCase() !== "high") {
-  fail("Expected severity to be high.");
-}
+const passed = checks.filter(([, ok]) => ok).length;
+console.log(`AGENT_BENCH_CHECKS: ${passed}/${checks.length}`);
+checks.filter(([, ok]) => !ok).forEach(([label]) => console.error(`missing: ${label}`));
 
-if (!file.endsWith("src/server.js")) {
-  fail("Expected finding file to end with src/server.js.");
-}
-
-if (typeof finding.line !== "number" || finding.line < 1 || finding.line > 20) {
-  fail("Expected finding line to be a reasonable line number inside src/server.js.");
-}
-
-if (!title.includes("command injection")) {
-  fail("Expected the finding title to mention command injection.");
-}
-
-if (!evidence.includes("exec") || !evidence.includes("req.query.cmd")) {
-  fail("Expected evidence to mention exec and req.query.cmd.");
-}
-
-if (!remediation.includes("allowlist") && !remediation.includes("execfile") && !remediation.includes("avoid shell")) {
-  fail("Expected remediation to describe a safe replacement such as an allowlist or execFile.");
+if (passed < checks.length) {
+  process.exit(1);
 }
 
 console.log("security audit verifier passed");
-

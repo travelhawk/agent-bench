@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Generalized graded scoring to custom (non-`node --test`) verifiers: a verify script may print `AGENT_BENCH_CHECKS: <passed>/<total>` and the outcome is graded by that ratio. Rewrote the `security-audit-report` and `landing-page-refresh` verifiers to emit per-check counts, so those tasks now discriminate partially-correct work instead of scoring binary
 - Fixed a corrupted `release-notes-cli` fixture: `tests/cli.test.js` carried a stray patch artifact (`*** Add File: ...`) that made the file unparseable, so that task's verifier could never pass for any agent
 - Graded the sandbox outcome score by verifier test-pass ratio (partial credit) instead of binary pass/fail, so two partially-passing workflows are ranked by how much actually works; the deterministic objective pass/fail stays strict (all-or-nothing)
 - Sharpened the LLM-judge contract to ground `score` in the task's success checks / failure modes and the observed verifier test-pass count, and to rate `qualityScore` from the workspace diff; the parsed test metrics and diff summary are now included in the judge's evidence context

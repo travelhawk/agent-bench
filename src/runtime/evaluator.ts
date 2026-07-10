@@ -15,7 +15,7 @@ import {
 } from "../types";
 import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
 import { computeWorkspaceGitDiffStats, initWorkspaceGitBaseline } from "./git-diff";
-import { isNodeTestRunnerCommand, parseNodeTestTapSummary, TestRunSummary } from "./test-summary";
+import { isNodeTestRunnerCommand, parseNodeTestTapSummary, parseVerifierChecksMarker, TestRunSummary } from "./test-summary";
 import { AgentUsageReport, readAgentUsageReport } from "./agent-usage";
 
 const DEFAULT_MODEL = "openai/gpt-4.1-mini";
@@ -458,11 +458,15 @@ function summarizeSandboxExecution(
     objectiveItems.push("runner exit code non-zero");
   }
 
-  // Parse the test summary up front so the outcome score can be graded by how
-  // many tests passed, not just whether the suite exited zero. This is what lets
-  // two partially-passing workflows be ranked against each other.
-  const testMetrics = verifier && verifyCommand && isNodeTestRunnerCommand(verifyCommand)
-    ? parseNodeTestTapSummary(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
+  // Parse the verifier's check summary up front so the outcome score can be graded
+  // by how many checks passed, not just whether the command exited zero. This is
+  // what lets two partially-passing workflows be ranked against each other. Two
+  // sources are supported: `node --test` TAP output, and a custom verifier that
+  // prints an `AGENT_BENCH_CHECKS: <passed>/<total>` marker.
+  const testMetrics = verifier
+    ? verifyCommand && isNodeTestRunnerCommand(verifyCommand)
+      ? parseNodeTestTapSummary(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
+      : parseVerifierChecksMarker(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
     : UNAVAILABLE_TEST_METRICS;
   const gradedTests = testMetrics.available && testMetrics.total > 0;
   const testRatio = gradedTests ? testMetrics.passed / testMetrics.total : 0;

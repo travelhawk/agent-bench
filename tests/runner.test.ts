@@ -223,7 +223,7 @@ test("runEvaluationInRuntime can execute the security audit fixture", async () =
       sandbox?: { verifier?: { exitCode?: number } };
       scores?: { tests?: number };
       diff?: { available?: boolean; filesChanged?: number };
-      testMetrics?: { available?: boolean };
+      testMetrics?: { available?: boolean; total?: number; passed?: number };
     };
 
     assert.equal(result.runKey, "run-security-audit");
@@ -233,8 +233,12 @@ test("runEvaluationInRuntime can execute the security audit fixture", async () =
     assert.ok(existsSync(path.join(runArtifactsDir, "workspace", "audit-findings.json")));
     assert.equal(summary.diff?.available, true);
     assert.ok((summary.diff?.filesChanged ?? 0) >= 1);
-    assert.equal(summary.testMetrics?.available, false);
-    assert.equal(result.verifierTestsAvailable, false);
+    // Custom verifier now grades via the AGENT_BENCH_CHECKS marker: a correct
+    // report passes every check.
+    assert.equal(summary.testMetrics?.available, true);
+    assert.equal(result.verifierTestsAvailable, true);
+    assert.ok((result.verifierTestsTotal ?? 0) >= 1);
+    assert.equal(result.verifierTestsPassed, result.verifierTestsTotal);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
