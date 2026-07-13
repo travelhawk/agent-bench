@@ -8,6 +8,7 @@ export interface ScoreProfile {
     process: number;
     review: number;
     efficiency: number;
+    quality: number;
   };
 }
 
@@ -15,27 +16,35 @@ const SCORE_PROFILES: Record<ScoreProfileKey, ScoreProfile> = {
   hybrid: {
     key: "hybrid",
     label: "Hybrid",
-    weights: { outcome: 0.7, process: 0, review: 0.2, efficiency: 0.1 }
+    weights: { outcome: 0.7, process: 0, review: 0.2, efficiency: 0.1, quality: 0 }
   },
   artifact: {
     key: "artifact",
     label: "Artifact",
-    weights: { outcome: 0.6, process: 0, review: 0.3, efficiency: 0.1 }
+    weights: { outcome: 0.6, process: 0, review: 0.3, efficiency: 0.1, quality: 0 }
   },
   trace: {
     key: "trace",
     label: "Trace",
-    weights: { outcome: 0.35, process: 0.4, review: 0.15, efficiency: 0.1 }
+    weights: { outcome: 0.35, process: 0.4, review: 0.15, efficiency: 0.1, quality: 0 }
   },
   judge: {
     key: "judge",
     label: "Judge",
-    weights: { outcome: 0, process: 0, review: 0.9, efficiency: 0.1 }
+    weights: { outcome: 0, process: 0, review: 0.9, efficiency: 0.1, quality: 0 }
   },
   state: {
     key: "state",
     label: "State",
-    weights: { outcome: 0.85, process: 0, review: 0, efficiency: 0.15 }
+    weights: { outcome: 0.85, process: 0, review: 0, efficiency: 0.15, quality: 0 }
+  },
+  // Opt-in composite that spends every signal the evaluator already computes,
+  // including the judge's code-quality score and the workflow/process score
+  // that the default profiles leave unweighted.
+  craft: {
+    key: "craft",
+    label: "Craft",
+    weights: { outcome: 0.45, process: 0.15, review: 0.15, efficiency: 0.1, quality: 0.15 }
   }
 };
 
@@ -49,19 +58,25 @@ export function resolveScoreProfile(profileKey: ScoreProfileKey): ScoreProfile {
   return SCORE_PROFILES[profileKey];
 }
 
+export function isScoreProfileKey(value: string): value is ScoreProfileKey {
+  return Object.prototype.hasOwnProperty.call(SCORE_PROFILES, value);
+}
+
 export function computeWeightedScore(input: {
   profile: ScoreProfileKey;
   outcome?: number;
   process?: number;
   review?: number;
   efficiency?: number;
+  quality?: number;
 }): ScoreBreakdown {
   const profile = resolveScoreProfile(input.profile);
   const components = {
     outcome: input.outcome == null ? undefined : clampScore(input.outcome),
     process: input.process == null ? undefined : clampScore(input.process),
     review: input.review == null ? undefined : clampScore(input.review),
-    efficiency: input.efficiency == null ? undefined : clampScore(input.efficiency)
+    efficiency: input.efficiency == null ? undefined : clampScore(input.efficiency),
+    quality: input.quality == null ? undefined : clampScore(input.quality)
   };
 
   const activeEntries = Object.entries(profile.weights).filter(([key, weight]) => {

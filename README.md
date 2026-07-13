@@ -138,6 +138,13 @@ To harden the LLM review beyond a single pass (all require `AI_GATEWAY_API_KEY`)
 - `AGENT_BENCH_JUDGE_SCREENSHOT` (default `false`) — for visual/frontend tasks, render the produced `index.html` with Playwright and attach it as **multimodal evidence** so the judge can rate visual quality, not just the HTML/CSS text. Needs Playwright and a multimodal-capable judge model; falls back silently to text-only if a screenshot can't be produced.
 - `AGENT_BENCH_CHROMIUM_PATH` — optional explicit Chromium binary for the screenshot judge (otherwise Playwright's bundled build is used).
 
+### Score composition
+
+The total is a weighted blend of the outcome, process, review, efficiency, and (opt-in) code-quality components, chosen per task by an evaluator-aware profile.
+
+- `AGENT_BENCH_SCORE_PROFILE` — force a profile instead of auto-picking. Valid keys: `hybrid` (default sandbox), `artifact`, `trace`, `judge`, `state`, and `craft`. `craft` is an opt-in composite that additionally weights the judge's `qualityScore` (code quality) and the workflow/process score that the default profiles leave unweighted — `outcome .45 / process .15 / review .15 / quality .15 / efficiency .1`. Missing components renormalize, so `craft` also works on the rules-based fallback. The `hybrid` weighting is intentionally unchanged, so scores stay comparable to historical runs.
+- **Efficiency** is scored against the **agent-under-test's own reported cost** when it provides one (`result/usage.json`), so it measures the workflow being benchmarked rather than the grader; it falls back to the judge cost when the agent reports no usage.
+
 Sandboxed runners also receive:
 
 - `AGENT_BENCH_PROVIDER_API_KEY` when you launch a run with a provider key

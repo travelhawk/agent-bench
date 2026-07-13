@@ -6,6 +6,7 @@ import test from "node:test";
 import { listBenchmarkSuitesFromFiles } from "../src/benchmarks/files";
 import { runEvaluationInRuntime } from "../src/core/runner";
 import { supportsSeatbeltSandbox } from "../src/runtime/sandbox";
+import { computeWeightedScore } from "../src/core/scoring";
 
 test("runEvaluationInRuntime writes artifacts without requiring a dist-only evaluator path", async () => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
@@ -50,6 +51,56 @@ test("runEvaluationInRuntime writes artifacts without requiring a dist-only eval
     } else {
       process.env.AI_GATEWAY_API_KEY = previousGatewayKey;
     }
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runEvaluationInRuntime honors AGENT_BENCH_SCORE_PROFILE and folds quality into the craft total", async () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "agent-bench-runner-"));
+  const previousGatewayKey = process.env.AI_GATEWAY_API_KEY;
+  const previousProfile = process.env.AGENT_BENCH_SCORE_PROFILE;
+
+  try {
+    delete process.env.AI_GATEWAY_API_KEY;
+    process.env.AGENT_BENCH_SCORE_PROFILE = "craft";
+    const agentPath = path.join(workspace, "agents", "agent.md");
+    const artifactsRoot = path.join(workspace, "artifacts");
+    const benchmarksDir = path.join(workspace, "benchmarks");
+
+    mkdirSync(path.dirname(agentPath), { recursive: true });
+    mkdirSync(artifactsRoot, { recursive: true });
+    writeFileSync(agentPath, "# Agent\nDelivers patches.\n");
+
+    const result = await runEvaluationInRuntime({
+      runKey: "run-craft",
+      agentPath,
+      benchmarkKey: "repo-maintenance",
+      taskKey: "fix-react-bug",
+      artifactsRoot,
+      benchmarks: listBenchmarkSuitesFromFiles(benchmarksDir)
+    });
+
+    assert.equal(result.scoreProfile, "craft");
+    assert.ok(result.qualityScore != null, "rules fallback should still produce a quality score");
+
+    // The stored total must reflect the craft weighting over its components,
+    // including the quality component the default profiles ignore.
+    const recomputed = computeWeightedScore({
+      profile: "craft",
+      outcome: result.scores.outcome,
+      process: result.scores.process,
+      review: result.scores.review,
+      efficiency: result.scores.efficiency,
+      quality: result.qualityScore ?? undefined
+    });
+    // Recompute from the rounded stored components, so allow a small tolerance.
+    assert.ok(Math.abs(result.scores.total - recomputed.total) <= 0.1,
+      `craft total ${result.scores.total} should match recompute ${recomputed.total}`);
+  } finally {
+    if (previousGatewayKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = previousGatewayKey;
+    if (previousProfile === undefined) delete process.env.AGENT_BENCH_SCORE_PROFILE;
+    else process.env.AGENT_BENCH_SCORE_PROFILE = previousProfile;
     rmSync(workspace, { recursive: true, force: true });
   }
 });

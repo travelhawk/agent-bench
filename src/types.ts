@@ -1,6 +1,6 @@
 export type RunStatus = "completed" | "failed";
 export type ScoreConfidence = "high" | "medium" | "low";
-export type ScoreProfileKey = "hybrid" | "artifact" | "trace" | "judge" | "state";
+export type ScoreProfileKey = "hybrid" | "artifact" | "trace" | "judge" | "state" | "craft";
 export type SandboxSelection = "process" | "macos-seatbelt" | "docker" | "mixed";
 export type BenchmarkReliability = "low" | "medium" | "high";
 

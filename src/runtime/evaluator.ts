@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { generateText } from "ai";
 import { resolveAgentExecutionContext } from "../agents/files";
-import { computeWeightedScore, efficiencyScoreFromMetrics } from "../core/scoring";
+import { computeWeightedScore, efficiencyScoreFromMetrics, isScoreProfileKey } from "../core/scoring";
 import {
   AgentSkillReference,
   BenchmarkSuiteRecord,
@@ -976,7 +976,20 @@ function buildRulesAssessment(benchmark: BenchmarkSuiteRecord, task: BenchmarkTa
   };
 }
 
+function resolveScoreProfileOverride(): ScoreProfileKey | undefined {
+  const raw = process.env.AGENT_BENCH_SCORE_PROFILE?.trim().toLowerCase();
+  if (raw && isScoreProfileKey(raw)) {
+    return raw;
+  }
+  return undefined;
+}
+
 function determineScoreProfile(task: BenchmarkTaskRecord | undefined, sandbox: SandboxExecutionResult): ScoreProfileKey {
+  const override = resolveScoreProfileOverride();
+  if (override) {
+    return override;
+  }
+
   if (sandbox.mode === "sandbox") {
     return task?.metadata.evaluator === "trace" ? "trace" : "hybrid";
   }
@@ -1243,9 +1256,13 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const durationMs = Date.now() - started;
   const scoreProfile = determineScoreProfile(selectedTask, sandbox);
   const scoreConfidence = determineScoreConfidence(selectedTask, sandbox);
+  // Efficiency should reflect the agent under test, not the grader. When the
+  // agent self-reports its own spend, score against that; otherwise fall back
+  // to the judge cost (preserves behavior for runs without agent usage).
+  const efficiencyCostUsd = sandbox.agentUsage.available ? agentCostUsd : costUsd;
   const efficiencyScore = efficiencyScoreFromMetrics({
     latencyMs,
-    costUsd,
+    costUsd: efficiencyCostUsd,
     difficulty: selectedTask?.metadata.difficulty ?? "medium",
     timeoutMs: selectedTask?.sandbox?.timeoutMs,
     requiresNetwork: selectedTask?.metadata.requiresNetwork
@@ -1255,7 +1272,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     outcome: outcomeScore,
     process: processScore,
     review: judge.score,
-    efficiency: efficiencyScore
+    efficiency: efficiencyScore,
+    quality: judge.qualityScore
   });
   const objectiveScore = sandbox.objectiveChecks.deterministic ? outcomeScore : 0;
   const objectivePass = sandbox.objectiveChecks.deterministic
@@ -1294,7 +1312,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Outcome score: ${outcomeScore}`,
     `Process score: ${processScore}`,
     `Review score: ${judge.score}`,
-    `Efficiency score: ${efficiencyScore}`,
+    `Efficiency score: ${efficiencyScore} (cost basis: ${sandbox.agentUsage.available ? "agent" : "judge"} $${efficiencyCostUsd.toFixed(4)})`,
     `Latency: ${latencyMs}ms`,
     `Cost: $${costUsd.toFixed(4)}`,
     `Diff: ${sandbox.diff.available ? `${sandbox.diff.filesChanged} files (+${sandbox.diff.insertions}/-${sandbox.diff.deletions})` : "n/a"}`,

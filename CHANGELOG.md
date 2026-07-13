@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added an opt-in `craft` score profile plus an `AGENT_BENCH_SCORE_PROFILE` override that lets a run weight the judge's code-quality score and the workflow/process score into the total (outcome .45 / process .15 / review .15 / quality .15 / efficiency .1). Previously `qualityScore` was stored but never influenced the score, and the process score was only used by the `trace` profile; the default `hybrid` weighting is unchanged so historical runs stay comparable
+- Based the efficiency score on the agent-under-test's self-reported cost when it is available, instead of the judge/grader cost, so efficiency reflects the workflow being benchmarked rather than harness overhead (falls back to judge cost when the agent reports no usage)
 - Added an opt-in judge panel (`AGENT_BENCH_JUDGE_SAMPLES`>1): several independent judge passes with distinct reviewer lenses, aggregated by median score/qualityScore to reduce single-judge bias/variance; default 1 keeps the previous single-pass behavior and the cache is keyed per judge mode
 - Added an opt-in multimodal screenshot judge (`AGENT_BENCH_JUDGE_SCREENSHOT`): renders a visual task's `index.html` with Playwright and attaches it as image evidence so the judge can rate visual quality (guarded/dynamic import; falls back to text-only if unavailable). Optional `AGENT_BENCH_CHROMIUM_PATH` to pin the browser binary
 - Generalized graded scoring to custom (non-`node --test`) verifiers: a verify script may print `AGENT_BENCH_CHECKS: <passed>/<total>` and the outcome is graded by that ratio. Rewrote the `security-audit-report` and `landing-page-refresh` verifiers to emit per-check counts, so those tasks now discriminate partially-correct work instead of scoring binary
