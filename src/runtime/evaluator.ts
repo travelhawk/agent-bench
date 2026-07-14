@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { generateText } from "ai";
 import { resolveAgentExecutionContext } from "../agents/files";
-import { computeWeightedScore, efficiencyScoreFromMetrics } from "../core/scoring";
+import { computeWeightedScore, efficiencyScoreFromMetrics, isScoreProfileKey } from "../core/scoring";
 import {
   AgentSkillReference,
   BenchmarkSuiteRecord,
@@ -14,20 +14,27 @@ import {
   ScoreProfileKey
 } from "../types";
 import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
+import { computeWorkspaceGitDiffStats, initWorkspaceGitBaseline } from "./git-diff";
+import { isNodeTestRunnerCommand, parseNodeTestTapSummary, parseVerifierChecksMarker, TestRunSummary } from "./test-summary";
+import { AgentUsageReport, readAgentUsageReport } from "./agent-usage";
+import { judgeScreenshotEnabled, renderWorkspaceScreenshot } from "./screenshot";
 
 const DEFAULT_MODEL = "openai/gpt-4.1-mini";
 const DEFAULT_COST_PER_1K_TOKENS_USD = 0.003;
+const UNAVAILABLE_TEST_METRICS: TestRunSummary = { available: false, total: 0, passed: 0, failed: 0 };
+const UNAVAILABLE_AGENT_USAGE: AgentUsageReport = { available: false, inputTokens: 0, outputTokens: 0, costUsd: null };
 const DEFAULT_SYSTEM_PROMPT = [
-  "You are AgentBenchReview, a strict evaluator for agent specifications.",
-  "Assess whether the provided agent instructions appear capable of completing the requested benchmark task.",
-  "Score task fit, workflow clarity, verification steps, and operational safety.",
-  "Do not invent execution results, tests, or artifacts that are not present.",
+  "You are AgentBenchReview, a strict evaluator of an agent's work on a benchmark task.",
+  "Ground every judgement in concrete evidence: the task's Success Checks and Failure Modes, the Sandbox Execution outcome (including how many verifier tests passed), and the Workspace Diff. Do not reward a specification whose run failed its checks, and do not invent results, tests, or artifacts that are not present.",
+  "score (0-10): how well the observed result satisfies the task's Success Checks while avoiding its Failure Modes. If the run passed all checks, score high; if verifier tests partially passed, scale accordingly; if it failed, score low even when the instructions read well.",
+  "qualityScore (0-10): rate the produced code changes in the Workspace Diff on readability, idiomatic style, error handling, and absence of hacks. If no diff evidence is provided, give a best-effort estimate from the specification and say so in the reason.",
   "Return compact JSON only in this exact format:",
-  "{\"score\": number, \"reason\": string}"
+  "{\"score\": number, \"qualityScore\": number, \"reason\": string}"
 ].join(" ");
 
 interface JudgeResult {
   score: number;
+  qualityScore?: number;
   latencyMs: number;
   totalTokens: number;
   rawText: string;
@@ -37,11 +44,13 @@ interface JudgeResult {
 
 interface ParsedJudgeResponse {
   score: number;
+  qualityScore?: number;
   reason: string;
 }
 
 interface JudgeCacheEntry {
   score: number;
+  qualityScore?: number;
   rawText: string;
   totalTokens: number;
   reason: string;
@@ -63,6 +72,13 @@ interface ObjectiveChecksSummary {
   items: string[];
 }
 
+interface WorkspaceDiffSummary {
+  available: boolean;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+}
+
 interface SandboxExecutionResult {
   mode: "review-only" | "sandbox";
   outcomeScore: number;
@@ -78,6 +94,10 @@ interface SandboxExecutionResult {
   runner?: SandboxCommandResult;
   verifier?: SandboxCommandResult;
   durationMs: number;
+  diff: WorkspaceDiffSummary;
+  diffPatch?: string;
+  testMetrics: TestRunSummary;
+  agentUsage: AgentUsageReport;
 }
 
 type JudgeCacheMap = Record<string, JudgeCacheEntry>;
@@ -128,10 +148,11 @@ function normalizeKeyword(tag: string): string[] {
 
 function parseJudgeResponse(content: string): ParsedJudgeResponse {
   try {
-    const parsed = JSON.parse(content) as { score?: number; reason?: string };
+    const parsed = JSON.parse(content) as { score?: number; qualityScore?: number; reason?: string };
     if (typeof parsed.score === "number") {
       return {
         score: clampScore(parsed.score),
+        qualityScore: typeof parsed.qualityScore === "number" ? clampScore(parsed.qualityScore) : undefined,
         reason: typeof parsed.reason === "string" && parsed.reason.trim()
           ? parsed.reason.trim()
           : "Gateway review returned a numeric score without an explicit reason."
@@ -162,6 +183,9 @@ export async function judgeWithVercelAiSdk(input: {
   agentVersion: string;
   agentTextPreview: string;
   generateTextFn?: typeof generateText;
+  temperature?: number;
+  perspective?: string;
+  imagePngPath?: string;
 }): Promise<JudgeResult> {
   const prompt = [
     `Benchmark: ${input.benchmarkKey}`,
@@ -170,23 +194,40 @@ export async function judgeWithVercelAiSdk(input: {
     `Agent Version: ${input.agentVersion}`,
     `Agent File: ${input.agentPath}`,
     "Review whether this agent specification appears capable of completing the requested work.",
-    "Respond with compact JSON only: {\"score\": <number>, \"reason\": \"...\"}.",
+    "Respond with compact JSON only: {\"score\": <number>, \"qualityScore\": <number>, \"reason\": \"...\"}.",
     `Evaluation Context:\n${input.agentTextPreview}`
   ].join("\n\n");
 
+  const perspectiveNote = input.perspective?.trim() ? `\n\nReviewer lens for this pass: ${input.perspective.trim()}` : "";
+  const system = (process.env.LLM_JUDGE_SYSTEM_PROMPT?.trim() || DEFAULT_SYSTEM_PROMPT) + perspectiveNote;
+
+  // Attach a rendered screenshot as multimodal evidence when one was produced.
+  let image: Buffer | undefined;
+  if (input.imagePngPath) {
+    try { image = readFileSync(input.imagePngPath); } catch { image = undefined; }
+  }
+
   const started = Date.now();
   const callGenerateText = input.generateTextFn ?? generateText;
-  const { text, usage } = await callGenerateText({
+  const baseArgs = {
     model: input.model,
-    prompt,
-    system: process.env.LLM_JUDGE_SYSTEM_PROMPT?.trim() || DEFAULT_SYSTEM_PROMPT,
-    temperature: 0,
-    providerOptions: {
-      gateway: {
-        apiKey: input.apiKey
-      }
+    system,
+    temperature: input.temperature ?? 0,
+    providerOptions: { gateway: { apiKey: input.apiKey } }
+  };
+  const callArgs = (image
+    ? {
+      ...baseArgs,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: `${prompt}\n\nA rendered screenshot of the produced page is attached. Judge its visual quality and layout as part of qualityScore.` },
+          { type: "image", image }
+        ]
+      }]
     }
-  });
+    : { ...baseArgs, prompt }) as Parameters<typeof generateText>[0];
+  const { text, usage } = await callGenerateText(callArgs);
   const latencyMs = Date.now() - started;
 
   const rawText = text?.trim() ?? "";
@@ -199,10 +240,86 @@ export async function judgeWithVercelAiSdk(input: {
   const totalTokens = usageSafe?.totalTokens ?? ((usageSafe?.inputTokens ?? 0) + (usageSafe?.outputTokens ?? 0));
   return {
     score: parsed.score,
+    qualityScore: parsed.qualityScore,
     reason: parsed.reason,
     latencyMs,
     totalTokens,
     rawText,
+    mode: "gateway"
+  };
+}
+
+const JUDGE_PERSPECTIVES = [
+  "",
+  "Weight strict correctness against the task's Success Checks and whether the verifier checks passed.",
+  "Weight code quality, edge-case handling, and whether any of the task's Failure Modes are present.",
+  "Weight whether the deliverable format and visible output match exactly what the task asked for.",
+  "Be adversarial: actively look for reasons the result should score lower than it first appears."
+];
+
+export function resolveJudgeSampleCount(): number {
+  const raw = Number(process.env.AGENT_BENCH_JUDGE_SAMPLES ?? "1");
+  if (!Number.isFinite(raw)) return 1;
+  return Math.max(1, Math.min(5, Math.round(raw)));
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  const raw = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return Number(raw.toFixed(2));
+}
+
+/**
+ * Runs the judge once, or — when AGENT_BENCH_JUDGE_SAMPLES > 1 — as a small panel
+ * of independent passes with distinct reviewer lenses, then takes the median of
+ * the scores. The panel reduces single-judge bias/variance; the anchor pass
+ * (index 0) stays at temperature 0 for a stable baseline while the rest use a
+ * little temperature so the lenses actually diverge.
+ */
+export async function runJudgeReview(input: {
+  apiKey: string;
+  model: string;
+  benchmarkKey: string;
+  taskKey?: string;
+  agentPath: string;
+  agentName: string;
+  agentVersion: string;
+  agentTextPreview: string;
+  imagePngPath?: string;
+  generateTextFn?: typeof generateText;
+}): Promise<JudgeResult> {
+  const samples = resolveJudgeSampleCount();
+  if (samples <= 1) {
+    return judgeWithVercelAiSdk(input);
+  }
+
+  const results: JudgeResult[] = [];
+  for (let index = 0; index < samples; index += 1) {
+    results.push(await judgeWithVercelAiSdk({
+      ...input,
+      temperature: index === 0 ? 0 : 0.4,
+      perspective: JUDGE_PERSPECTIVES[index % JUDGE_PERSPECTIVES.length]
+    }));
+  }
+
+  const medianScore = median(results.map((result) => result.score));
+  const qualityValues = results
+    .map((result) => result.qualityScore)
+    .filter((value): value is number => typeof value === "number");
+  const anchor = results.reduce(
+    (best, result) => (Math.abs(result.score - medianScore) < Math.abs(best.score - medianScore) ? result : best),
+    results[0]
+  );
+
+  return {
+    score: medianScore,
+    qualityScore: qualityValues.length ? median(qualityValues) : undefined,
+    reason: `Judge panel of ${samples} (median ${medianScore.toFixed(1)}): ${anchor.reason}`,
+    latencyMs: Math.max(...results.map((result) => result.latencyMs)),
+    totalTokens: results.reduce((sum, result) => sum + result.totalTokens, 0),
+    rawText: JSON.stringify({ samples: results.map((result) => ({ score: result.score, qualityScore: result.qualityScore })) }),
     mode: "gateway"
   };
 }
@@ -334,13 +451,15 @@ export function resolveJudgeModel(model?: string): string {
   return model?.trim() || process.env.AGENT_BENCH_JUDGE_MODEL?.trim() || DEFAULT_MODEL;
 }
 
-function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string }): string {
+function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string }): string {
   return createHash("sha256")
     .update(input.benchmarkKey)
     .update("\n")
     .update(input.taskKey ?? "all")
     .update("\n")
     .update(input.model)
+    .update("\n")
+    .update(input.judgeMode ?? "single")
     .update("\n")
     .update(input.taskContext)
     .update("\n")
@@ -415,8 +534,9 @@ function buildTaskBrief(benchmark: BenchmarkSuiteRecord, task: BenchmarkTaskReco
 
 function summarizeSandboxExecution(
   runner: SandboxCommandResult,
-  verifier?: SandboxCommandResult
-): Pick<SandboxExecutionResult, "outcomeScore" | "processScore" | "matchedSignals" | "missingSignals" | "reason" | "objectiveChecks"> {
+  verifier?: SandboxCommandResult,
+  verifyCommand?: string
+): Pick<SandboxExecutionResult, "outcomeScore" | "processScore" | "matchedSignals" | "missingSignals" | "reason" | "objectiveChecks" | "testMetrics"> {
   const matchedSignals: string[] = [];
   const missingSignals: string[] = [];
   let outcomeScore = 0;
@@ -436,14 +556,36 @@ function summarizeSandboxExecution(
     objectiveItems.push("runner exit code non-zero");
   }
 
+  // Parse the verifier's check summary up front so the outcome score can be graded
+  // by how many checks passed, not just whether the command exited zero. This is
+  // what lets two partially-passing workflows be ranked against each other. Two
+  // sources are supported: `node --test` TAP output, and a custom verifier that
+  // prints an `AGENT_BENCH_CHECKS: <passed>/<total>` marker.
+  const testMetrics = verifier
+    ? verifyCommand && isNodeTestRunnerCommand(verifyCommand)
+      ? parseNodeTestTapSummary(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
+      : parseVerifierChecksMarker(verifier.stdout) ?? UNAVAILABLE_TEST_METRICS
+    : UNAVAILABLE_TEST_METRICS;
+  const gradedTests = testMetrics.available && testMetrics.total > 0;
+  const testRatio = gradedTests ? testMetrics.passed / testMetrics.total : 0;
+
   if (verifier) {
     availableChecks += 1;
     if (verifier.exitCode === 0) {
       outcomeScore += 5.5;
       processScore += 2.5;
       passedChecks += 1;
-      matchedSignals.push(`verify command passed: ${verifier.command}`);
+      matchedSignals.push(gradedTests
+        ? `verify command passed: ${testMetrics.passed}/${testMetrics.total} tests`
+        : `verify command passed: ${verifier.command}`);
       objectiveItems.push(`verifier passed: ${verifier.command}`);
+    } else if (gradedTests && testMetrics.passed > 0) {
+      // Partial credit: the suite failed overall but some tests passed.
+      outcomeScore += 5.5 * testRatio;
+      processScore += 2.5 * testRatio;
+      matchedSignals.push(`verify partial: ${testMetrics.passed}/${testMetrics.total} tests passed`);
+      missingSignals.push(`${testMetrics.failed} of ${testMetrics.total} verifier tests still failing`);
+      objectiveItems.push(`verifier partial: ${testMetrics.passed}/${testMetrics.total} tests`);
     } else {
       missingSignals.push(verifier.timedOut ? "verify command timed out" : `verify command failed: ${verifier.command}`);
       objectiveItems.push(`verifier failed: ${verifier.command}`);
@@ -460,13 +602,17 @@ function summarizeSandboxExecution(
     matchedSignals.push("runner produced execution logs");
   }
 
-  const reason = verifier
-    ? verifier.exitCode === 0
-      ? "Sandbox execution and verification both completed successfully."
-      : "Sandbox execution finished, but verification failed."
-    : runner.exitCode === 0
+  const reason = !verifier
+    ? runner.exitCode === 0
       ? "Sandbox execution completed without a separate verification command."
-      : "Sandbox execution failed before verification could pass.";
+      : "Sandbox execution failed before verification could pass."
+    : verifier.exitCode === 0
+      ? gradedTests
+        ? `Sandbox execution and verification both passed (${testMetrics.passed}/${testMetrics.total} tests).`
+        : "Sandbox execution and verification both completed successfully."
+      : gradedTests && testMetrics.passed > 0
+        ? `Sandbox execution finished; ${testMetrics.passed}/${testMetrics.total} verifier tests passed.`
+        : "Sandbox execution finished, but verification failed.";
 
   return {
     outcomeScore: clampScore(outcomeScore),
@@ -479,7 +625,8 @@ function summarizeSandboxExecution(
       passed: passedChecks,
       deterministic: true,
       items: objectiveItems
-    }
+    },
+    testMetrics
   };
 }
 
@@ -573,7 +720,10 @@ async function maybeRunSandboxExecution(input: {
         deterministic: false,
         items: []
       },
-      durationMs: 0
+      durationMs: 0,
+      diff: { available: false, filesChanged: 0, insertions: 0, deletions: 0 },
+      testMetrics: UNAVAILABLE_TEST_METRICS,
+      agentUsage: UNAVAILABLE_AGENT_USAGE
     };
   }
 
@@ -601,6 +751,7 @@ async function maybeRunSandboxExecution(input: {
   const readOnlyDirs = [...new Set(input.agentSystemRoots.filter(Boolean))];
   const allowNetwork = input.task.metadata.requiresNetwork;
   cpSync(fixtureDir, workspaceDir, { recursive: true });
+  initWorkspaceGitBaseline(workspaceDir);
   writeFileSync(taskBriefPath, buildTaskBrief(input.benchmark, input.task), "utf8");
   writeFileSync(agentFilePath, input.agentMarkdown, "utf8");
 
@@ -650,6 +801,8 @@ async function maybeRunSandboxExecution(input: {
     providerApiKey: input.providerApiKey,
     model: input.model
   });
+  const diffStats = computeWorkspaceGitDiffStats(workspaceDir);
+  const agentUsage = readAgentUsageReport(workspaceDir);
   const verifier = runner.exitCode === 0 && input.task.sandbox.verifyCommand
     ? await runSandboxedCommand({
       command: input.task.sandbox.verifyCommand,
@@ -665,7 +818,7 @@ async function maybeRunSandboxExecution(input: {
       env: commandEnv as unknown as NodeJS.ProcessEnv
     })
     : undefined;
-  const summary = summarizeSandboxExecution(runner, verifier);
+  const summary = summarizeSandboxExecution(runner, verifier, input.task.sandbox.verifyCommand);
 
   return {
     mode: "sandbox",
@@ -676,6 +829,14 @@ async function maybeRunSandboxExecution(input: {
     runner,
     verifier,
     durationMs: runner.durationMs + (verifier?.durationMs ?? 0),
+    diff: {
+      available: diffStats.available,
+      filesChanged: diffStats.filesChanged,
+      insertions: diffStats.insertions,
+      deletions: diffStats.deletions
+    },
+    diffPatch: diffStats.patch,
+    agentUsage,
     ...summary
   };
 }
@@ -815,7 +976,20 @@ function buildRulesAssessment(benchmark: BenchmarkSuiteRecord, task: BenchmarkTa
   };
 }
 
+function resolveScoreProfileOverride(): ScoreProfileKey | undefined {
+  const raw = process.env.AGENT_BENCH_SCORE_PROFILE?.trim().toLowerCase();
+  if (raw && isScoreProfileKey(raw)) {
+    return raw;
+  }
+  return undefined;
+}
+
 function determineScoreProfile(task: BenchmarkTaskRecord | undefined, sandbox: SandboxExecutionResult): ScoreProfileKey {
+  const override = resolveScoreProfileOverride();
+  if (override) {
+    return override;
+  }
+
   if (sandbox.mode === "sandbox") {
     return task?.metadata.evaluator === "trace" ? "trace" : "hybrid";
   }
@@ -972,6 +1146,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       outcomeScore: sandbox.outcomeScore,
       processScore: sandbox.processScore,
       objectiveChecks: sandbox.objectiveChecks,
+      testMetrics: sandbox.testMetrics,
+      diff: sandbox.diff,
       reason: sandbox.reason,
       runner: sandbox.runner
         ? {
@@ -997,14 +1173,24 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         }
         : null
     }, null, 2)}`,
+    `Workspace Diff (truncated):\n${sandbox.diffPatch?.trim() || "No diff available."}`,
     `Agent System:\n${material.previewMarkdown}`
   ].join("\n\n");
+  // Optionally render the produced page so the judge can assess it visually.
+  let judgeImagePath: string | undefined;
+  if (apiKey && sandbox.mode === "sandbox" && sandbox.workspaceDir && judgeScreenshotEnabled()) {
+    const shot = await renderWorkspaceScreenshot(sandbox.workspaceDir, path.join(artifactsPath, "page.png"));
+    judgeImagePath = shot ?? undefined;
+  }
+  const judgeSamples = resolveJudgeSampleCount();
+  const judgeMode = `s${judgeSamples}${judgeImagePath ? "+shot" : ""}`;
   const fingerprint = makeJudgeFingerprint({
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
     model,
     taskContext,
-    agentMd: material.previewMarkdown
+    agentMd: material.previewMarkdown,
+    judgeMode
   });
   const cachePath = cachePathFromArtifactsRoot(input.artifactsRoot);
   const judgeCache = loadJudgeCache(cachePath);
@@ -1015,6 +1201,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       const cached = judgeCache[fingerprint];
       judge = {
         score: cached.score,
+        qualityScore: cached.qualityScore,
         rawText: cached.rawText,
         totalTokens: cached.totalTokens,
         reason: cached.reason,
@@ -1022,7 +1209,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         mode: "gateway-cache"
       };
     } else {
-      judge = await judgeWithVercelAiSdk({
+      judge = await runJudgeReview({
         apiKey,
         model,
         benchmarkKey: input.benchmarkKey,
@@ -1030,11 +1217,13 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         agentPath: material.agentPathLabel,
         agentName,
         agentVersion,
-        agentTextPreview: judgePromptContent
+        agentTextPreview: judgePromptContent,
+        imagePngPath: judgeImagePath
       });
       if (cacheEnabled) {
         judgeCache[fingerprint] = {
           score: judge.score,
+          qualityScore: judge.qualityScore,
           rawText: judge.rawText,
           totalTokens: judge.totalTokens,
           reason: judge.reason
@@ -1045,24 +1234,35 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   } else {
     const rulesReviewReason = sandbox.mode === "sandbox" ? `${assessment.reason} ${sandbox.reason}`.trim() : assessment.reason;
     const rulesReviewScore = clampScore(assessment.reviewScore + (sandbox.mode === "sandbox" && sandbox.verifier?.exitCode === 0 ? 0.6 : 0));
+    const rulesQualityScore = sandbox.mode === "sandbox"
+      ? clampScore(sandbox.verifier?.exitCode === 0 ? 6.0 : 4.0)
+      : clampScore(assessment.reviewScore);
     judge = {
       score: rulesReviewScore,
+      qualityScore: rulesQualityScore,
       latencyMs: 1,
       totalTokens: 0,
-      rawText: JSON.stringify({ score: rulesReviewScore, reason: rulesReviewReason }),
-      reason: rulesReviewReason,
+      rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: rulesQualityScore, reason: rulesReviewReason }),
+      reason: `${rulesReviewReason} (quality score is a low-confidence heuristic, not LLM-judged)`.trim(),
       mode: "rules"
     };
   }
 
   const costUsd = estimateCostUsd(judge.totalTokens);
+  const agentCostUsd = sandbox.agentUsage.available
+    ? (sandbox.agentUsage.costUsd ?? estimateCostUsd(sandbox.agentUsage.inputTokens + sandbox.agentUsage.outputTokens))
+    : 0;
   const latencyMs = sandbox.mode === "sandbox" ? Math.max(sandbox.durationMs, judge.latencyMs) : judge.latencyMs;
   const durationMs = Date.now() - started;
   const scoreProfile = determineScoreProfile(selectedTask, sandbox);
   const scoreConfidence = determineScoreConfidence(selectedTask, sandbox);
+  // Efficiency should reflect the agent under test, not the grader. When the
+  // agent self-reports its own spend, score against that; otherwise fall back
+  // to the judge cost (preserves behavior for runs without agent usage).
+  const efficiencyCostUsd = sandbox.agentUsage.available ? agentCostUsd : costUsd;
   const efficiencyScore = efficiencyScoreFromMetrics({
     latencyMs,
-    costUsd,
+    costUsd: efficiencyCostUsd,
     difficulty: selectedTask?.metadata.difficulty ?? "medium",
     timeoutMs: selectedTask?.sandbox?.timeoutMs,
     requiresNetwork: selectedTask?.metadata.requiresNetwork
@@ -1072,7 +1272,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     outcome: outcomeScore,
     process: processScore,
     review: judge.score,
-    efficiency: efficiencyScore
+    efficiency: efficiencyScore,
+    quality: judge.qualityScore
   });
   const objectiveScore = sandbox.objectiveChecks.deterministic ? outcomeScore : 0;
   const objectivePass = sandbox.objectiveChecks.deterministic
@@ -1111,9 +1312,13 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Outcome score: ${outcomeScore}`,
     `Process score: ${processScore}`,
     `Review score: ${judge.score}`,
-    `Efficiency score: ${efficiencyScore}`,
+    `Efficiency score: ${efficiencyScore} (cost basis: ${sandbox.agentUsage.available ? "agent" : "judge"} $${efficiencyCostUsd.toFixed(4)})`,
     `Latency: ${latencyMs}ms`,
     `Cost: $${costUsd.toFixed(4)}`,
+    `Diff: ${sandbox.diff.available ? `${sandbox.diff.filesChanged} files (+${sandbox.diff.insertions}/-${sandbox.diff.deletions})` : "n/a"}`,
+    `Tests: ${sandbox.testMetrics.available ? `${sandbox.testMetrics.passed}/${sandbox.testMetrics.total} passed` : "n/a"}`,
+    `Quality score: ${judge.qualityScore != null ? judge.qualityScore.toFixed(2) : "n/a"}`,
+    `Agent usage: ${sandbox.agentUsage.available ? `${sandbox.agentUsage.inputTokens}in/${sandbox.agentUsage.outputTokens}out, $${agentCostUsd.toFixed(4)}` : "n/a"}`,
     `Objective checks: ${sandbox.objectiveChecks.passed}/${sandbox.objectiveChecks.available}`,
     `Matched signals: ${matchedSignals.join("; ") || "none"}`,
     `Open gaps: ${missingSignals.join("; ") || "none"}`,
@@ -1123,6 +1328,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Review reason: ${judge.reason}`,
     `Review response: ${judge.rawText}`
   ].join("\n");
+
+  const { diffPatch: _diffPatch, ...sandboxForSummary } = sandbox;
 
   writeFileSync(path.join(artifactsPath, "summary.json"), JSON.stringify({
     runKey: input.runKey,
@@ -1164,10 +1371,19 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     },
     scores,
     assessment,
-    sandbox,
+    sandbox: sandboxForSummary,
     objectiveChecks: sandbox.objectiveChecks,
     objectiveScore,
     objectivePass,
+    diff: sandbox.diff,
+    testMetrics: sandbox.testMetrics,
+    qualityScore: judge.qualityScore ?? null,
+    agentUsage: {
+      available: sandbox.agentUsage.available,
+      inputTokens: sandbox.agentUsage.inputTokens,
+      outputTokens: sandbox.agentUsage.outputTokens,
+      costUsd: agentCostUsd
+    },
     evidence: {
       matchedSignals,
       missingSignals,
@@ -1231,6 +1447,18 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     costUsd,
     durationMs,
     artifactsPath,
-    logText
+    logText,
+    diffAvailable: sandbox.diff.available,
+    diffFilesChanged: sandbox.diff.filesChanged,
+    diffInsertions: sandbox.diff.insertions,
+    diffDeletions: sandbox.diff.deletions,
+    verifierTestsAvailable: sandbox.testMetrics.available,
+    verifierTestsTotal: sandbox.testMetrics.total,
+    verifierTestsPassed: sandbox.testMetrics.passed,
+    qualityScore: judge.qualityScore ?? null,
+    agentUsageAvailable: sandbox.agentUsage.available,
+    agentInputTokens: sandbox.agentUsage.inputTokens,
+    agentOutputTokens: sandbox.agentUsage.outputTokens,
+    agentCostUsd
   };
 }

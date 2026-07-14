@@ -1,6 +1,6 @@
 export type RunStatus = "completed" | "failed";
 export type ScoreConfidence = "high" | "medium" | "low";
-export type ScoreProfileKey = "hybrid" | "artifact" | "trace" | "judge" | "state";
+export type ScoreProfileKey = "hybrid" | "artifact" | "trace" | "judge" | "state" | "craft";
 export type SandboxSelection = "process" | "macos-seatbelt" | "docker" | "mixed";
 export type BenchmarkReliability = "low" | "medium" | "high";
 
@@ -39,6 +39,18 @@ export interface RunRecord {
   artifactsPath: string;
   logText: string;
   createdAt: string;
+  diffAvailable: boolean;
+  diffFilesChanged: number;
+  diffInsertions: number;
+  diffDeletions: number;
+  verifierTestsAvailable: boolean;
+  verifierTestsTotal: number;
+  verifierTestsPassed: number;
+  qualityScore: number | null;
+  agentUsageAvailable: boolean;
+  agentInputTokens: number;
+  agentOutputTokens: number;
+  agentCostUsd: number;
 }
 
 export interface RunInput {
@@ -68,6 +80,18 @@ export interface RunInput {
   durationMs: number;
   artifactsPath: string;
   logText: string;
+  diffAvailable?: boolean;
+  diffFilesChanged?: number;
+  diffInsertions?: number;
+  diffDeletions?: number;
+  verifierTestsAvailable?: boolean;
+  verifierTestsTotal?: number;
+  verifierTestsPassed?: number;
+  qualityScore?: number | null;
+  agentUsageAvailable?: boolean;
+  agentInputTokens?: number;
+  agentOutputTokens?: number;
+  agentCostUsd?: number;
 }
 
 export interface RuntimeEvaluationRequest {

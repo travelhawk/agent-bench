@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Added an opt-in `craft` score profile plus an `AGENT_BENCH_SCORE_PROFILE` override that lets a run weight the judge's code-quality score and the workflow/process score into the total (outcome .45 / process .15 / review .15 / quality .15 / efficiency .1). Previously `qualityScore` was stored but never influenced the score, and the process score was only used by the `trace` profile; the default `hybrid` weighting is unchanged so historical runs stay comparable
+- Based the efficiency score on the agent-under-test's self-reported cost when it is available, instead of the judge/grader cost, so efficiency reflects the workflow being benchmarked rather than harness overhead (falls back to judge cost when the agent reports no usage)
+- Added an opt-in judge panel (`AGENT_BENCH_JUDGE_SAMPLES`>1): several independent judge passes with distinct reviewer lenses, aggregated by median score/qualityScore to reduce single-judge bias/variance; default 1 keeps the previous single-pass behavior and the cache is keyed per judge mode
+- Added an opt-in multimodal screenshot judge (`AGENT_BENCH_JUDGE_SCREENSHOT`): renders a visual task's `index.html` with Playwright and attaches it as image evidence so the judge can rate visual quality (guarded/dynamic import; falls back to text-only if unavailable). Optional `AGENT_BENCH_CHROMIUM_PATH` to pin the browser binary
+- Generalized graded scoring to custom (non-`node --test`) verifiers: a verify script may print `AGENT_BENCH_CHECKS: <passed>/<total>` and the outcome is graded by that ratio. Rewrote the `security-audit-report` and `landing-page-refresh` verifiers to emit per-check counts, so those tasks now discriminate partially-correct work instead of scoring binary
+- Fixed a corrupted `release-notes-cli` fixture: `tests/cli.test.js` carried a stray patch artifact (`*** Add File: ...`) that made the file unparseable, so that task's verifier could never pass for any agent
+- Graded the sandbox outcome score by verifier test-pass ratio (partial credit) instead of binary pass/fail, so two partially-passing workflows are ranked by how much actually works; the deterministic objective pass/fail stays strict (all-or-nothing)
+- Sharpened the LLM-judge contract to ground `score` in the task's success checks / failure modes and the observed verifier test-pass count, and to rate `qualityScore` from the workspace diff; the parsed test metrics and diff summary are now included in the judge's evidence context
+- Added a regression test asserting graded partial-pass outcome (1/3 tests → outcome ≈ 6.3, objectivePass false)
+- Added `test-results/` and `playwright-report/` to `.gitignore`
+
+- Added lines-of-code diff metrics per run (files changed, insertions, deletions) via a host-side git baseline commit and post-run diff, exposed in the CLI, summary artifacts, and workbench UI
+- Added structured test pass/fail counts for `node --test`-based verify commands, parsed from TAP summary lines, with an explicit "unavailable" state for tasks using custom verify scripts
+- Added an independent judge-scored code-quality metric (`qualityScore`), separate from the existing task-fit review score, backed by real diff evidence in the judge prompt and a low-confidence rules-based fallback when no gateway key is configured
+- Added an opt-in agent-under-test token usage/cost self-report contract (`result/usage.json`) so runners can report their own LLM token usage and cost, tracked separately from judge cost
+- Removed the dead legacy Express-era static UI assets (`src/ui/public`, `src/ui/styles`) and the now-unused Tailwind config/dependency, since the Next.js app is the only live UI surface
 - Replaced the default seeded suites with a faster benchmark set built around `repo-maintenance`, `product-builds`, and `creative-frontend`
 - Added executable fixtures for `security-audit-report`, `release-notes-cli`, `simple-feedback-web-app`, and `landing-page-refresh`
 - Restored benchmark metadata fields for reliability, time budget, cost budget, and default trials

@@ -10,3 +10,7 @@ npm-debug.log*
 .env.local
 .env
 next-env.d.ts
+
+# Playwright test artifacts
+test-results/
+playwright-report/

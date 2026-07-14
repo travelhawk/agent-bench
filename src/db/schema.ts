@@ -51,6 +51,18 @@ export function initializeSchema(db: Database.Database): void {
       duration_ms INTEGER NOT NULL,
       artifacts_path TEXT NOT NULL,
       log_text TEXT NOT NULL,
+      diff_available INTEGER NOT NULL DEFAULT 0,
+      diff_files_changed INTEGER NOT NULL DEFAULT 0,
+      diff_insertions INTEGER NOT NULL DEFAULT 0,
+      diff_deletions INTEGER NOT NULL DEFAULT 0,
+      verifier_tests_available INTEGER NOT NULL DEFAULT 0,
+      verifier_tests_total INTEGER NOT NULL DEFAULT 0,
+      verifier_tests_passed INTEGER NOT NULL DEFAULT 0,
+      quality_score REAL,
+      agent_usage_available INTEGER NOT NULL DEFAULT 0,
+      agent_input_tokens INTEGER NOT NULL DEFAULT 0,
+      agent_output_tokens INTEGER NOT NULL DEFAULT 0,
+      agent_cost_usd REAL NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -92,6 +104,18 @@ export function initializeSchema(db: Database.Database): void {
   addColumnIfMissing(db, "runs", "score_profile", "TEXT NOT NULL DEFAULT 'hybrid'");
   addColumnIfMissing(db, "runs", "score_confidence", "TEXT NOT NULL DEFAULT 'low'");
   addColumnIfMissing(db, "runs", "failure_reason", "TEXT");
+  addColumnIfMissing(db, "runs", "diff_available", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "diff_files_changed", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "diff_insertions", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "diff_deletions", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "verifier_tests_available", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "verifier_tests_total", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "verifier_tests_passed", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "quality_score", "REAL");
+  addColumnIfMissing(db, "runs", "agent_usage_available", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "agent_input_tokens", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "agent_output_tokens", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "agent_cost_usd", "REAL NOT NULL DEFAULT 0");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

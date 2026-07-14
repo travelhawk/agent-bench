@@ -13,12 +13,18 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
       run_key, agent_name, agent_version, suite_name, status,
       score, process_score, tests_score, llm_score, perf_score,
       score_profile, score_confidence, failure_reason,
-      latency_ms, cost_usd, duration_ms, artifacts_path, log_text
+      latency_ms, cost_usd, duration_ms, artifacts_path, log_text,
+      diff_available, diff_files_changed, diff_insertions, diff_deletions,
+      verifier_tests_available, verifier_tests_total, verifier_tests_passed,
+      quality_score, agent_usage_available, agent_input_tokens, agent_output_tokens, agent_cost_usd
     ) VALUES (
       @run_key, @agent_name, @agent_version, @suite_name, @status,
       @score, @process_score, @tests_score, @llm_score, @perf_score,
       @score_profile, @score_confidence, @failure_reason,
-      @latency_ms, @cost_usd, @duration_ms, @artifacts_path, @log_text
+      @latency_ms, @cost_usd, @duration_ms, @artifacts_path, @log_text,
+      @diff_available, @diff_files_changed, @diff_insertions, @diff_deletions,
+      @verifier_tests_available, @verifier_tests_total, @verifier_tests_passed,
+      @quality_score, @agent_usage_available, @agent_input_tokens, @agent_output_tokens, @agent_cost_usd
     )
   `).run({
     run_key: input.runKey,
@@ -38,7 +44,19 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
     cost_usd: input.costUsd,
     duration_ms: input.durationMs,
     artifacts_path: input.artifactsPath,
-    log_text: input.logText
+    log_text: input.logText,
+    diff_available: input.diffAvailable ? 1 : 0,
+    diff_files_changed: input.diffFilesChanged ?? 0,
+    diff_insertions: input.diffInsertions ?? 0,
+    diff_deletions: input.diffDeletions ?? 0,
+    verifier_tests_available: input.verifierTestsAvailable ? 1 : 0,
+    verifier_tests_total: input.verifierTestsTotal ?? 0,
+    verifier_tests_passed: input.verifierTestsPassed ?? 0,
+    quality_score: input.qualityScore ?? null,
+    agent_usage_available: input.agentUsageAvailable ? 1 : 0,
+    agent_input_tokens: input.agentInputTokens ?? 0,
+    agent_output_tokens: input.agentOutputTokens ?? 0,
+    agent_cost_usd: input.agentCostUsd ?? 0
   });
 
   const row = db.prepare(`
@@ -119,6 +137,18 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     durationMs: Number(row.duration_ms),
     artifactsPath: String(row.artifacts_path),
     logText: String(row.log_text),
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
+    diffAvailable: Boolean(row.diff_available),
+    diffFilesChanged: Number(row.diff_files_changed ?? 0),
+    diffInsertions: Number(row.diff_insertions ?? 0),
+    diffDeletions: Number(row.diff_deletions ?? 0),
+    verifierTestsAvailable: Boolean(row.verifier_tests_available),
+    verifierTestsTotal: Number(row.verifier_tests_total ?? 0),
+    verifierTestsPassed: Number(row.verifier_tests_passed ?? 0),
+    qualityScore: row.quality_score == null ? null : Number(row.quality_score),
+    agentUsageAvailable: Boolean(row.agent_usage_available),
+    agentInputTokens: Number(row.agent_input_tokens ?? 0),
+    agentOutputTokens: Number(row.agent_output_tokens ?? 0),
+    agentCostUsd: Number(row.agent_cost_usd ?? 0)
   };
 }

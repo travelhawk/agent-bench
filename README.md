@@ -130,6 +130,21 @@ Without a key, `agent-bench` still works using deterministic rules-based review 
 That is acceptable for low-cost smoke guidance, but it should not be treated as a strong AI-capability measurement on subjective or review-only tasks.
 For benchmark-grade comparisons, prefer fixture-backed tasks with executable verifiers and treat the judge as secondary.
 
+### Judge robustness (opt-in)
+
+To harden the LLM review beyond a single pass (all require `AI_GATEWAY_API_KEY`):
+
+- `AGENT_BENCH_JUDGE_SAMPLES` (default `1`) — set `>1` to run a **judge panel**: several independent passes with distinct reviewer lenses (correctness, quality, deliverable-fit, adversarial), aggregated by **median** score/qualityScore to reduce single-judge bias and variance. The anchor pass stays at temperature 0; the rest use a little temperature so the lenses diverge. Cached per judge mode.
+- `AGENT_BENCH_JUDGE_SCREENSHOT` (default `false`) — for visual/frontend tasks, render the produced `index.html` with Playwright and attach it as **multimodal evidence** so the judge can rate visual quality, not just the HTML/CSS text. Needs Playwright and a multimodal-capable judge model; falls back silently to text-only if a screenshot can't be produced.
+- `AGENT_BENCH_CHROMIUM_PATH` — optional explicit Chromium binary for the screenshot judge (otherwise Playwright's bundled build is used).
+
+### Score composition
+
+The total is a weighted blend of the outcome, process, review, efficiency, and (opt-in) code-quality components, chosen per task by an evaluator-aware profile.
+
+- `AGENT_BENCH_SCORE_PROFILE` — force a profile instead of auto-picking. Valid keys: `hybrid` (default sandbox), `artifact`, `trace`, `judge`, `state`, and `craft`. `craft` is an opt-in composite that additionally weights the judge's `qualityScore` (code quality) and the workflow/process score that the default profiles leave unweighted — `outcome .45 / process .15 / review .15 / quality .15 / efficiency .1`. Missing components renormalize, so `craft` also works on the rules-based fallback. The `hybrid` weighting is intentionally unchanged, so scores stay comparable to historical runs.
+- **Efficiency** is scored against the **agent-under-test's own reported cost** when it provides one (`result/usage.json`), so it measures the workflow being benchmarked rather than the grader; it falls back to the judge cost when the agent reports no usage.
+
 Sandboxed runners also receive:
 
 - `AGENT_BENCH_PROVIDER_API_KEY` when you launch a run with a provider key
@@ -206,6 +221,15 @@ Current runs now come in two honest modes:
 - Batch failures are now persisted as failed history rows instead of being hidden in a transient batch response only.
 
 This means the workbench now performs real sandboxed execution for the default seeded tasks, with the landing-page task intentionally retaining a human-review component on top of a structural verifier.
+
+### Metrics per run
+
+Every run now also carries automatically-derived and judge-scored metrics, all with an explicit "unavailable" state rather than a guessed value:
+
+- **Diff**: files changed / insertions / deletions, computed by git-diffing the sandboxed workspace before and after the agent runs. Requires `git` on the host running `agent-bench` (not inside the sandbox); degrades to unavailable if git is missing.
+- **Tests / checks**: pass/fail/total counts, parsed from `node --test` TAP output when a task's `Verify Command` invokes it, or from an `AGENT_BENCH_CHECKS: <passed>/<total>` line that a custom verify script may print. This count also grades the outcome score (partial credit), so partially-passing workflows are ranked rather than collapsed to pass/fail. A verifier that emits neither reports "unavailable" (never a guessed count).
+- **Quality**: an LLM-judge-scored 0–10 rating of the produced code's readability, style, and error handling, kept separate from the existing task-fit review score so the two are independently comparable. Falls back to a clearly-labeled low-confidence heuristic when no `AI_GATEWAY_API_KEY` is configured.
+- **Agent usage**: the agent-under-test's own token usage/cost, self-reported by the runner writing `result/usage.json` (`{"inputTokens": ..., "outputTokens": ..., "costUsd": ...}` — `costUsd` is optional) into `$AGENT_BENCH_WORKSPACE`. Most runners don't implement this yet, so it reports "unavailable" by default.
 
 ## Benchmarks
 
@@ -347,6 +371,8 @@ Important:
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
 - Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
+- Graded scoring reads `node --test` TAP output or an `AGENT_BENCH_CHECKS: <passed>/<total>` marker from a custom verifier; a verifier that emits neither still works but only as binary pass/fail.
+- Agent-under-test token usage is opt-in and voluntary (`result/usage.json`); `agent-bench` cannot observe LLM calls made from inside an opaque runner process or container.
 
 ## Troubleshooting
 
