@@ -39,7 +39,7 @@ interface JudgeResult {
   totalTokens: number;
   rawText: string;
   reason: string;
-  mode: "gateway" | "gateway-cache" | "rules";
+  mode: "gateway" | "gateway-cache" | "rules" | "off";
 }
 
 interface ParsedJudgeResponse {
@@ -1136,7 +1136,11 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const outcomeScore = sandbox.mode === "sandbox" ? sandbox.outcomeScore : assessment.outcomeScore;
   const processScore = sandbox.mode === "sandbox" && sandbox.processScore > 0 ? sandbox.processScore : assessment.processScore;
 
-  const apiKey = resolveGatewayApiKey(input.gatewayApiKey);
+  // "off" skips the LLM judge entirely (deterministic rules fallback, zero
+  // grader tokens) even when a gateway key is configured in the environment.
+  const reviewDisabled = input.review === "off"
+    || (process.env.AGENT_BENCH_REVIEW ?? "").trim().toLowerCase() === "off";
+  const apiKey = reviewDisabled ? undefined : resolveGatewayApiKey(input.gatewayApiKey);
   const cacheEnabled = getJudgeCacheEnabled();
   const judgePromptContent = [
     `Task Context:\n${taskContext}`,
@@ -1244,7 +1248,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       totalTokens: 0,
       rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: rulesQualityScore, reason: rulesReviewReason }),
       reason: `${rulesReviewReason} (quality score is a low-confidence heuristic, not LLM-judged)`.trim(),
-      mode: "rules"
+      mode: reviewDisabled ? "off" : "rules"
     };
   }
 
@@ -1440,6 +1444,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     objectiveChecksAvailable: sandbox.objectiveChecks.available,
     objectiveChecksPassed: sandbox.objectiveChecks.passed,
     deterministic: sandbox.objectiveChecks.deterministic,
+    reviewMode: judge.mode,
+    judgeTotalTokens: judge.totalTokens,
     scoreProfile,
     scoreConfidence,
     failureReason: null,

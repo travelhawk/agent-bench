@@ -6,13 +6,14 @@ import type {
   AgentRecord, BatchRunFailure, BatchRunResult, BenchmarkEvaluatorMode, BenchmarkInteractionMode,
   BenchmarkResolution, BenchmarkSuiteRecord, BenchmarkTaskRecord, InstalledSkillRecord, RunMode, RunRecord, RunResultPayload, WorkbenchSnapshot
 } from "../src/types";
+import { ComparisonBoard } from "./_components/comparison-board";
 import { RunCard } from "./_components/run-card";
 import { RunInspector } from "./_components/run-inspector";
 import {
   AsyncTone, Confidence, formatInstalls, humanizeToken, splitListInput, toneClass
 } from "./_components/shared";
 
-type ViewMode = "lab" | "history" | "benchmarks";
+type ViewMode = "lab" | "compare" | "history" | "benchmarks";
 type WorkflowState = "blocked" | "ready" | "running" | "completed-with-failures" | "completed-clean";
 type ThemeMode = "light" | "dark" | "system";
 
@@ -42,7 +43,7 @@ const INTERACTION_OPTIONS: BenchmarkInteractionMode[] = ["artifact", "terminal",
 const EVALUATOR_OPTIONS: BenchmarkEvaluatorMode[] = ["state", "artifact", "trace", "judge", "hybrid"];
 const DIFFICULTY_OPTIONS = ["low", "medium", "high"] as const;
 const THEME_KEY = "agent-bench:theme";
-const STORAGE_KEYS = { selectedAgents: "agent-bench:selected-agents", benchmarkKey: "agent-bench:benchmark-key", taskKey: "agent-bench:task-key", runMode: "agent-bench:run-mode", model: "agent-bench:model", providerApiKey: "agent-bench:provider-api-key" } as const;
+const STORAGE_KEYS = { selectedAgents: "agent-bench:selected-agents", benchmarkKey: "agent-bench:benchmark-key", taskKey: "agent-bench:task-key", runMode: "agent-bench:run-mode", model: "agent-bench:model", providerApiKey: "agent-bench:provider-api-key", skipJudge: "agent-bench:skip-judge" } as const;
 
 const emptyForm = (): BenchmarkFormState => ({
   type: "suite", benchmarkKey: "", key: "", title: "", description: "", expectedOutcome: "", whyThisTask: "", inputs: "",
@@ -92,6 +93,7 @@ async function mutateJson<T>(url: string, method: "POST" | "PATCH" | "DELETE", b
 
 const VIEW_SUBTITLE: Record<ViewMode, string> = {
   lab: "Load agents, choose tasks, run a bounded benchmark, and inspect the evidence.",
+  compare: "Every agent × model setup side by side — score, quality, tests, speed, tokens, and cost — computed from persisted runs at zero token cost.",
   history: "Every run with its score, diff, tests, quality, and cost — open one to inspect, or compare two.",
   benchmarks: "Author new suites and tasks, and browse the seeded benchmark library."
 };
@@ -143,6 +145,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [lastBatchFailureJobs, setLastBatchFailureJobs] = useState<RetryJob[]>([]);
   const [expandedTaskKeys, setExpandedTaskKeys] = useState<string[]>([]);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [skipJudge, setSkipJudge] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
   const [compareKeys, setCompareKeys] = useState<string[]>([]);
 
@@ -154,6 +157,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     if (savedBenchmark) setBenchmarkKey(savedBenchmark); if (savedTask) setTaskKey(savedTask);
     if (savedRunMode === "single-task" || savedRunMode === "benchmark-cycle") setRunMode(savedRunMode);
     if (savedModel) setModel(savedModel); if (savedApiKey) setProviderApiKey(savedApiKey);
+    if (localStorage.getItem(STORAGE_KEYS.skipJudge) === "true") setSkipJudge(true);
     const savedTheme = localStorage.getItem(THEME_KEY);
     if (savedTheme === "light" || savedTheme === "dark") setThemeMode(savedTheme);
   }, []);
@@ -164,8 +168,9 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     localStorage.setItem(STORAGE_KEYS.taskKey, taskKey);
     localStorage.setItem(STORAGE_KEYS.runMode, runMode);
     localStorage.setItem(STORAGE_KEYS.model, model);
+    localStorage.setItem(STORAGE_KEYS.skipJudge, String(skipJudge));
     sessionStorage.setItem(STORAGE_KEYS.providerApiKey, providerApiKey);
-  }, [benchmarkKey, model, providerApiKey, runMode, selectedAgentPaths, taskKey]);
+  }, [benchmarkKey, model, providerApiKey, runMode, selectedAgentPaths, skipJudge, taskKey]);
 
   const selectedBenchmark = snapshot.benchmarks.find((entry) => entry.key === benchmarkKey) ?? snapshot.benchmarks[0] ?? null;
   const selectedTask = selectedBenchmark?.tasks.find((entry) => entry.key === taskKey) ?? selectedBenchmark?.tasks[0] ?? null;
@@ -336,7 +341,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     try {
       const response = await mutateJson<BatchRunResult>("/api/run/batch", "POST", {
         agents: retryJobs ? [] : selectedAgents.map((agent) => agent.path), benchmarkKey, taskKey: retryJobs ? undefined : runMode === "single-task" ? selectedTask?.key : undefined,
-        runMode, model: model || undefined, providerApiKey: providerApiKey || undefined, jobs: retryJobs
+        runMode, model: model || undefined, providerApiKey: providerApiKey || undefined, review: skipJudge ? "off" : undefined, jobs: retryJobs
       });
       setLastBatchResult(response);
       setLastBatchFailureJobs(response.failures.map((failure) => ({ benchmarkKey: response.benchmarkKey, taskKey: failure.taskKey, agentPath: failure.agentPath })));
@@ -370,6 +375,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
         <div className="brand-lockup"><div className="brand-mark">AB</div><div><div className="eyebrow">Eval workbench</div><div className="brand-title">agent-bench</div></div></div>
         <nav className="nav-stack">
           <button type="button" className={`nav-item ${view === "lab" ? "active" : ""}`} onClick={() => setView("lab")}>Test Lab</button>
+          <button type="button" className={`nav-item ${view === "compare" ? "active" : ""}`} onClick={() => setView("compare")}>Comparison</button>
           <button type="button" className={`nav-item ${view === "history" ? "active" : ""}`} onClick={() => setView("history")}>Run History</button>
           <button type="button" className={`nav-item ${view === "benchmarks" ? "active" : ""}`} onClick={() => setView("benchmarks")}>Benchmark Library</button>
         </nav>
@@ -506,8 +512,9 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                     <div className="config-grid">
                       <label className="field"><span>Gateway API key</span><input value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} placeholder="Optional for model-based review" /></label>
                       <label className="field"><span>Review model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="openai/gpt-4.1-mini" /></label>
+                      <label className="field field-checkbox"><span>Skip LLM judge (0 tokens)</span><input type="checkbox" checked={skipJudge} onChange={(event) => setSkipJudge(event.target.checked)} /></label>
                     </div>
-                    <p className="status-line">Add a Gateway key for model review. Leave empty to use the env key or the deterministic rules fallback.</p>
+                    <p className="status-line">Add a Gateway key for model review. Leave empty to use the env key or the deterministic rules fallback. Skipping the judge keeps runs fully deterministic and spends zero grader tokens — verifier-backed outcome, tests, diff, duration, and agent-usage metrics still work.</p>
                   </div>
                 </details>
               </div>
@@ -552,6 +559,15 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                 <pre className="log-panel">{snapshot.latestLogText || "No run log yet."}</pre>
               </article>
             </section>
+          </section>
+        )}
+
+        {view === "compare" && (
+          <section className="view-stack">
+            <article className="panel">
+              <div className="section-header"><div><p className="eyebrow">Side by side</p><h2>Agent × Model Comparison</h2></div><button type="button" className="secondary-action" onClick={() => refreshSnapshot()}>Refresh</button></div>
+              <ComparisonBoard runs={snapshot.runs} />
+            </article>
           </section>
         )}
 

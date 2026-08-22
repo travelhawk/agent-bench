@@ -9,6 +9,7 @@ import { newRunKey, runEvaluationInRuntime } from "./core/runner";
 import { createDb, initializeSchema } from "./db/schema";
 import { ensureProjectDirs, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath } from "./server/config";
 import { getBestScore, getRunByKey, insertRun, listRuns } from "./db/store";
+import { buildComparisonMatrix } from "./core/comparison";
 import { startUi } from "./ui/server";
 
 const program = new Command();
@@ -51,6 +52,7 @@ program
   .option("--benchmark <key>", "Benchmark suite key", "repo-maintenance")
   .option("--task <key>", "Optional task key inside benchmark")
   .option("--model <provider/model>", "Vercel AI Gateway model identifier")
+  .option("--no-judge", "Skip the LLM judge (deterministic review, zero grader tokens)")
   .option("--db <path>", "Custom sqlite path")
   .action(async (opts) => {
     const dbPath = resolveDbPath(cwd, opts.db);
@@ -73,7 +75,8 @@ program
       artifactsRoot: dirs.artifacts,
       benchmarksDir,
       benchmarks,
-      model: opts.model
+      model: opts.model,
+      review: opts.judge === false ? "off" : "auto"
     });
     const inserted = insertRun(db, runInput);
 
@@ -153,6 +156,55 @@ program
       const qualityDelta = Number((right.qualityScore - left.qualityScore).toFixed(2));
       // eslint-disable-next-line no-console
       console.log(`Quality change: ${qualityDelta > 0 ? "+" : ""}${qualityDelta} (${left.qualityScore} -> ${right.qualityScore})`);
+    }
+  });
+
+program
+  .command("matrix")
+  .description("Compare all agent × model setups side by side from persisted runs (zero token cost)")
+  .option("--benchmark <key>", "Filter to one benchmark suite")
+  .option("--limit <n>", "Number of recent runs to aggregate", "200")
+  .option("--db <path>", "Custom sqlite path")
+  .action((opts) => {
+    const dbPath = resolveDbPath(cwd, opts.db);
+    const db = ensureDbReady(dbPath);
+    const limit = Number(opts.limit);
+    const runs = listRuns(db, Number.isFinite(limit) ? limit : 200);
+    const matrix = buildComparisonMatrix(runs, opts.benchmark ? { benchmarkKey: opts.benchmark } : {});
+
+    if (matrix.setups.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log("No runs found. Launch runs first with `agent-bench run` or from the workbench.");
+      return;
+    }
+
+    const bar = (value: number | null, max: number) => {
+      if (value == null || max <= 0) return "".padEnd(10, " ");
+      const filled = Math.round(Math.max(0, Math.min(1, value / max)) * 10);
+      return "█".repeat(filled).padEnd(10, "·");
+    };
+    const tokens = (value: number) => value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
+
+    // eslint-disable-next-line no-console
+    console.log(`Setups: ${matrix.setups.length} | Runs: ${matrix.totals.runs} | Judge tokens: ${tokens(matrix.totals.judgeTokens)} (${matrix.totals.gatewayReviews} fresh, ${matrix.totals.cachedReviews} cached, ${matrix.totals.rulesReviews + matrix.totals.offReviews} rules/off = 0 tokens) | Cost: $${(matrix.totals.judgeCostUsd + matrix.totals.agentCostUsd).toFixed(2)}`);
+    // eslint-disable-next-line no-console
+    console.log("");
+
+    for (const setup of matrix.setups) {
+      const testsLabel = setup.testsTotal > 0 ? `${setup.testsPassed}/${setup.testsTotal}` : "n/a";
+      const durationLabel = setup.avgDurationMs != null ? `${(setup.avgDurationMs / 1000).toFixed(1)}s` : "n/a";
+      const agentTokensLabel = setup.agentUsageRuns > 0 ? tokens(setup.agentTokens) : "n/a";
+      // eslint-disable-next-line no-console
+      console.log(`${setup.agentName} · ${setup.modelLabel}`);
+      // eslint-disable-next-line no-console
+      console.log(`  score ${bar(setup.avgScore, 10)} ${setup.avgScore != null ? setup.avgScore.toFixed(2) : "n/a"} | quality ${setup.avgQuality != null ? setup.avgQuality.toFixed(2) : "n/a"} | tests ${testsLabel} | avg ${durationLabel} | agent tokens ${agentTokensLabel} | judge tokens ${tokens(setup.judgeTokens)} | $${(setup.judgeCostUsd + setup.agentCostUsd).toFixed(2)} | runs ${setup.completedCount}${setup.failedCount > 0 ? ` (+${setup.failedCount} failed)` : ""}`);
+      const taskLines = Object.values(setup.tasks)
+        .sort((left, right) => left.taskKey.localeCompare(right.taskKey))
+        .map((cell) => `${cell.taskKey}=${cell.avgScore != null ? cell.avgScore.toFixed(1) : cell.failedCount > 0 ? "failed" : "n/a"}`);
+      if (taskLines.length > 1) {
+        // eslint-disable-next-line no-console
+        console.log(`  tasks: ${taskLines.join("  ")}`);
+      }
     }
   });
 

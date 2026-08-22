@@ -15,9 +15,16 @@ export interface ScoreBreakdown {
   total: number;
 }
 
+export type ReviewMode = "gateway" | "gateway-cache" | "rules" | "off";
+
 export interface RunRecord {
   id: number;
   runKey: string;
+  benchmarkKey: string | null;
+  taskKey: string | null;
+  modelId: string | null;
+  reviewMode: ReviewMode | null;
+  judgeTotalTokens: number;
   agentName: string;
   agentVersion: string;
   suiteName: string;
@@ -72,6 +79,8 @@ export interface RunInput {
   objectiveChecksAvailable?: number;
   objectiveChecksPassed?: number;
   deterministic?: boolean;
+  reviewMode?: ReviewMode | null;
+  judgeTotalTokens?: number;
   scoreProfile: ScoreProfileKey;
   scoreConfidence: ScoreConfidence;
   failureReason?: string | null;
@@ -108,6 +117,7 @@ export interface RuntimeEvaluationRequest {
   benchmarks: BenchmarkSuiteRecord[];
   model?: string;
   gatewayApiKey?: string;
+  review?: "auto" | "off";
   strictSandbox?: boolean;
   resolvedSandboxProvider?: SandboxSelection;
   trialIndex?: number | null;
