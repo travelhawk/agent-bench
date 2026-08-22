@@ -136,6 +136,25 @@ export function RunInspector({ detail, onClose }: { detail: RunResultPayload; on
             </div>
           ) : null}
 
+          {(run.screenshotFile || run.videoFile) && (
+            <div className="drawer-section">
+              <h3>Produced page</h3>
+              {run.videoFile ? (
+                <video
+                  className="detail-image"
+                  controls
+                  preload="none"
+                  poster={run.screenshotFile ? `/api/artifacts/${run.runKey}/${run.screenshotFile}` : undefined}
+                  src={`/api/artifacts/${run.runKey}/${run.videoFile}`}
+                />
+              ) : run.screenshotFile ? (
+                <a href={`/api/artifacts/${run.runKey}/${run.screenshotFile}`} target="_blank" rel="noreferrer">
+                  <img src={`/api/artifacts/${run.runKey}/${run.screenshotFile}`} alt={`Rendered page for ${run.runKey}`} className="detail-image" />
+                </a>
+              ) : null}
+            </div>
+          )}
+
           <div className="drawer-section">
             <h3>Report</h3>
             <a href={detail.reportUrl} target="_blank" rel="noreferrer"><img src={detail.reportUrl} alt={`Run report ${run.runKey}`} className="detail-image" /></a>

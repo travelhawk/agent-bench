@@ -35,6 +35,8 @@ function makeRunInput(overrides: Partial<RunInput> & { runKey: string }): RunInp
     agentCostUsd: 0.01,
     reviewMode: "gateway",
     judgeTotalTokens: 2200,
+    screenshotFile: "page.png",
+    videoFile: "page.webm",
     ...overrides
   };
 }
@@ -54,6 +56,8 @@ test("insertRun persists comparison metadata (model, benchmark, task, review mod
     assert.equal(run.modelId, "openai/gpt-4.1-mini");
     assert.equal(run.reviewMode, "gateway");
     assert.equal(run.judgeTotalTokens, 2200);
+    assert.equal(run.screenshotFile, "page.png");
+    assert.equal(run.videoFile, "page.webm");
   } finally {
     db.close();
     rmSync(workspace, { recursive: true, force: true });

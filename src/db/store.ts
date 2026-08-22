@@ -18,7 +18,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
       diff_available, diff_files_changed, diff_insertions, diff_deletions,
       verifier_tests_available, verifier_tests_total, verifier_tests_passed,
       quality_score, agent_usage_available, agent_input_tokens, agent_output_tokens, agent_cost_usd,
-      review_mode, judge_total_tokens
+      review_mode, judge_total_tokens, screenshot_file, video_file
     ) VALUES (
       @run_key, @experiment_key, @benchmark_key, @task_key, @setup_key, @workflow_path, @model_id, @trial_index,
       @agent_name, @agent_version, @suite_name, @status,
@@ -28,7 +28,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
       @diff_available, @diff_files_changed, @diff_insertions, @diff_deletions,
       @verifier_tests_available, @verifier_tests_total, @verifier_tests_passed,
       @quality_score, @agent_usage_available, @agent_input_tokens, @agent_output_tokens, @agent_cost_usd,
-      @review_mode, @judge_total_tokens
+      @review_mode, @judge_total_tokens, @screenshot_file, @video_file
     )
   `).run({
     run_key: input.runKey,
@@ -69,7 +69,9 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
     agent_output_tokens: input.agentOutputTokens ?? 0,
     agent_cost_usd: input.agentCostUsd ?? 0,
     review_mode: input.reviewMode ?? null,
-    judge_total_tokens: input.judgeTotalTokens ?? 0
+    judge_total_tokens: input.judgeTotalTokens ?? 0,
+    screenshot_file: input.screenshotFile ?? null,
+    video_file: input.videoFile ?? null
   });
 
   const row = db.prepare(`
@@ -164,6 +166,8 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     verifierTestsTotal: Number(row.verifier_tests_total ?? 0),
     verifierTestsPassed: Number(row.verifier_tests_passed ?? 0),
     qualityScore: row.quality_score == null ? null : Number(row.quality_score),
+    screenshotFile: row.screenshot_file == null ? null : String(row.screenshot_file),
+    videoFile: row.video_file == null ? null : String(row.video_file),
     agentUsageAvailable: Boolean(row.agent_usage_available),
     agentInputTokens: Number(row.agent_input_tokens ?? 0),
     agentOutputTokens: Number(row.agent_output_tokens ?? 0),

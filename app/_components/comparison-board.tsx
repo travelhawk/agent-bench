@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { RunRecord } from "../../src/types";
-import { buildComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, runBenchmarkKey } from "../../src/core/comparison";
+import { buildComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, runBenchmarkKey, runTaskKey, setupKeyForRun } from "../../src/core/comparison";
 
 function formatTokens(value: number): string {
   if (value <= 0) return "0";
@@ -49,6 +49,27 @@ export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
     () => buildComparisonMatrix(runs, benchmarkFilter === "all" ? {} : { benchmarkKey: benchmarkFilter }),
     [runs, benchmarkFilter]
   );
+
+  // Latest run with visual artifacts per task × setup, so the same landing
+  // page / web app built by different workflows can be compared side by side.
+  const visualsByTask = useMemo(() => {
+    const byTask = new Map<string, Map<string, RunRecord>>();
+    for (const run of runs) {
+      if (benchmarkFilter !== "all" && runBenchmarkKey(run) !== benchmarkFilter) continue;
+      if (!run.screenshotFile && !run.videoFile) continue;
+      const taskKey = runTaskKey(run) ?? "(suite)";
+      let setups = byTask.get(taskKey);
+      if (!setups) { setups = new Map(); byTask.set(taskKey, setups); }
+      const existing = setups.get(setupKeyForRun(run));
+      if (!existing || run.createdAt > existing.createdAt) setups.set(setupKeyForRun(run), run);
+    }
+    return [...byTask.entries()]
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([taskKey, setups]) => ({
+        taskKey,
+        cells: [...setups.values()].sort((left, right) => right.score - left.score)
+      }));
+  }, [runs, benchmarkFilter]);
 
   if (runs.length === 0) {
     return <div className="empty-state">No persisted runs yet. Launch a batch in the Test Lab first — the comparison builds itself from run history without spending any tokens.</div>;
@@ -134,6 +155,44 @@ export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
           </tbody>
         </table>
       </div>
+
+      {visualsByTask.length > 0 && (
+        <div className="heatmap-block">
+          <div className="section-header"><div><p className="eyebrow">Same task, different workflows</p><h3>Visual comparison</h3></div></div>
+          {visualsByTask.map(({ taskKey, cells }) => (
+            <div key={`visual-${taskKey}`} className="visual-task-block">
+              <h4 className="visual-task-title">{taskKey}</h4>
+              <div className="visual-grid">
+                {cells.map((run) => (
+                  <figure key={`visual-${taskKey}-${run.runKey}`} className="visual-card">
+                    <div className="visual-card-head">
+                      <div><strong>{run.agentName}</strong><span className="model-chip model-chip-muted">{run.modelId ?? NO_MODEL_LABEL}</span></div>
+                      <span className={`status-chip ${run.score >= 7.5 ? "status-chip-good" : run.score >= 5 ? "status-chip-warn" : "status-chip-bad"}`}>{run.score.toFixed(1)}</span>
+                    </div>
+                    {run.videoFile ? (
+                      <video
+                        className="visual-media"
+                        controls
+                        preload="none"
+                        poster={run.screenshotFile ? `/api/artifacts/${run.runKey}/${run.screenshotFile}` : undefined}
+                        src={`/api/artifacts/${run.runKey}/${run.videoFile}`}
+                      />
+                    ) : run.screenshotFile ? (
+                      <a href={`/api/artifacts/${run.runKey}/${run.screenshotFile}`} target="_blank" rel="noreferrer">
+                        <img className="visual-media" src={`/api/artifacts/${run.runKey}/${run.screenshotFile}`} alt={`${run.agentName} output for ${taskKey}`} loading="lazy" />
+                      </a>
+                    ) : null}
+                    <figcaption className="visual-card-foot">
+                      <span>{new Date(run.createdAt).toLocaleString()}</span>
+                      {run.screenshotFile && run.videoFile ? <a className="text-link" href={`/api/artifacts/${run.runKey}/${run.screenshotFile}`} target="_blank" rel="noreferrer">Full screenshot</a> : null}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {matrix.taskKeys.length > 1 && (
         <div className="heatmap-block">

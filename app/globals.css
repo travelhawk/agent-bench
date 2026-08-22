@@ -1208,6 +1208,51 @@ code {
 .runs-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .heatmap-block { display: flex; flex-direction: column; gap: 0.6rem; }
+
+.visual-task-block { display: flex; flex-direction: column; gap: 0.5rem; }
+.visual-task-title { margin: 0; font-family: var(--font-display); font-size: 0.95rem; color: var(--muted); }
+.visual-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 0.9rem;
+}
+.visual-card {
+  margin: 0;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.visual-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+}
+.visual-card-head > div { display: flex; flex-direction: column; gap: 0.25rem; }
+.visual-card-head strong { font-family: var(--font-display); font-size: 0.9rem; }
+.visual-media {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+  background: var(--surface-hover);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.visual-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--faint);
+  font-size: 0.76rem;
+}
 .heat-head { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
 .heat-cell { text-align: center; }
 .heat-cell strong { display: block; font-family: var(--font-display); font-size: 0.95rem; }

@@ -104,6 +104,23 @@ The comparison is aggregated from runs already persisted in SQLite, so opening, 
 
 To compare models, launch the same agents and tasks with different `Review model` values (UI) or `--model` (CLI); each run now persists its model id, benchmark, task, review mode, and judge token usage.
 
+### Visual comparison (screenshots + videos)
+
+Every sandboxed run whose workspace produces an `index.html` automatically captures two visual artifacts via local Playwright rendering (no model call, zero tokens):
+
+- `page.png` — a full-page screenshot of the produced page
+- `page.webm` — a short scroll-through video of the whole deliverable
+
+The Comparison tab shows a **Visual comparison** gallery per task: the latest visual run of each agent × model setup side by side, so different workflows for the same landing page or web app can be compared at a glance. Videos use the screenshot as poster and only load when played. The run inspector shows the same media under "Produced page", and both files are plain run artifacts served from `/api/artifacts/<runKey>/...`.
+
+Controls:
+
+- `AGENT_BENCH_VISUALS=false` — disable visual capture entirely
+- `AGENT_BENCH_VISUAL_VIDEO=false` — keep screenshots but skip video recording
+- `AGENT_BENCH_CHROMIUM_PATH` — pin the Chromium binary (shared with the screenshot judge)
+
+Capture is best-effort: a missing browser or a timeout leaves the artifact out without failing the run. When the multimodal screenshot judge is enabled it reuses the captured `page.png` instead of rendering twice.
+
 ### Keeping token usage low
 
 - **Skip the LLM judge entirely**: check "Skip LLM judge (0 tokens)" in the Test Lab's provider panel, pass `--no-judge` on the CLI, or set `AGENT_BENCH_REVIEW=off`. Runs stay fully comparable on the objective signals (verifier outcome, tests, diff, duration, agent usage); only the judge review/quality scores fall back to the deterministic rules rubric.

@@ -54,6 +54,8 @@ export interface RunRecord {
   verifierTestsTotal: number;
   verifierTestsPassed: number;
   qualityScore: number | null;
+  screenshotFile: string | null;
+  videoFile: string | null;
   agentUsageAvailable: boolean;
   agentInputTokens: number;
   agentOutputTokens: number;
@@ -97,6 +99,8 @@ export interface RunInput {
   verifierTestsTotal?: number;
   verifierTestsPassed?: number;
   qualityScore?: number | null;
+  screenshotFile?: string | null;
+  videoFile?: string | null;
   agentUsageAvailable?: boolean;
   agentInputTokens?: number;
   agentOutputTokens?: number;

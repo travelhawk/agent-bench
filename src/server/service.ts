@@ -729,9 +729,13 @@ export function readArtifact(runKey: string, fileName: string, dbPathInput?: str
     const body = readFileSync(artifactPath);
     const contentType = safeName.endsWith(".svg")
       ? "image/svg+xml"
-      : safeName.endsWith(".json")
-        ? "application/json; charset=utf-8"
-        : "text/plain; charset=utf-8";
+      : safeName.endsWith(".png")
+        ? "image/png"
+        : safeName.endsWith(".webm")
+          ? "video/webm"
+          : safeName.endsWith(".json")
+            ? "application/json; charset=utf-8"
+            : "text/plain; charset=utf-8";
 
     return { body, contentType };
   }, dbPathInput);
