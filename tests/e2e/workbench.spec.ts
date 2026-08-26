@@ -17,6 +17,9 @@ test("core workbench UI flows render and navigate", async ({ page }) => {
 
   await expect(page.getByRole("button", { name: "Run selected agents" })).toBeVisible();
 
+  await page.getByRole("button", { name: "Comparison" }).click();
+  await expect(page.getByRole("heading", { name: "Agent × Model Comparison" })).toBeVisible();
+
   await page.getByRole("button", { name: "Run History" }).click();
   await expect(page.getByRole("heading", { name: "Run History" })).toBeVisible();
 

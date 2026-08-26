@@ -83,9 +83,49 @@ Use the CLI directly:
 
 ```bash
 pnpm exec agent-bench run
+pnpm exec agent-bench run --no-judge   # deterministic review only, zero grader tokens
 pnpm exec agent-bench history
 pnpm exec agent-bench compare --left <run-key> --right <run-key>
+pnpm exec agent-bench matrix           # all agent × model setups side by side
 ```
+
+## Comparing Agents And Models
+
+The workbench's **Comparison** tab (and the `matrix` CLI command) shows every agent × model setup side by side:
+
+- average score and judge quality with visual bars, best setup highlighted
+- verifier test pass counts and per-task score heatmap
+- average duration per run
+- agent-under-test tokens (from `result/usage.json` self-reports) and judge tokens
+- total cost per setup and per comparison
+- a benchmark filter plus run/failure counts per setup
+
+The comparison is aggregated from runs already persisted in SQLite, so opening, filtering, and re-rendering it costs **zero tokens**. Token spend is also made visible: the view counts how many reviews came from the judge cache or the deterministic rules rubric (free) versus fresh gateway calls.
+
+To compare models, launch the same agents and tasks with different `Review model` values (UI) or `--model` (CLI); each run now persists its model id, benchmark, task, review mode, and judge token usage.
+
+### Visual comparison (screenshots + videos)
+
+Every sandboxed run whose workspace produces an `index.html` automatically captures two visual artifacts via local Playwright rendering (no model call, zero tokens):
+
+- `page.png` — a full-page screenshot of the produced page
+- `page.webm` — a short scroll-through video of the whole deliverable
+
+The Comparison tab shows a **Visual comparison** gallery per task: the latest visual run of each agent × model setup side by side, so different workflows for the same landing page or web app can be compared at a glance. Videos use the screenshot as poster and only load when played. The run inspector shows the same media under "Produced page", and both files are plain run artifacts served from `/api/artifacts/<runKey>/...`.
+
+Controls:
+
+- `AGENT_BENCH_VISUALS=false` — disable visual capture entirely
+- `AGENT_BENCH_VISUAL_VIDEO=false` — keep screenshots but skip video recording
+- `AGENT_BENCH_CHROMIUM_PATH` — pin the Chromium binary (shared with the screenshot judge)
+
+Capture is best-effort: a missing browser or a timeout leaves the artifact out without failing the run. When the multimodal screenshot judge is enabled it reuses the captured `page.png` instead of rendering twice.
+
+### Keeping token usage low
+
+- **Skip the LLM judge entirely**: check "Skip LLM judge (0 tokens)" in the Test Lab's provider panel, pass `--no-judge` on the CLI, or set `AGENT_BENCH_REVIEW=off`. Runs stay fully comparable on the objective signals (verifier outcome, tests, diff, duration, agent usage); only the judge review/quality scores fall back to the deterministic rules rubric.
+- **Judge cache**: identical judge inputs are served from `judge-cache.json` by default, so re-running an unchanged agent/task pair does not spend new judge tokens.
+- **Compare from history**: the Comparison tab and `matrix` never call a model — run once, compare as often as you like.
 
 ## The Recommended Flow
 

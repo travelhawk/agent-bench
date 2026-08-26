@@ -10,24 +10,35 @@ export interface DashboardSummary {
 export function insertRun(db: Database.Database, input: RunInput): RunRecord {
   db.prepare(`
     INSERT INTO runs (
-      run_key, agent_name, agent_version, suite_name, status,
+      run_key, experiment_key, benchmark_key, task_key, setup_key, workflow_path, model_id, trial_index,
+      agent_name, agent_version, suite_name, status,
       score, process_score, tests_score, llm_score, perf_score,
       score_profile, score_confidence, failure_reason,
       latency_ms, cost_usd, duration_ms, artifacts_path, log_text,
       diff_available, diff_files_changed, diff_insertions, diff_deletions,
       verifier_tests_available, verifier_tests_total, verifier_tests_passed,
-      quality_score, agent_usage_available, agent_input_tokens, agent_output_tokens, agent_cost_usd
+      quality_score, agent_usage_available, agent_input_tokens, agent_output_tokens, agent_cost_usd,
+      review_mode, judge_total_tokens, screenshot_file, video_file
     ) VALUES (
-      @run_key, @agent_name, @agent_version, @suite_name, @status,
+      @run_key, @experiment_key, @benchmark_key, @task_key, @setup_key, @workflow_path, @model_id, @trial_index,
+      @agent_name, @agent_version, @suite_name, @status,
       @score, @process_score, @tests_score, @llm_score, @perf_score,
       @score_profile, @score_confidence, @failure_reason,
       @latency_ms, @cost_usd, @duration_ms, @artifacts_path, @log_text,
       @diff_available, @diff_files_changed, @diff_insertions, @diff_deletions,
       @verifier_tests_available, @verifier_tests_total, @verifier_tests_passed,
-      @quality_score, @agent_usage_available, @agent_input_tokens, @agent_output_tokens, @agent_cost_usd
+      @quality_score, @agent_usage_available, @agent_input_tokens, @agent_output_tokens, @agent_cost_usd,
+      @review_mode, @judge_total_tokens, @screenshot_file, @video_file
     )
   `).run({
     run_key: input.runKey,
+    experiment_key: input.experimentKey ?? null,
+    benchmark_key: input.benchmarkKey ?? null,
+    task_key: input.taskKey ?? null,
+    setup_key: input.setupKey ?? null,
+    workflow_path: input.workflowPath ?? null,
+    model_id: input.modelId ?? null,
+    trial_index: input.trialIndex ?? null,
     agent_name: input.agentName,
     agent_version: input.agentVersion,
     suite_name: input.suiteName,
@@ -56,7 +67,11 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
     agent_usage_available: input.agentUsageAvailable ? 1 : 0,
     agent_input_tokens: input.agentInputTokens ?? 0,
     agent_output_tokens: input.agentOutputTokens ?? 0,
-    agent_cost_usd: input.agentCostUsd ?? 0
+    agent_cost_usd: input.agentCostUsd ?? 0,
+    review_mode: input.reviewMode ?? null,
+    judge_total_tokens: input.judgeTotalTokens ?? 0,
+    screenshot_file: input.screenshotFile ?? null,
+    video_file: input.videoFile ?? null
   });
 
   const row = db.prepare(`
@@ -117,6 +132,11 @@ function mapRun(row: Record<string, unknown>): RunRecord {
   return {
     id: Number(row.id),
     runKey: String(row.run_key),
+    benchmarkKey: row.benchmark_key == null ? null : String(row.benchmark_key),
+    taskKey: row.task_key == null ? null : String(row.task_key),
+    modelId: row.model_id == null ? null : String(row.model_id),
+    reviewMode: row.review_mode == null ? null : String(row.review_mode) as RunRecord["reviewMode"],
+    judgeTotalTokens: Number(row.judge_total_tokens ?? 0),
     agentName: String(row.agent_name),
     agentVersion: String(row.agent_version),
     suiteName: String(row.suite_name),
@@ -146,6 +166,8 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     verifierTestsTotal: Number(row.verifier_tests_total ?? 0),
     verifierTestsPassed: Number(row.verifier_tests_passed ?? 0),
     qualityScore: row.quality_score == null ? null : Number(row.quality_score),
+    screenshotFile: row.screenshot_file == null ? null : String(row.screenshot_file),
+    videoFile: row.video_file == null ? null : String(row.video_file),
     agentUsageAvailable: Boolean(row.agent_usage_available),
     agentInputTokens: Number(row.agent_input_tokens ?? 0),
     agentOutputTokens: Number(row.agent_output_tokens ?? 0),

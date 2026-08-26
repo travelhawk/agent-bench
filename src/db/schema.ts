@@ -116,6 +116,10 @@ export function initializeSchema(db: Database.Database): void {
   addColumnIfMissing(db, "runs", "agent_input_tokens", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "runs", "agent_output_tokens", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "runs", "agent_cost_usd", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "review_mode", "TEXT");
+  addColumnIfMissing(db, "runs", "judge_total_tokens", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "runs", "screenshot_file", "TEXT");
+  addColumnIfMissing(db, "runs", "video_file", "TEXT");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

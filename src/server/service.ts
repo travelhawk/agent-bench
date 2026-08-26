@@ -68,6 +68,7 @@ interface RunRequestInput {
   agentMarkdown?: string;
   model?: string;
   providerApiKey?: string;
+  review?: unknown;
 }
 
 interface BatchRunInput {
@@ -75,6 +76,7 @@ interface BatchRunInput {
   taskKey?: string;
   model?: string;
   providerApiKey?: string;
+  review?: unknown;
   runMode?: RunMode;
   agents: string[];
   jobs?: Array<{
@@ -151,6 +153,10 @@ function readOptionalNumber(value: unknown): number | undefined {
 
 export function resolveRunMode(value: unknown): RunMode {
   return value === "single-task" ? "single-task" : "benchmark-cycle";
+}
+
+export function resolveReviewMode(value: unknown): "auto" | "off" {
+  return value === "off" || value === false ? "off" : "auto";
 }
 
 export function resolveTaskPlan(benchmarks: BenchmarkSuiteRecord[], benchmarkKey: string, runMode: RunMode, taskKey?: string): BenchmarkTaskRecord[] {
@@ -297,6 +303,8 @@ function persistFailedRun(context: ServiceContext, job: BatchRunJob, message: st
 
   const run = insertRun(context.db, {
     runKey,
+    benchmarkKey: job.benchmarkKey,
+    taskKey: job.taskKey,
     agentName: job.agentName,
     agentVersion: job.agentVersion,
     suiteName: `${job.benchmarkKey}/${job.taskKey}`,
@@ -336,6 +344,7 @@ async function executeRun(context: ServiceContext, input: {
   agentRunnerCommand?: string;
   model?: string;
   providerApiKey?: string;
+  review?: "auto" | "off";
 }): Promise<RunEvaluationResult> {
   const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
   const bestBefore = getBestScore(context.db);
@@ -351,7 +360,8 @@ async function executeRun(context: ServiceContext, input: {
     benchmarksDir: context.benchmarksDir,
     benchmarks,
     model: input.model,
-    gatewayApiKey: input.providerApiKey
+    gatewayApiKey: input.providerApiKey,
+    review: input.review
   });
 
   const run = insertRun(context.db, runInput);
@@ -565,7 +575,8 @@ export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise
       agentMarkdown,
       agentRunnerCommand: agentRecord?.runnerCommand,
       model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
-      providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength)
+      providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength),
+      review: resolveReviewMode(input.review)
     });
   }, dbPathInput);
 }
@@ -634,7 +645,8 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
           agentPath: job.agentPath,
           agentRunnerCommand: job.agentRunnerCommand,
           model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
-          providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength)
+          providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength),
+          review: resolveReviewMode(input.review)
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -717,9 +729,13 @@ export function readArtifact(runKey: string, fileName: string, dbPathInput?: str
     const body = readFileSync(artifactPath);
     const contentType = safeName.endsWith(".svg")
       ? "image/svg+xml"
-      : safeName.endsWith(".json")
-        ? "application/json; charset=utf-8"
-        : "text/plain; charset=utf-8";
+      : safeName.endsWith(".png")
+        ? "image/png"
+        : safeName.endsWith(".webm")
+          ? "video/webm"
+          : safeName.endsWith(".json")
+            ? "application/json; charset=utf-8"
+            : "text/plain; charset=utf-8";
 
     return { body, contentType };
   }, dbPathInput);

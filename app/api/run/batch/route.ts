@@ -12,6 +12,7 @@ export async function POST(request: Request) {
       taskKey?: string;
       model?: string;
       providerApiKey?: string;
+      review?: "auto" | "off";
       runMode?: "single-task" | "benchmark-cycle";
       agents?: string[];
       jobs?: Array<{
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
       taskKey: body.taskKey,
       model: body.model,
       providerApiKey: body.providerApiKey,
+      review: body.review,
       runMode: body.runMode,
       agents: Array.isArray(body.agents) ? body.agents : [],
       jobs: Array.isArray(body.jobs) ? body.jobs : undefined

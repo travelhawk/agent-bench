@@ -14,6 +14,7 @@ export async function POST(request: Request) {
       agentMarkdown?: string;
       model?: string;
       providerApiKey?: string;
+      review?: "auto" | "off";
     }>(request);
 
     return NextResponse.json(await runSingle(body));

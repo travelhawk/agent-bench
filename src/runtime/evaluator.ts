@@ -17,7 +17,7 @@ import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
 import { computeWorkspaceGitDiffStats, initWorkspaceGitBaseline } from "./git-diff";
 import { isNodeTestRunnerCommand, parseNodeTestTapSummary, parseVerifierChecksMarker, TestRunSummary } from "./test-summary";
 import { AgentUsageReport, readAgentUsageReport } from "./agent-usage";
-import { judgeScreenshotEnabled, renderWorkspaceScreenshot } from "./screenshot";
+import { captureWorkspaceVisuals, judgeScreenshotEnabled, renderWorkspaceScreenshot, visualArtifactsEnabled } from "./screenshot";
 
 const DEFAULT_MODEL = "openai/gpt-4.1-mini";
 const DEFAULT_COST_PER_1K_TOKENS_USD = 0.003;
@@ -39,7 +39,7 @@ interface JudgeResult {
   totalTokens: number;
   rawText: string;
   reason: string;
-  mode: "gateway" | "gateway-cache" | "rules";
+  mode: "gateway" | "gateway-cache" | "rules" | "off";
 }
 
 interface ParsedJudgeResponse {
@@ -1136,7 +1136,11 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const outcomeScore = sandbox.mode === "sandbox" ? sandbox.outcomeScore : assessment.outcomeScore;
   const processScore = sandbox.mode === "sandbox" && sandbox.processScore > 0 ? sandbox.processScore : assessment.processScore;
 
-  const apiKey = resolveGatewayApiKey(input.gatewayApiKey);
+  // "off" skips the LLM judge entirely (deterministic rules fallback, zero
+  // grader tokens) even when a gateway key is configured in the environment.
+  const reviewDisabled = input.review === "off"
+    || (process.env.AGENT_BENCH_REVIEW ?? "").trim().toLowerCase() === "off";
+  const apiKey = reviewDisabled ? undefined : resolveGatewayApiKey(input.gatewayApiKey);
   const cacheEnabled = getJudgeCacheEnabled();
   const judgePromptContent = [
     `Task Context:\n${taskContext}`,
@@ -1176,11 +1180,18 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Workspace Diff (truncated):\n${sandbox.diffPatch?.trim() || "No diff available."}`,
     `Agent System:\n${material.previewMarkdown}`
   ].join("\n\n");
-  // Optionally render the produced page so the judge can assess it visually.
+  // Capture visual artifacts (full-page screenshot + scroll-through video) of
+  // the produced page so different workflows for the same task can be compared
+  // visually from run history. Local rendering only — no model call.
+  const visuals = sandbox.mode === "sandbox" && sandbox.workspaceDir && visualArtifactsEnabled()
+    ? await captureWorkspaceVisuals(sandbox.workspaceDir, artifactsPath)
+    : { screenshotFile: null, videoFile: null };
+  // Optionally reuse the screenshot as multimodal judge evidence.
   let judgeImagePath: string | undefined;
   if (apiKey && sandbox.mode === "sandbox" && sandbox.workspaceDir && judgeScreenshotEnabled()) {
-    const shot = await renderWorkspaceScreenshot(sandbox.workspaceDir, path.join(artifactsPath, "page.png"));
-    judgeImagePath = shot ?? undefined;
+    judgeImagePath = visuals.screenshotFile
+      ? path.join(artifactsPath, visuals.screenshotFile)
+      : (await renderWorkspaceScreenshot(sandbox.workspaceDir, path.join(artifactsPath, "page.png"))) ?? undefined;
   }
   const judgeSamples = resolveJudgeSampleCount();
   const judgeMode = `s${judgeSamples}${judgeImagePath ? "+shot" : ""}`;
@@ -1244,7 +1255,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       totalTokens: 0,
       rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: rulesQualityScore, reason: rulesReviewReason }),
       reason: `${rulesReviewReason} (quality score is a low-confidence heuristic, not LLM-judged)`.trim(),
-      mode: "rules"
+      mode: reviewDisabled ? "off" : "rules"
     };
   }
 
@@ -1319,6 +1330,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Tests: ${sandbox.testMetrics.available ? `${sandbox.testMetrics.passed}/${sandbox.testMetrics.total} passed` : "n/a"}`,
     `Quality score: ${judge.qualityScore != null ? judge.qualityScore.toFixed(2) : "n/a"}`,
     `Agent usage: ${sandbox.agentUsage.available ? `${sandbox.agentUsage.inputTokens}in/${sandbox.agentUsage.outputTokens}out, $${agentCostUsd.toFixed(4)}` : "n/a"}`,
+    `Visual artifacts: ${[visuals.screenshotFile, visuals.videoFile].filter(Boolean).join(", ") || "none"}`,
     `Objective checks: ${sandbox.objectiveChecks.passed}/${sandbox.objectiveChecks.available}`,
     `Matched signals: ${matchedSignals.join("; ") || "none"}`,
     `Open gaps: ${missingSignals.join("; ") || "none"}`,
@@ -1378,6 +1390,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     diff: sandbox.diff,
     testMetrics: sandbox.testMetrics,
     qualityScore: judge.qualityScore ?? null,
+    visuals,
     agentUsage: {
       available: sandbox.agentUsage.available,
       inputTokens: sandbox.agentUsage.inputTokens,
@@ -1391,6 +1404,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
         "summary.json",
         "session.log",
         "report.svg",
+        ...(visuals.screenshotFile ? [visuals.screenshotFile] : []),
+        ...(visuals.videoFile ? [visuals.videoFile] : []),
         ...(material.bundleMode === "bundle" || material.assetFileCount > 0 || material.skills.length > 0 || material.sharedAgentsPath ? ["agent-system/"] : []),
         ...(sandbox.taskBriefPath ? ["task-brief.md"] : []),
         ...(sandbox.workspaceDir ? ["workspace/"] : [])
@@ -1440,6 +1455,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     objectiveChecksAvailable: sandbox.objectiveChecks.available,
     objectiveChecksPassed: sandbox.objectiveChecks.passed,
     deterministic: sandbox.objectiveChecks.deterministic,
+    reviewMode: judge.mode,
+    judgeTotalTokens: judge.totalTokens,
     scoreProfile,
     scoreConfidence,
     failureReason: null,
@@ -1456,6 +1473,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     verifierTestsTotal: sandbox.testMetrics.total,
     verifierTestsPassed: sandbox.testMetrics.passed,
     qualityScore: judge.qualityScore ?? null,
+    screenshotFile: visuals.screenshotFile,
+    videoFile: visuals.videoFile,
     agentUsageAvailable: sandbox.agentUsage.available,
     agentInputTokens: sandbox.agentUsage.inputTokens,
     agentOutputTokens: sandbox.agentUsage.outputTokens,
