@@ -1,20 +1,27 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
-export function createDb(dbPath: string): Database.Database {
-  return new Database(dbPath);
+/**
+ * Node ships SQLite in core, so there is no native module to rebuild whenever
+ * the local Node version changes. Everything else refers to this alias instead
+ * of naming the driver.
+ */
+export type Db = DatabaseSync;
+
+export function createDb(dbPath: string): Db {
+  return new DatabaseSync(dbPath);
 }
 
-function columnExists(db: Database.Database, table: string, column: string): boolean {
+function columnExists(db: Db, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return rows.some((row) => row.name === column);
 }
 
-function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string): void {
+function addColumnIfMissing(db: Db, table: string, column: string, definition: string): void {
   if (columnExists(db, table, column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-export function initializeSchema(db: Database.Database): void {
+export function initializeSchema(db: Db): void {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;

@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Db } from "./schema";
 import { RunInput, RunRecord } from "../types";
 
 export interface DashboardSummary {
@@ -7,7 +7,7 @@ export interface DashboardSummary {
   totalCost: number;
 }
 
-export function insertRun(db: Database.Database, input: RunInput): RunRecord {
+export function insertRun(db: Db, input: RunInput): RunRecord {
   db.prepare(`
     INSERT INTO runs (
       run_key, experiment_key, benchmark_key, task_key, setup_key, workflow_path, model_id, trial_index,
@@ -81,7 +81,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
   return mapRun(row);
 }
 
-export function getRunByKey(db: Database.Database, runKey: string): RunRecord | null {
+export function getRunByKey(db: Db, runKey: string): RunRecord | null {
   const row = db.prepare(`
     SELECT * FROM runs WHERE run_key = ?
   `).get(runKey) as Record<string, unknown> | undefined;
@@ -89,14 +89,14 @@ export function getRunByKey(db: Database.Database, runKey: string): RunRecord | 
   return row ? mapRun(row) : null;
 }
 
-export function deleteRunByKey(db: Database.Database, runKey: string): boolean {
+export function deleteRunByKey(db: Db, runKey: string): boolean {
   const result = db.prepare(`
     DELETE FROM runs WHERE run_key = ?
   `).run(runKey);
   return result.changes > 0;
 }
 
-export function listRuns(db: Database.Database, limit = 20): RunRecord[] {
+export function listRuns(db: Db, limit = 20): RunRecord[] {
   const rows = db.prepare(`
     SELECT * FROM runs
     ORDER BY datetime(created_at) DESC, id DESC
@@ -106,12 +106,12 @@ export function listRuns(db: Database.Database, limit = 20): RunRecord[] {
   return rows.map(mapRun);
 }
 
-export function getBestScore(db: Database.Database): number | null {
+export function getBestScore(db: Db): number | null {
   const row = db.prepare(`SELECT MAX(score) as best FROM runs`).get() as { best: number | null };
   return row.best;
 }
 
-export function getDashboardSummary(db: Database.Database): DashboardSummary {
+export function getDashboardSummary(db: Db): DashboardSummary {
   const totalRuns = (db.prepare(`SELECT COUNT(*) as c FROM runs`).get() as { c: number }).c;
   const avgScore = (db.prepare(`SELECT COALESCE(AVG(score), 0) as s FROM runs`).get() as { s: number }).s;
   const totalCost = (db.prepare(`SELECT COALESCE(SUM(cost_usd), 0) as c FROM runs`).get() as { c: number }).c;
@@ -134,6 +134,7 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     runKey: String(row.run_key),
     benchmarkKey: row.benchmark_key == null ? null : String(row.benchmark_key),
     taskKey: row.task_key == null ? null : String(row.task_key),
+    setupKey: row.setup_key == null ? null : String(row.setup_key),
     modelId: row.model_id == null ? null : String(row.model_id),
     reviewMode: row.review_mode == null ? null : String(row.review_mode) as RunRecord["reviewMode"],
     judgeTotalTokens: Number(row.judge_total_tokens ?? 0),
