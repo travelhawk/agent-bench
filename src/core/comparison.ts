@@ -62,6 +62,8 @@ export interface ComparisonMatrix {
 export interface ComparisonFilter {
   benchmarkKey?: string;
   taskKey?: string;
+  /** Narrow the comparison to specific setup keys (used when sharing a subset). */
+  setupKeys?: string[];
 }
 
 export const NO_MODEL_LABEL = "rules / no model";
@@ -83,8 +85,31 @@ export function runModelLabel(run: RunRecord): string {
   return run.modelId?.trim() || NO_MODEL_LABEL;
 }
 
+/**
+ * Prefers the label the batch assigned to this setup, so a run launched as
+ * "baseline" or "loop-agent @ sonnet" keeps that identity in the comparison.
+ * Older rows (and CLI runs) fall back to the derived `agent · model` key.
+ */
 export function setupKeyForRun(run: RunRecord): string {
-  return `${run.agentName} · ${runModelLabel(run)}`;
+  return run.setupKey?.trim() || `${run.agentName} · ${runModelLabel(run)}`;
+}
+
+/**
+ * A batch may label a setup itself ("baseline", "loop-agent @ sonnet"). Show
+ * that label when it exists; otherwise the derived key would just repeat the
+ * model that is already rendered next to it.
+ */
+export function setupDisplayName(setup: { setupKey: string; agentName: string; modelLabel: string }): string {
+  return setup.setupKey === `${setup.agentName} · ${setup.modelLabel}` ? setup.agentName : setup.setupKey;
+}
+
+/**
+ * The model to show beside the setup name, or null when the name already is the
+ * model. `compare-models` labels each setup by the model it runs, so without
+ * this the model would be printed twice in a row.
+ */
+export function setupModelSuffix(setup: { setupKey: string; agentName: string; modelLabel: string }): string | null {
+  return setupDisplayName(setup) === setup.modelLabel ? null : setup.modelLabel;
 }
 
 function round2(value: number): number {
@@ -92,9 +117,11 @@ function round2(value: number): number {
 }
 
 export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilter = {}): ComparisonMatrix {
+  const setupKeyFilter = filter.setupKeys && filter.setupKeys.length > 0 ? new Set(filter.setupKeys) : null;
   const filtered = runs.filter((run) => {
     if (filter.benchmarkKey && runBenchmarkKey(run) !== filter.benchmarkKey) return false;
     if (filter.taskKey && runTaskKey(run) !== filter.taskKey) return false;
+    if (setupKeyFilter && !setupKeyFilter.has(setupKeyForRun(run))) return false;
     return true;
   });
 

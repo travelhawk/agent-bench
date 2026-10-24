@@ -1,6 +1,7 @@
 import { inspectAgentFile } from "../agents/files";
+import { NO_MODEL_LABEL } from "../core/comparison";
 import { normalizeTags } from "../benchmarks/metadata";
-import { AgentRecord } from "../types";
+import { AgentRecord, BatchSetupInput } from "../types";
 
 export const INPUT_LIMITS = {
   maxKeyLength: 80,
@@ -22,6 +23,9 @@ export const INPUT_LIMITS = {
   maxManagedBundleFilePathLength: 240,
   maxManagedBundleFileContentLength: 120000,
   maxAgentsPerBatch: 8,
+  maxSetupsPerBatch: 12,
+  maxModelsPerBatch: 6,
+  maxSetupLabelLength: 80,
   maxRunsPerBatch: 48
 } as const;
 
@@ -110,9 +114,68 @@ export function resolveBatchAgents(workspaceRoot: string, input: unknown): Agent
   return records;
 }
 
-export function assertBatchCapacity(agentCount: number, taskCount: number): void {
-  const queueSize = agentCount * taskCount;
+export function assertBatchCapacity(setupCount: number, taskCount: number): void {
+  const queueSize = setupCount * taskCount;
   if (queueSize > INPUT_LIMITS.maxRunsPerBatch) {
     throw new Error(`Batch would create ${queueSize} runs. Limit is ${INPUT_LIMITS.maxRunsPerBatch}.`);
   }
+}
+
+export interface ResolvedBatchSetup {
+  setupKey: string;
+  agent: AgentRecord;
+  model?: string;
+  review: "auto" | "off";
+}
+
+function defaultSetupKey(agentName: string, model?: string): string {
+  return `${agentName} · ${model?.trim() || NO_MODEL_LABEL}`;
+}
+
+/**
+ * Normalizes the explicit `setups[]` form of a batch: each entry is one agent
+ * paired with its own review model, so a single batch can hold three, four, or
+ * a dozen comparable configurations. Duplicate agent+model pairs collapse.
+ */
+export function resolveBatchSetups(workspaceRoot: string, input: unknown, fallbackReview: "auto" | "off"): ResolvedBatchSetup[] {
+  if (!Array.isArray(input)) {
+    throw new Error("setups must be an array.");
+  }
+
+  const setups: ResolvedBatchSetup[] = [];
+  const seen = new Set<string>();
+
+  input.forEach((entry, index) => {
+    const setup = entry as BatchSetupInput | null;
+    const agentPath = readBoundedString(setup?.agentPath, `setups[${index}].agentPath`, INPUT_LIMITS.maxKeyLength * 4, true)!;
+    const model = readBoundedString(setup?.model, `setups[${index}].model`, INPUT_LIMITS.maxModelLength);
+    const label = readBoundedString(setup?.label, `setups[${index}].label`, INPUT_LIMITS.maxSetupLabelLength);
+    const review = setup?.review === "off" ? "off" : setup?.review === "auto" ? "auto" : fallbackReview;
+    const agent = inspectAgentFile(workspaceRoot, agentPath);
+
+    const identity = `${agent.path}::${model ?? ""}::${label ?? ""}`;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+
+    setups.push({ setupKey: label ?? defaultSetupKey(agent.name, model), agent, model, review });
+  });
+
+  if (setups.length === 0) {
+    throw new Error("Provide at least one setup to run.");
+  }
+  if (setups.length > INPUT_LIMITS.maxSetupsPerBatch) {
+    throw new Error(`Compare at most ${INPUT_LIMITS.maxSetupsPerBatch} setups per batch.`);
+  }
+
+  const duplicateKeys = setups.map((setup) => setup.setupKey).filter((key, index, all) => all.indexOf(key) !== index);
+  if (duplicateKeys.length > 0) {
+    throw new Error(`Setup labels must be unique. Duplicated: ${[...new Set(duplicateKeys)].join(", ")}.`);
+  }
+
+  return setups;
+}
+
+/** Legacy `agents[] × model` form, expanded into the same setup shape. */
+export function setupsFromAgentList(agents: AgentRecord[], model: string | undefined, review: "auto" | "off"): ResolvedBatchSetup[] {
+  return agents.map((agent) => ({ setupKey: defaultSetupKey(agent.name, model), agent, model, review }));
 }

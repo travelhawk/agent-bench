@@ -19,6 +19,7 @@ import {
   AgentRecord,
   BatchRunFailure,
   BatchRunResult,
+  BatchSetupSummary,
   BenchmarkSuiteRecord,
   BenchmarkTaskRecord,
   InstalledSkillRecord,
@@ -28,8 +29,28 @@ import {
   RunResultPayload,
   WorkbenchSnapshot
 } from "../types";
-import { ensureProjectDirs, getArtifactsRoot, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath } from "./config";
-import { assertBatchCapacity, INPUT_LIMITS, normalizeStringList, normalizeTagList, readBoundedString, resolveBatchAgents, sanitizeKey } from "./validation";
+import { ensureProjectDirs, getArtifactsRoot, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath, TOOL_VERSION } from "./config";
+import {
+  assertBatchCapacity,
+  INPUT_LIMITS,
+  normalizeStringList,
+  normalizeTagList,
+  readBoundedString,
+  resolveBatchAgents,
+  resolveBatchSetups,
+  ResolvedBatchSetup,
+  sanitizeKey,
+  setupsFromAgentList
+} from "./validation";
+import { buildComparisonMatrix, ComparisonMatrix, NO_MODEL_LABEL } from "../core/comparison";
+import {
+  ComparisonExportFormat,
+  ComparisonExportMeta,
+  comparisonExportFileName,
+  contentTypeForFormat,
+  isComparisonExportFormat,
+  renderComparison
+} from "../core/export";
 
 interface ServiceContext {
   workspaceRoot: string;
@@ -67,6 +88,7 @@ interface RunRequestInput {
   agentPath?: string;
   agentMarkdown?: string;
   model?: string;
+  judgeModel?: string;
   providerApiKey?: string;
   review?: unknown;
 }
@@ -75,14 +97,19 @@ interface BatchRunInput {
   benchmarkKey?: string;
   taskKey?: string;
   model?: string;
+  judgeModel?: string;
   providerApiKey?: string;
   review?: unknown;
   runMode?: RunMode;
-  agents: string[];
+  agents?: string[];
+  setups?: unknown;
   jobs?: Array<{
     benchmarkKey?: string;
     taskKey?: string;
     agentPath?: string;
+    model?: string | null;
+    setupKey?: string | null;
+    review?: "auto" | "off" | null;
   }>;
 }
 
@@ -93,6 +120,9 @@ interface BatchRunJob {
   agentName: string;
   agentVersion: string;
   agentRunnerCommand?: string;
+  setupKey: string;
+  model?: string;
+  review: "auto" | "off";
 }
 
 interface ManagedAgentBundleInput {
@@ -199,6 +229,7 @@ export async function executeBatchPlan<T>(
       const failure: BatchRunFailure = {
         agentPath: job.agentPath,
         taskKey: job.taskKey,
+        setupKey: job.setupKey,
         message: error instanceof Error ? error.message : String(error)
       };
       if (failureWithRun?.persistedFailureRun) {
@@ -305,6 +336,9 @@ function persistFailedRun(context: ServiceContext, job: BatchRunJob, message: st
     runKey,
     benchmarkKey: job.benchmarkKey,
     taskKey: job.taskKey,
+    setupKey: job.setupKey,
+    workflowPath: job.agentPath,
+    modelId: job.model ?? null,
     agentName: job.agentName,
     agentVersion: job.agentVersion,
     suiteName: `${job.benchmarkKey}/${job.taskKey}`,
@@ -343,8 +377,10 @@ async function executeRun(context: ServiceContext, input: {
   agentMarkdown?: string;
   agentRunnerCommand?: string;
   model?: string;
+  judgeModel?: string;
   providerApiKey?: string;
   review?: "auto" | "off";
+  setupKey?: string;
 }): Promise<RunEvaluationResult> {
   const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
   const bestBefore = getBestScore(context.db);
@@ -360,8 +396,12 @@ async function executeRun(context: ServiceContext, input: {
     benchmarksDir: context.benchmarksDir,
     benchmarks,
     model: input.model,
+    judgeModel: input.judgeModel,
     gatewayApiKey: input.providerApiKey,
-    review: input.review
+    review: input.review,
+    setupSnapshot: input.setupKey
+      ? { key: input.setupKey, workflowPath: input.agentPath ?? null, modelId: input.model ?? null }
+      : null
   });
 
   const run = insertRun(context.db, runInput);
@@ -575,10 +615,25 @@ export function runSingle(input: RunRequestInput, dbPathInput?: string): Promise
       agentMarkdown,
       agentRunnerCommand: agentRecord?.runnerCommand,
       model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
+      judgeModel: readBoundedString(input.judgeModel, "judgeModel", INPUT_LIMITS.maxModelLength),
       providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength),
       review: resolveReviewMode(input.review)
     });
   }, dbPathInput);
+}
+
+function agentVersionFor(agentName: string): string {
+  return /v\d+/i.test(agentName) ? agentName.match(/v\d+/i)![0] : "v1";
+}
+
+function summarizeSetups(setups: ResolvedBatchSetup[], workspaceRoot: string): BatchSetupSummary[] {
+  return setups.map((setup) => ({
+    setupKey: setup.setupKey,
+    agentPath: path.resolve(workspaceRoot, setup.agent.path),
+    agentName: setup.agent.name,
+    modelLabel: setup.model ?? NO_MODEL_LABEL,
+    review: setup.review
+  }));
 }
 
 export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<BatchRunResult> {
@@ -587,11 +642,19 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
     const benchmarkKey = input.benchmarkKey ?? "repo-maintenance";
     const runMode = resolveRunMode(input.runMode);
     const explicitJobs = Array.isArray(input.jobs) ? input.jobs : [];
+    const batchReview = resolveReviewMode(input.review);
+    const batchModel = readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength);
+    // One judge across every setup, so a model comparison varies only the subject.
+    const judgeModel = readBoundedString(input.judgeModel, "judgeModel", INPUT_LIMITS.maxModelLength);
+    const providerApiKey = readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength);
 
     let jobs: BatchRunJob[];
     let taskPlan: string[];
+    let setupSummaries: BatchSetupSummary[];
 
     if (explicitJobs.length > 0) {
+      // Retry path: each job replays one already-planned cell of the matrix and
+      // keeps its original setup identity so the rerun lands in the same column.
       jobs = explicitJobs.map((job) => {
         const resolvedBenchmarkKey = readOptionalString(job.benchmarkKey) ?? benchmarkKey;
         const resolvedTaskKey = readOptionalString(job.taskKey);
@@ -607,33 +670,53 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         }
 
         const agentRecord = inspectAgentFile(context.workspaceRoot, resolvedAgentPath);
+        const jobModel = readBoundedString(job.model, "jobs[].model", INPUT_LIMITS.maxModelLength) ?? batchModel;
         return {
           benchmarkKey: resolvedBenchmarkKey,
           taskKey: resolvedTaskKey,
           agentPath: path.resolve(context.workspaceRoot, agentRecord.path),
           agentName: agentRecord.name,
-          agentVersion: /v\\d+/i.test(agentRecord.name) ? agentRecord.name.match(/v\\d+/i)![0] : "v1",
-          agentRunnerCommand: agentRecord.runnerCommand
+          agentVersion: agentVersionFor(agentRecord.name),
+          agentRunnerCommand: agentRecord.runnerCommand,
+          setupKey: readBoundedString(job.setupKey, "jobs[].setupKey", INPUT_LIMITS.maxSetupLabelLength)
+            ?? `${agentRecord.name} \u00b7 ${jobModel ?? NO_MODEL_LABEL}`,
+          model: jobModel,
+          review: job.review === "off" ? "off" : job.review === "auto" ? "auto" : batchReview
         };
       });
       taskPlan = [...new Set(jobs.map((job) => job.taskKey))];
+      setupSummaries = [...new Map(jobs.map((job) => [job.setupKey, {
+        setupKey: job.setupKey,
+        agentPath: job.agentPath,
+        agentName: job.agentName,
+        modelLabel: job.model ?? NO_MODEL_LABEL,
+        review: job.review
+      }])).values()];
       assertBatchCapacity(jobs.length, 1);
     } else {
       const tasks = resolveTaskPlan(benchmarks, benchmarkKey, runMode, readOptionalString(input.taskKey));
-      const agents = resolveBatchAgents(context.workspaceRoot, input.agents);
-      if (agents.length === 0) {
+      // `setups[]` is the N-way form (agent + its own review model per entry);
+      // `agents[] x model` stays supported as the single-model shorthand.
+      const setups = input.setups !== undefined
+        ? resolveBatchSetups(context.workspaceRoot, input.setups, batchReview)
+        : setupsFromAgentList(resolveBatchAgents(context.workspaceRoot, input.agents), batchModel, batchReview);
+      if (setups.length === 0) {
         throw new Error("Select at least one agent to run.");
       }
 
-      assertBatchCapacity(agents.length, tasks.length);
+      assertBatchCapacity(setups.length, tasks.length);
       taskPlan = tasks.map((task) => task.key);
-      jobs = agents.flatMap((agent) => tasks.map((task) => ({
+      setupSummaries = summarizeSetups(setups, context.workspaceRoot);
+      jobs = setups.flatMap((setup) => tasks.map((task) => ({
         benchmarkKey,
         taskKey: task.key,
-        agentPath: path.resolve(context.workspaceRoot, agent.path),
-        agentName: agent.name,
-        agentVersion: /v\\d+/i.test(agent.name) ? agent.name.match(/v\\d+/i)![0] : "v1",
-        agentRunnerCommand: agent.runnerCommand
+        agentPath: path.resolve(context.workspaceRoot, setup.agent.path),
+        agentName: setup.agent.name,
+        agentVersion: agentVersionFor(setup.agent.name),
+        agentRunnerCommand: setup.agent.runnerCommand,
+        setupKey: setup.setupKey,
+        model: setup.model,
+        review: setup.review
       })));
     }
 
@@ -644,9 +727,11 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
           taskKey: job.taskKey,
           agentPath: job.agentPath,
           agentRunnerCommand: job.agentRunnerCommand,
-          model: readBoundedString(input.model, "model", INPUT_LIMITS.maxModelLength),
-          providerApiKey: readBoundedString(input.providerApiKey, "providerApiKey", INPUT_LIMITS.maxApiKeyLength),
-          review: resolveReviewMode(input.review)
+          model: job.model,
+          judgeModel,
+          providerApiKey,
+          review: job.review,
+          setupKey: job.setupKey
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -659,11 +744,116 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
       runMode,
       benchmarkKey,
       taskPlan,
+      setups: setupSummaries,
       queueSize: jobs.length,
       completedRuns: results.length,
       failedRuns: failures.length,
       runs: results,
       failures
+    };
+  }, dbPathInput);
+}
+
+interface ComparisonRequestInput {
+  benchmarkKey?: unknown;
+  taskKey?: unknown;
+  setupKeys?: unknown;
+  limit?: unknown;
+}
+
+interface ComparisonExportRequestInput extends ComparisonRequestInput {
+  format?: unknown;
+  title?: unknown;
+  shareUrl?: unknown;
+  generatedAt?: unknown;
+}
+
+export interface ComparisonExportResult {
+  format: ComparisonExportFormat;
+  fileName: string;
+  contentType: string;
+  body: string;
+  setupCount: number;
+  runCount: number;
+}
+
+const MAX_COMPARISON_RUNS = 2000;
+
+function resolveComparisonLimit(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 200;
+  return Math.min(Math.floor(parsed), MAX_COMPARISON_RUNS);
+}
+
+function normalizeSetupKeyFilter(value: unknown): string[] | undefined {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const keys = raw
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter(Boolean);
+  if (keys.length > INPUT_LIMITS.maxSetupsPerBatch * 4) {
+    throw new Error("Too many setupKeys in the comparison filter.");
+  }
+  return keys.length > 0 ? keys : undefined;
+}
+
+function buildMatrixForRequest(context: ServiceContext, input: ComparisonRequestInput): {
+  matrix: ComparisonMatrix;
+  benchmarkKey?: string;
+  taskKey?: string;
+} {
+  const benchmarkKey = readBoundedString(input.benchmarkKey, "benchmarkKey", INPUT_LIMITS.maxKeyLength);
+  const taskKey = readBoundedString(input.taskKey, "taskKey", INPUT_LIMITS.maxKeyLength);
+  const runs = listRuns(context.db, resolveComparisonLimit(input.limit));
+
+  return {
+    matrix: buildComparisonMatrix(runs, {
+      benchmarkKey,
+      taskKey,
+      setupKeys: normalizeSetupKeyFilter(input.setupKeys)
+    }),
+    benchmarkKey,
+    taskKey
+  };
+}
+
+/** Aggregated comparison over persisted runs. Reads SQLite only — zero tokens. */
+export function getComparisonMatrix(input: ComparisonRequestInput = {}, dbPathInput?: string): Promise<ComparisonMatrix> {
+  return withContext((context) => buildMatrixForRequest(context, input).matrix, dbPathInput);
+}
+
+/**
+ * Renders the comparison into a shareable artefact (markdown, csv, json, or a
+ * self-contained html report). Nothing here calls a model, so re-exporting a
+ * comparison as often as you like stays free.
+ */
+export function exportComparison(input: ComparisonExportRequestInput = {}, dbPathInput?: string): Promise<ComparisonExportResult> {
+  return withContext((context) => {
+    const format: ComparisonExportFormat = isComparisonExportFormat(input.format) ? input.format : "md";
+    if (input.format !== undefined && !isComparisonExportFormat(input.format)) {
+      throw new Error("format must be one of json, md, csv, html.");
+    }
+
+    const { matrix, benchmarkKey, taskKey } = buildMatrixForRequest(context, input);
+    const meta: ComparisonExportMeta = {
+      generatedAt: readBoundedString(input.generatedAt, "generatedAt", 40) ?? new Date().toISOString(),
+      toolVersion: TOOL_VERSION,
+      benchmarkKey: benchmarkKey ?? null,
+      taskKey: taskKey ?? null,
+      title: readBoundedString(input.title, "title", INPUT_LIMITS.maxTitleLength),
+      shareUrl: readBoundedString(input.shareUrl, "shareUrl", INPUT_LIMITS.maxDescriptionLength) ?? null
+    };
+
+    return {
+      format,
+      fileName: comparisonExportFileName(format, meta),
+      contentType: contentTypeForFormat(format),
+      body: renderComparison(matrix, meta, format),
+      setupCount: matrix.setups.length,
+      runCount: matrix.totals.runs
     };
   }, dbPathInput);
 }

@@ -6,6 +6,16 @@ Local-first full-stack benchmarking workbench for AI agents.
 
 ## What Changed Since v0.3.0
 
+- Added `agent-bench compare-models --models a,b,c`: one command plans the setups, runs the batch, and prints the ranked comparison with a winner per metric. `--format md|csv|json|html` writes the shareable report in the same step.
+- Added `agent-bench doctor`: checks Node, the database, the gateway key, benchmarks, executable agents, and the sandbox provider, and prints the fix next to each problem.
+- `agent-bench init` now seeds a usable workspace: the benchmark suites, the executable `model-coder` agent, and a `.env` from `.env.sample`.
+- Separated the **model under test** from the **judge model**. A runner-backed agent spends `--model` on its own work, so that model no longer doubles as the grader; `--judge-model` (or `AGENT_BENCH_JUDGE_MODEL`) picks the grader, and a batch uses one judge across every setup.
+- Added a shipped `model-coder` agent: a model-agnostic single-shot coding runner, so a model-vs-model comparison works without writing a runner first.
+- An agent can declare `Requires Network: yes` of its own, so a runner that calls a model works under a sandbox while the task it runs still declares no network of its own.
+- Fixed `node --test` verifiers reporting no test metrics: only TAP output was parsed, so runs under Node's default reporter silently scored as if the suite had not run.
+- Replaced the `better-sqlite3` native module with Node's built-in `node:sqlite`, so a Node upgrade no longer breaks persistence with an ABI mismatch and there is nothing to compile on install. Requires Node 22.5+.
+- Added comparison export and sharing: any comparison — or a hand-picked subset of setups — can be copied, downloaded, or deep-linked as Markdown, CSV, JSON, or a self-contained HTML report.
+- A single batch can now compare more than two setups: a setup is an agent plus its own review model, up to 12 per launch, and Run History compares up to six runs side by side instead of exactly two.
 - Replaced the older broad default suites with a smaller benchmark-grade set: `repo-maintenance`, `product-builds`, and `creative-frontend`.
 - Added deterministic seeded fixtures for a security audit task, a CLI build task, and a simple web-app task, plus a bounded landing-page task for human and LLM review.
 - Restored benchmark metadata fields for `Reliability`, `Time Budget Ms`, `Cost Budget Usd`, and `Default Trials` so tasks are easier to compare after small agent prompt changes.
@@ -55,10 +65,27 @@ pnpm install
 
 CI derives the pnpm version from `package.json#packageManager`, so future pnpm upgrades only need that field changed.
 
-Start the local workbench:
+Set up a workspace and check the machine:
 
 ```bash
 pnpm exec agent-bench init
+```
+
+`init` creates the database, seeds the benchmark suites, installs the executable `model-coder` agent, and copies `.env.sample` to `.env` if you have no `.env` yet. Put your gateway key in that file, then:
+
+```bash
+pnpm exec agent-bench doctor
+```
+
+`doctor` reports PASS / WARN / FAIL per check with the fix next to each problem, and exits non-zero only on a FAIL. Then compare two models on one task:
+
+```bash
+pnpm exec agent-bench compare-models --models anthropic/claude-sonnet-5,anthropic/claude-opus-5 --task fix-react-bug
+```
+
+Start the local workbench:
+
+```bash
 pnpm exec agent-bench ui
 ```
 
@@ -82,11 +109,15 @@ pnpm run test:e2e
 Use the CLI directly:
 
 ```bash
+pnpm exec agent-bench doctor           # can this machine run a comparison?
+pnpm exec agent-bench compare-models --models a/b,c/d   # run + rank in one command
 pnpm exec agent-bench run
 pnpm exec agent-bench run --no-judge   # deterministic review only, zero grader tokens
+pnpm exec agent-bench run --judge-model openai/gpt-4.1   # grade with a model of your choosing
 pnpm exec agent-bench history
-pnpm exec agent-bench compare --left <run-key> --right <run-key>
+pnpm exec agent-bench compare <run-key> <run-key> [<run-key>...]   # first key is the baseline
 pnpm exec agent-bench matrix           # all agent × model setups side by side
+pnpm exec agent-bench export --format md   # shareable comparison report
 ```
 
 ## Comparing Agents And Models
@@ -102,7 +133,94 @@ The workbench's **Comparison** tab (and the `matrix` CLI command) shows every ag
 
 The comparison is aggregated from runs already persisted in SQLite, so opening, filtering, and re-rendering it costs **zero tokens**. Token spend is also made visible: the view counts how many reviews came from the judge cache or the deterministic rules rubric (free) versus fresh gateway calls.
 
-To compare models, launch the same agents and tasks with different `Review model` values (UI) or `--model` (CLI); each run now persists its model id, benchmark, task, review mode, and judge token usage.
+Each run persists its model id, benchmark, task, review mode, and judge token usage, so the grouping survives a restart.
+
+### Comparing two models on the same task
+
+`compare-models` is the short path: it plans one setup per model, runs them against the same agent and task, and prints the ranked table.
+
+```bash
+agent-bench compare-models \
+  --models anthropic/claude-sonnet-5,anthropic/claude-opus-5 \
+  --task fix-react-bug \
+  --format html --out report.html
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--models <list>` | Two or more gateway model ids, comma or newline separated. Duplicates collapse |
+| `--agent <path>` | The workflow held constant across models. Defaults to `agents/model-coder.md` |
+| `--benchmark <key>` | Benchmark suite. Defaults to `repo-maintenance` |
+| `--task <key>` | One task. Omit to run the whole suite |
+| `--judge-model <id>` | The grader. One judge across every setup |
+| `--no-judge` | Compare on objective signals only: verifier tests, diff, duration, agent tokens |
+| `--format`, `--out` | Also write the comparison as `md`, `csv`, `json`, or `html` |
+
+The agent is held constant on purpose. `agents/model-coder.md` is a deliberately minimal single-shot coder: it reads the task brief and the workspace, asks `AGENT_BENCH_PROVIDER_MODEL` for a complete set of file edits, applies them, and restores `tests/` so the verifier cannot be gamed. Because the scaffolding is identical for every setup, a batch that varies only the model measures the model.
+
+### The model under test is not the judge
+
+Two different models are involved in a run:
+
+- the **model under test** (`--model`, or one entry of `--models`) is handed to the agent's runner and does the work
+- the **judge model** (`--judge-model`, or `AGENT_BENCH_JUDGE_MODEL`, default `openai/gpt-4.1-mini`) reads the result and grades it
+
+For a runner-backed agent these never collapse into one: letting the subject grade itself would vary two things at once, and a batch therefore uses a single judge across every setup. A review-only agent has no model of its own, so there `--model` still means "the judge", as it always did.
+
+For an agent whose runner calls a model, declare the need in the agent file:
+
+```markdown
+Runner: node model-coder/run.mjs
+Requires Network: yes
+```
+
+The task declares what the *work* needs; the agent declares what the *workflow* needs. A sandboxed run satisfies both, so a benchmark task can stay `Requires Network: no` while the runner still reaches the gateway.
+
+### Comparing more than two setups in one batch
+
+A **setup** is one comparable configuration: an agent plus the review model it runs against. The Test Lab's `Model(s) under test` box takes one model per line (with the judge in its own field beside it), and a batch is planned as the cross product of the selected agents and those models — three agents × two models is six setups in one launch. The chip row under the field previews exactly which setups will run, and the plan metric reads `Setups × Tasks = Runs`.
+
+The API takes the same shape directly, with an optional per-setup label and review override:
+
+```json
+POST /api/run/batch
+{
+  "benchmarkKey": "repo-maintenance",
+  "setups": [
+    { "agentPath": "agents/coder.md", "model": "openai/gpt-4.1-mini", "label": "baseline" },
+    { "agentPath": "agents/coder.md", "model": "anthropic/claude-sonnet-5" },
+    { "agentPath": "agents/loop.md", "model": "anthropic/claude-sonnet-5", "review": "off" }
+  ]
+}
+```
+
+Labels must be unique, identical agent+model entries are collapsed, and the older `{ "agents": [...], "model": "..." }` form still works as the single-model shorthand. Run History compares up to six runs at once, each shown as a delta against the first one you picked.
+
+### Exporting and sharing a comparison
+
+The Comparison tab has a share bar with four formats:
+
+| Format | Use it for |
+| --- | --- |
+| `md` | pasting into a PR, an issue, or a doc |
+| `csv` | pulling the leaderboard into a spreadsheet |
+| `json` | feeding another tool (`agent-bench.comparison/v1` schema) |
+| `html` | a self-contained report: no scripts, no external requests, light/dark aware |
+
+- **Copy report** puts the rendered report on the clipboard.
+- **Download** saves it as `agent-bench-comparison-<scope>-<timestamp>.<ext>`.
+- **Copy link** copies a deep link (`?view=compare&benchmark=...`) for people who already have the workbench open.
+- The **Share** column on the leaderboard chooses which setups go into the export; unchecked rows are dimmed and left out of both the file and the link.
+
+Every export ranks all setups, names a winner per metric (score, quality, tests, speed, leanest tokens, cheapest), and carries the per-task heatmap. The same thing from the CLI:
+
+```bash
+pnpm exec agent-bench export --format md
+pnpm exec agent-bench export --format html --benchmark repo-maintenance --out report.html
+pnpm exec agent-bench export --format csv --setups "coder · openai/gpt-4.1-mini,loop · anthropic/claude-sonnet-5"
+```
+
+Exports render purely from persisted rows, so sharing a comparison also costs **zero tokens**.
 
 ### Visual comparison (screenshots + videos)
 
@@ -148,7 +266,9 @@ Capture is best-effort: a missing browser or a timeout leaves the artifact out w
 - `/api/workbench` returns the current dashboard snapshot.
 - `/api/skills/search` searches `skills.sh` through the official `skills` CLI.
 - `/api/agents/bundles` creates managed agent bundles under `./.agent-bench/agents`.
-- `/api/run/batch` executes multi-agent runs for either one task or a full benchmark cycle.
+- `/api/run/batch` executes multi-setup runs for either one task or a full benchmark cycle.
+- `/api/comparison` returns the aggregated agent × model matrix as JSON.
+- `/api/comparison/export` renders that matrix as `md`, `csv`, `json`, or a self-contained `html` report.
 - `/api/run/[runKey]/result` returns the persisted run summary used by the inspector.
 - `/api/artifacts/[runKey]/[file]` serves generated run reports and result files.
 
@@ -163,6 +283,8 @@ cp .env.sample .env
 ```bash
 export AI_GATEWAY_API_KEY="your_key"
 ```
+
+One key covers both roles: the agent runner reaches the gateway with it, and so does the judge. `AGENT_BENCH_JUDGE_MODEL` sets the default grader (`openai/gpt-4.1-mini` if unset); `--judge-model` overrides it per run or batch.
 
 You can also paste a key directly into the UI for the current browser session. That session key is not written to SQLite or run artifacts.
 
@@ -410,13 +532,14 @@ Important:
 - Multi-agent suites are still structurally modeled, but they only become truly executable when they are backed by concrete fixtures and verification commands.
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
-- Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
+- Batch execution is intentionally capped at `48` runs and `12` setups per launch to keep the local workbench responsive and predictable.
+- Run History compares at most `6` runs side by side; use the Comparison tab and its exports for wider sweeps.
 - Graded scoring reads `node --test` TAP output or an `AGENT_BENCH_CHECKS: <passed>/<total>` marker from a custom verifier; a verifier that emits neither still works but only as binary pass/fail.
 - Agent-under-test token usage is opt-in and voluntary (`result/usage.json`); `agent-bench` cannot observe LLM calls made from inside an opaque runner process or container.
 
 ## Troubleshooting
 
-- If the Next.js app fails to start after dependency changes, run `pnpm install` again. If the local Node version changed, run `pnpm rebuild better-sqlite3` before retrying.
+- If the Next.js app fails to start after dependency changes, run `pnpm install` again. Persistence uses Node's built-in `node:sqlite`, so changing the local Node version no longer requires rebuilding a native module — but Node **22.5 or newer** is required (24+ recommended, where `node:sqlite` is stable).
 - If skills search or project skill management fails on Windows, retry after `pnpm install`; the app now invokes `skills.sh` through `cmd.exe` because direct `spawnSync("npx.cmd", ...)` is not reliable inside the Node server process.
 - Existing SQLite databases are migrated on startup. If startup reports a missing run column, stop duplicate `next dev` processes and restart so the latest schema migration can run once.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.

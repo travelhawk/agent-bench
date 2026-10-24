@@ -22,6 +22,7 @@ export interface RunRecord {
   runKey: string;
   benchmarkKey: string | null;
   taskKey: string | null;
+  setupKey: string | null;
   modelId: string | null;
   reviewMode: ReviewMode | null;
   judgeTotalTokens: number;
@@ -119,7 +120,10 @@ export interface RuntimeEvaluationRequest {
   artifactsRoot: string;
   benchmarksDir?: string;
   benchmarks: BenchmarkSuiteRecord[];
+  /** The model under test: handed to the agent runner, never to the judge. */
   model?: string;
+  /** The model that reviews the work. Defaults to AGENT_BENCH_JUDGE_MODEL. */
+  judgeModel?: string;
   gatewayApiKey?: string;
   review?: "auto" | "off";
   strictSandbox?: boolean;
@@ -252,9 +256,30 @@ export interface RunEvaluationResult {
   regressed: boolean;
 }
 
+/**
+ * One comparable configuration in a batch. A batch may carry any number of
+ * these, so three or more setups can be measured against each other in a
+ * single launch instead of one agent list pinned to one review model.
+ */
+export interface BatchSetupInput {
+  agentPath: string;
+  model?: string | null;
+  label?: string | null;
+  review?: "auto" | "off" | null;
+}
+
+export interface BatchSetupSummary {
+  setupKey: string;
+  agentPath: string;
+  agentName: string;
+  modelLabel: string;
+  review: "auto" | "off";
+}
+
 export interface BatchRunFailure {
   agentPath: string;
   taskKey: string;
+  setupKey: string;
   message: string;
   run?: RunEvaluationResult;
 }
@@ -263,6 +288,7 @@ export interface BatchRunResult {
   runMode: RunMode;
   benchmarkKey: string;
   taskPlan: string[];
+  setups: BatchSetupSummary[];
   queueSize: number;
   completedRuns: number;
   failedRuns: number;

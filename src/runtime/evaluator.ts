@@ -451,6 +451,32 @@ export function resolveJudgeModel(model?: string): string {
   return model?.trim() || process.env.AGENT_BENCH_JUDGE_MODEL?.trim() || DEFAULT_MODEL;
 }
 
+/**
+ * A runner-backed agent spends `model` on its own work, so letting that model
+ * also pick the judge would change two variables at once in a model-vs-model
+ * comparison. Only a review-only agent has no model of its own, so there
+ * `model` can still mean "judge" the way it always has.
+ */
+export function resolveJudgeModelForRun(input: {
+  judgeModel?: string;
+  model?: string;
+  hasRunner: boolean;
+}): string {
+  if (input.judgeModel?.trim()) return input.judgeModel.trim();
+  return resolveJudgeModel(input.hasRunner ? undefined : input.model);
+}
+
+/**
+ * A runner that calls a model needs egress even when the task itself does not.
+ * The task declares what the *work* needs; the agent declares what the
+ * *workflow* needs, and a sandboxed run has to satisfy both.
+ */
+export function agentRequiresNetwork(agentMarkdown: string): boolean {
+  const match = agentMarkdown.match(/^Requires Network:\s*(.+)$/mi);
+  const value = match?.[1]?.trim().toLowerCase();
+  return value === "yes" || value === "true";
+}
+
 function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string }): string {
   return createHash("sha256")
     .update(input.benchmarkKey)
@@ -749,7 +775,7 @@ async function maybeRunSandboxExecution(input: {
     systemRoots: input.agentSystemRoots
   });
   const readOnlyDirs = [...new Set(input.agentSystemRoots.filter(Boolean))];
-  const allowNetwork = input.task.metadata.requiresNetwork;
+  const allowNetwork = input.task.metadata.requiresNetwork || agentRequiresNetwork(input.agentMarkdown);
   cpSync(fixtureDir, workspaceDir, { recursive: true });
   initWorkspaceGitBaseline(workspaceDir);
   writeFileSync(taskBriefPath, buildTaskBrief(input.benchmark, input.task), "utf8");
@@ -1109,7 +1135,11 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const agentVersion = /v\d+/i.test(agentName) ? agentName.match(/v\d+/i)![0] : "v1";
   const taskContext = buildTaskContext(input.benchmarks, input.benchmarkKey, input.taskKey);
   const assessment = buildRulesAssessment(selectedBenchmark, selectedTask, material.previewMarkdown);
-  const model = resolveJudgeModel(input.model);
+  const judgeModel = resolveJudgeModelForRun({
+    judgeModel: input.judgeModel,
+    model: input.model,
+    hasRunner: Boolean(input.agentRunnerCommand)
+  });
   const artifactsPath = path.join(input.artifactsRoot, input.runKey);
   mkdirSync(artifactsPath, { recursive: true });
   const sandbox = await maybeRunSandboxExecution({
@@ -1130,7 +1160,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     agentRunnerCommand: input.agentRunnerCommand,
     strictSandbox: input.strictSandbox,
     resolvedSandboxProvider: input.resolvedSandboxProvider,
-    model,
+    // The runner gets the model under test, never the judge's model.
+    model: input.model,
     providerApiKey: input.gatewayApiKey
   });
   const outcomeScore = sandbox.mode === "sandbox" ? sandbox.outcomeScore : assessment.outcomeScore;
@@ -1198,7 +1229,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const fingerprint = makeJudgeFingerprint({
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
-    model,
+    model: judgeModel,
     taskContext,
     agentMd: material.previewMarkdown,
     judgeMode
@@ -1222,7 +1253,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     } else {
       judge = await runJudgeReview({
         apiKey,
-        model,
+        model: judgeModel,
         benchmarkKey: input.benchmarkKey,
         taskKey: input.taskKey,
         agentPath: material.agentPathLabel,
@@ -1319,7 +1350,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Review mode: ${judge.mode}`,
     `Score profile: ${scoreProfile}`,
     `Score confidence: ${scoreConfidence}`,
-    `Model: ${model}`,
+    `Model under test: ${input.model ?? "n/a"}`,
+    `Judge model: ${judgeModel}`,
     `Outcome score: ${outcomeScore}`,
     `Process score: ${processScore}`,
     `Review score: ${judge.score}`,
@@ -1369,7 +1401,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       assetFileCount: material.assetFileCount,
       skills: material.skills
     },
-    model,
+    model: input.model ?? null,
+    judgeModel,
     executionMode: sandbox.mode,
     reviewMode: judge.mode,
     resolvedSandboxProvider: input.resolvedSandboxProvider ?? sandbox.provider ?? null,

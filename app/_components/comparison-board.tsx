@@ -1,8 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RunRecord } from "../../src/types";
-import { buildComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, runBenchmarkKey, runTaskKey, setupKeyForRun } from "../../src/core/comparison";
+import { buildComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, runBenchmarkKey, runTaskKey, setupDisplayName, setupKeyForRun, setupModelSuffix } from "../../src/core/comparison";
+import type { ComparisonExportFormat } from "../../src/core/export";
+
+const EXPORT_FORMATS: Array<{ value: ComparisonExportFormat; label: string; hint: string }> = [
+  { value: "md", label: "Markdown", hint: "Paste into a PR, issue, or Slack" },
+  { value: "html", label: "HTML report", hint: "Self-contained page, opens anywhere" },
+  { value: "csv", label: "CSV", hint: "Drop into a spreadsheet" },
+  { value: "json", label: "JSON", hint: "Feed another tool" }
+];
 
 function formatTokens(value: number): string {
   if (value <= 0) return "0";
@@ -41,14 +49,72 @@ function MetricBar({ value, max, label, best, invert = false }: {
   );
 }
 
-export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
-  const [benchmarkFilter, setBenchmarkFilter] = useState<string>("all");
+export function ComparisonBoard({ runs, initialBenchmarkKey }: { runs: RunRecord[]; initialBenchmarkKey?: string }) {
+  const [benchmarkFilter, setBenchmarkFilter] = useState<string>(initialBenchmarkKey ?? "all");
+  const [exportFormat, setExportFormat] = useState<ComparisonExportFormat>("md");
+  // Empty = share everything. Ticking rows narrows the shared report to those setups.
+  const [includedSetups, setIncludedSetups] = useState<string[]>([]);
+  const [shareState, setShareState] = useState<{ tone: "neutral" | "success" | "error"; message: string }>({ tone: "neutral", message: "" });
+  const [isExporting, setIsExporting] = useState(false);
 
   const allBenchmarkKeys = useMemo(() => [...new Set(runs.map(runBenchmarkKey))].sort(), [runs]);
   const matrix = useMemo(
     () => buildComparisonMatrix(runs, benchmarkFilter === "all" ? {} : { benchmarkKey: benchmarkFilter }),
     [runs, benchmarkFilter]
   );
+
+  // Drop stale picks when the benchmark filter changes the available setups.
+  useEffect(() => {
+    setIncludedSetups((current) => current.filter((key) => matrix.setups.some((setup) => setup.setupKey === key)));
+  }, [matrix]);
+
+  const sharedSetups = includedSetups.length > 0 ? includedSetups : matrix.setups.map((setup) => setup.setupKey);
+
+  function exportQuery(format: ComparisonExportFormat, download: boolean): string {
+    const params = new URLSearchParams({ format, download: download ? "1" : "0" });
+    if (benchmarkFilter !== "all") params.set("benchmark", benchmarkFilter);
+    if (includedSetups.length > 0) params.set("setups", includedSetups.join(","));
+    if (typeof window !== "undefined") params.set("shareUrl", shareLink());
+    return `/api/comparison/export?${params.toString()}`;
+  }
+
+  function shareLink(): string {
+    if (typeof window === "undefined") return "";
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set("view", "compare");
+    if (benchmarkFilter !== "all") url.searchParams.set("benchmark", benchmarkFilter);
+    return url.toString();
+  }
+
+  async function copyText(text: string, successMessage: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setShareState({ tone: "success", message: successMessage });
+    } catch {
+      setShareState({ tone: "error", message: "Clipboard is blocked in this browser — use Download instead." });
+    }
+  }
+
+  async function copyReport() {
+    setIsExporting(true);
+    setShareState({ tone: "neutral", message: "Rendering report..." });
+    try {
+      const response = await fetch(exportQuery(exportFormat, false));
+      if (!response.ok) throw new Error(`Export failed (${response.status})`);
+      const body = await response.text();
+      await copyText(body, `Copied ${sharedSetups.length} setup(s) as ${exportFormat.toUpperCase()}.`);
+    } catch (error: unknown) {
+      setShareState({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  function toggleSetup(setupKey: string) {
+    setIncludedSetups((current) => current.includes(setupKey)
+      ? current.filter((key) => key !== setupKey)
+      : [...current, setupKey]);
+  }
 
   // Latest run with visual artifacts per task × setup, so the same landing
   // page / web app built by different workflows can be compared side by side.
@@ -92,8 +158,8 @@ export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
 
   const zeroTokenReviews = matrix.totals.cachedReviews + matrix.totals.rulesReviews + matrix.totals.offReviews;
 
-  function setupTitle(setup: ComparisonSetup): { agent: string; model: string } {
-    return { agent: setup.agentName, model: setup.modelLabel };
+  function setupTitle(setup: ComparisonSetup): { agent: string; model: string | null } {
+    return { agent: setupDisplayName(setup), model: setupModelSuffix(setup) };
   }
 
   return (
@@ -113,12 +179,38 @@ export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
           <div className="token-stat token-stat-good"><span>Zero-token reviews</span><strong>{zeroTokenReviews}</strong></div>
         </div>
       </div>
+      <div className="share-bar">
+        <div className="share-bar-main">
+          <span className="share-bar-title">Export &amp; share</span>
+          <label className="field field-inline"><span>Format</span>
+            <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value as ComparisonExportFormat)}>
+              {EXPORT_FORMATS.map((format) => <option key={format.value} value={format.value}>{format.label}</option>)}
+            </select>
+          </label>
+          <button type="button" className="secondary-action" disabled={isExporting || matrix.setups.length === 0} onClick={copyReport}>
+            {isExporting ? "Rendering..." : "Copy report"}
+          </button>
+          <a
+            className={`secondary-action ${matrix.setups.length === 0 ? "is-disabled" : ""}`}
+            href={exportQuery(exportFormat, true)}
+            onClick={() => setShareState({ tone: "success", message: `Downloading ${exportFormat.toUpperCase()} export.` })}
+          >Download</a>
+          <button type="button" className="secondary-action" onClick={() => copyText(shareLink(), "Workbench link copied.")}>Copy link</button>
+        </div>
+        <span className="share-bar-hint">
+          {EXPORT_FORMATS.find((format) => format.value === exportFormat)?.hint} · sharing {sharedSetups.length} of {matrix.setups.length} setup(s)
+          {includedSetups.length > 0 ? <> · <button type="button" className="text-link button-reset" onClick={() => setIncludedSetups([])}>include all</button></> : null}
+        </span>
+      </div>
+      {shareState.message && <p className={`status-line status-line-${shareState.tone}`}>{shareState.message}</p>}
+
       <p className="status-line">This view aggregates persisted runs only — filtering and re-rendering never call a model. {matrix.totals.cachedReviews > 0 ? `${matrix.totals.cachedReviews} review(s) were served from the judge cache, ` : ""}{matrix.totals.rulesReviews + matrix.totals.offReviews > 0 ? `${matrix.totals.rulesReviews + matrix.totals.offReviews} used the deterministic rules rubric — ` : ""}only {matrix.totals.gatewayReviews} run(s) spent fresh judge tokens.</p>
 
       <div className="table-scroll">
         <table className="matrix-table">
           <thead>
             <tr>
+              <th className="share-col" title="Include this setup in the shared export">Share</th>
               <th>Setup (agent × model)</th>
               <th>Score</th>
               <th>Quality</th>
@@ -135,11 +227,20 @@ export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
               const { agent, model } = setupTitle(setup);
               const testsRatio = setup.testsTotal > 0 ? setup.testsPassed / setup.testsTotal : null;
               const cost = setup.judgeCostUsd + setup.agentCostUsd;
+              const shared = sharedSetups.includes(setup.setupKey);
               return (
-                <tr key={setup.setupKey}>
+                <tr key={setup.setupKey} className={shared ? "" : "row-excluded"}>
+                  <td className="share-col">
+                    <input
+                      type="checkbox"
+                      aria-label={`Include ${setup.setupKey} in the shared export`}
+                      checked={shared}
+                      onChange={() => toggleSetup(setup.setupKey)}
+                    />
+                  </td>
                   <td className="setup-cell">
                     <strong>{agent}</strong>
-                    <span className={`model-chip ${model === NO_MODEL_LABEL ? "model-chip-muted" : ""}`}>{model}</span>
+                    {model ? <span className={`model-chip ${model === NO_MODEL_LABEL ? "model-chip-muted" : ""}`}>{model}</span> : null}
                   </td>
                   <td><MetricBar value={setup.avgScore} max={10} label={setup.avgScore != null ? setup.avgScore.toFixed(2) : "n/a"} best={bestScore != null && setup.avgScore === bestScore} /></td>
                   <td><MetricBar value={setup.avgQuality} max={10} label={setup.avgQuality != null ? setup.avgQuality.toFixed(2) : "n/a"} best={bestQuality != null && setup.avgQuality === bestQuality} /></td>
@@ -208,7 +309,7 @@ export function ComparisonBoard({ runs }: { runs: RunRecord[] }) {
               <tbody>
                 {matrix.setups.map((setup) => (
                   <tr key={`heat-${setup.setupKey}`}>
-                    <td className="setup-cell"><strong>{setup.agentName}</strong><span className="model-chip model-chip-muted">{setup.modelLabel}</span></td>
+                    <td className="setup-cell"><strong>{setupDisplayName(setup)}</strong>{setupModelSuffix(setup) ? <span className="model-chip model-chip-muted">{setupModelSuffix(setup)}</span> : null}</td>
                     {matrix.taskKeys.map((taskKey) => {
                       const cell = setup.tasks[taskKey];
                       if (!cell) return <td key={taskKey} className="heat-cell heat-none">—</td>;

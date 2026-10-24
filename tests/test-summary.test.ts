@@ -25,6 +25,29 @@ test("parseNodeTestTapSummary extracts pass/fail/total counts from TAP output", 
   assert.deepEqual(summary, { available: true, total: 3, passed: 2, failed: 1 });
 });
 
+test("parseNodeTestTapSummary also reads the default spec reporter's totals", () => {
+  // What `node --test` actually prints without a TAP reporter selected. Only
+  // the TAP shape used to parse, so these runs silently reported no tests.
+  const stdout = [
+    "\u2714 incrementByTwo adds two in one step (2.57ms)",
+    "\u2139 tests 3",
+    "\u2139 suites 0",
+    "\u2139 pass 2",
+    "\u2139 fail 1",
+    "\u2139 cancelled 0",
+    "\u2139 skipped 0",
+    "\u2139 todo 0",
+    "\u2139 duration_ms 221.30"
+  ].join("\n");
+
+  assert.deepEqual(parseNodeTestTapSummary(stdout), { available: true, total: 3, passed: 2, failed: 1 });
+});
+
+test("parseNodeTestTapSummary tolerates a missing trailing newline", () => {
+  const stdout = "\u2139 tests 1\r\n\u2139 pass 1\r\n\u2139 fail 0";
+  assert.deepEqual(parseNodeTestTapSummary(stdout), { available: true, total: 1, passed: 1, failed: 0 });
+});
+
 test("parseNodeTestTapSummary returns null when the summary lines are missing", () => {
   assert.equal(parseNodeTestTapSummary("some unrelated custom verify.js output"), null);
 });
