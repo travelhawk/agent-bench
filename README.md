@@ -196,6 +196,45 @@ POST /api/run/batch
 
 Labels must be unique, identical agent+model entries are collapsed, and the older `{ "agents": [...], "model": "..." }` form still works as the single-model shorthand. Run History compares up to six runs at once, each shown as a delta against the first one you picked.
 
+### Comparing workflows: traps and blind review
+
+To compare *workflows* (e.g. plain Claude Code vs. Claude Code plus a review pass) on one spec, use a setups
+file and the `claude-code` agent. `benchmarks/workflow-builds/` ships the Haushaltsbuch task for this.
+
+```bash
+agent-bench init            # installs agents/claude-code(.md), agents/blind-reviewer, benchmarks
+agent-bench doctor
+npx playwright install chromium   # the Haushaltsbuch traps drive a real browser
+
+agent-bench compare-setups --benchmark workflow-builds --task haushaltsbuch \
+  --setups vanilla,vanilla+review --no-judge \
+  --blind-review "node agents/blind-reviewer/run.mjs" \
+  --format html --out reports/haushaltsbuch.html
+```
+
+- **Setups file** (`benchmarks/<suite>/setups.json`, or `--setups-file`): `[{ "label", "agent", "model"?, "followupPrompt"?, "review"? }]`.
+  One agent may appear under several labels; `followupPrompt` reaches the runner as `AGENT_BENCH_FOLLOWUP_PROMPT`
+  (`claude-code` runs it as a second `claude -p --continue`). `--setups a,b` picks labels.
+- **Traps** (hidden checks): a task lists `## Traps` as `- <id>: <description>` and sets `Traps Dir:` and
+  `Trap Command:` in `## Sandbox`. The traps folder is copied to `<workspace>/traps` only after the runner finished;
+  the trap command must write `trap-results.json` (Vitest `--reporter=json --outputFile=trap-results.json` or the
+  Playwright `json` reporter). A trap passes when every test whose name contains its id passed (`unknown` when none
+  matched). Results are stored per run and shown as a trap matrix in the terminal and the md/csv/json/html exports.
+  They do not change the score. Dry run against any finished build, no agent involved:
+  `agent-bench traps --benchmark workflow-builds --task haushaltsbuch --workspace ../my-build` (port 4173 must be free).
+- **Blind review** (`--blind-review "<command>"`, also on `compare-models`): after all runs each completed workspace is
+  copied to `<artifacts>/blind-<time>-<task>/blind/<A|B|...>` in shuffled order, without `.git`, `node_modules`,
+  `result/`, `traps/`, `dist/`, `.claude/`, `CLAUDE.md`/`AGENTS.md` and test reports. The letter key goes to
+  `blind-key.json` next to (not inside) that folder. The command runs once with `AGENT_BENCH_BLIND_DIR`,
+  `AGENT_BENCH_TASK_FILE` (`TASK.md`: task + trap list, not the trap tests) and `AGENT_BENCH_TRAPS`, and must write
+  `ranking.json` (`[{letter, rank, notes}]`). Ranks are mapped back and shown next to each setup. The default
+  reviewer (`agents/blind-reviewer/run.mjs`) runs `claude -p` with a rubric: data safety, spec fidelity, a11y,
+  code quality, and only reproduced bugs count. `AGENT_BENCH_BLIND_MODEL` pins its model,
+  `AGENT_BENCH_BLIND_TIMEOUT_MS` its timeout (default 60 min).
+- **Auth for `claude`**: the sandbox passes `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` (paths only), so the
+  logged-in CLI works. An agent may list extra variables with `Env Passthrough: A, B` (claude-code forwards
+  `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `AGENT_BENCH_CLAUDE_MODEL` when set).
+
 ### Exporting and sharing a comparison
 
 The Comparison tab has a share bar with four formats:

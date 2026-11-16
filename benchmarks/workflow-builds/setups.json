@@ -1,0 +1,13 @@
+[
+  {
+    "label": "vanilla",
+    "agent": "agents/claude-code.md",
+    "review": "off"
+  },
+  {
+    "label": "vanilla+review",
+    "agent": "agents/claude-code.md",
+    "review": "off",
+    "followupPrompt": "/forge:deep-review all\n\nThen fix every confirmed critical or high finding, re-run npm run typecheck, npm test and npm run build until they pass, and stop."
+  }
+]
