@@ -61,6 +61,22 @@ export interface RunRecord {
   agentInputTokens: number;
   agentOutputTokens: number;
   agentCostUsd: number;
+  /** Hidden-check results, empty when the task declares no traps. */
+  trapResults?: TrapResult[];
+  /** Rank given by the blind reviewer (1 = best), null when no blind review ran. */
+  blindRank?: number | null;
+  blindNotes?: string | null;
+}
+
+export interface BenchmarkTrap {
+  id: string;
+  description: string;
+}
+
+export interface TrapResult {
+  id: string;
+  description: string;
+  status: "pass" | "fail" | "unknown";
 }
 
 export interface RunInput {
@@ -106,6 +122,7 @@ export interface RunInput {
   agentInputTokens?: number;
   agentOutputTokens?: number;
   agentCostUsd?: number;
+  trapResults?: TrapResult[];
 }
 
 export interface RuntimeEvaluationRequest {
@@ -130,6 +147,8 @@ export interface RuntimeEvaluationRequest {
   resolvedSandboxProvider?: SandboxSelection;
   trialIndex?: number | null;
   environmentFingerprint?: string | null;
+  /** Extra env for the runner (e.g. AGENT_BENCH_FOLLOWUP_PROMPT from a setup variant). */
+  runnerEnv?: Record<string, string>;
   setupSnapshot?: {
     key?: string | null;
     workflowPath?: string | null;
@@ -207,6 +226,9 @@ export interface BenchmarkTaskSandbox {
   verifyCommand?: string;
   provider?: BenchmarkSandboxProvider;
   timeoutMs: number;
+  /** Holdout test files, copied into `<workspace>/traps` only after the runner finished. */
+  trapsDir?: string;
+  trapCommand?: string;
 }
 
 export interface BenchmarkTaskRecord {
@@ -219,6 +241,7 @@ export interface BenchmarkTaskRecord {
   deliverableFormat: string;
   successChecks: string[];
   failureModes: string[];
+  traps?: BenchmarkTrap[];
   metadata: BenchmarkTaskMetadata;
   sandbox: BenchmarkTaskSandbox | null;
 }
@@ -266,6 +289,8 @@ export interface BatchSetupInput {
   model?: string | null;
   label?: string | null;
   review?: "auto" | "off" | null;
+  /** Second prompt for runners that support it (claude-code: `claude -p --continue`). */
+  followupPrompt?: string | null;
 }
 
 export interface BatchSetupSummary {
@@ -294,6 +319,15 @@ export interface BatchRunResult {
   failedRuns: number;
   runs: RunEvaluationResult[];
   failures: BatchRunFailure[];
+  blindReviews?: BlindReviewSummary[];
+}
+
+export interface BlindReviewSummary {
+  taskKey: string;
+  blindDir: string;
+  keyPath: string;
+  verdicts: Array<{ setupKey: string; runKey: string; letter: string; rank: number | null; notes: string | null }>;
+  error?: string;
 }
 
 export interface RunResultPayload {

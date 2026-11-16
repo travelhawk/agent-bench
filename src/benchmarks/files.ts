@@ -9,6 +9,7 @@ import {
   taskMetadataToMarkdown
 } from "./metadata";
 import { BenchmarkSandboxProvider, BenchmarkSuiteRecord, BenchmarkTaskRecord } from "../types";
+import { parseTrapsSection } from "../runtime/traps";
 
 const DEFAULT_SANDBOX_TIMEOUT_MS = 120000;
 const EMPTY_TASK_TEXT = "";
@@ -274,6 +275,8 @@ function parseTaskSandbox(section: string): BenchmarkTaskRecord["sandbox"] {
   const fixtureDirRaw = map.get("fixture dir")?.trim();
   const verifyCommandRaw = map.get("verify command")?.trim();
   const providerRaw = map.get("provider")?.trim().toLowerCase();
+  const trapsDirRaw = map.get("traps dir")?.trim();
+  const trapCommandRaw = map.get("trap command")?.trim();
   const fixtureDir = fixtureDirRaw && fixtureDirRaw.toLowerCase() !== "none" ? fixtureDirRaw : undefined;
   const verifyCommand = verifyCommandRaw && verifyCommandRaw.toLowerCase() !== "none" ? verifyCommandRaw : undefined;
   const provider = providerRaw && ["auto", "process", "macos-seatbelt", "docker"].includes(providerRaw)
@@ -285,7 +288,9 @@ function parseTaskSandbox(section: string): BenchmarkTaskRecord["sandbox"] {
     fixtureDir: fixtureDir || undefined,
     verifyCommand: verifyCommand || undefined,
     provider,
-    timeoutMs
+    timeoutMs,
+    ...(trapsDirRaw && trapsDirRaw.toLowerCase() !== "none" ? { trapsDir: trapsDirRaw } : {}),
+    ...(trapCommandRaw && trapCommandRaw.toLowerCase() !== "none" ? { trapCommand: trapCommandRaw } : {})
   };
 }
 
@@ -297,6 +302,8 @@ function sandboxToMarkdown(sandbox: BenchmarkTaskRecord["sandbox"]): string[] {
     `Verify Command: ${sandbox.verifyCommand ?? "none"}`,
     `Provider: ${sandbox.provider ?? "auto"}`,
     `Timeout Ms: ${sandbox.timeoutMs}`,
+    ...(sandbox.trapsDir ? [`Traps Dir: ${sandbox.trapsDir}`] : []),
+    ...(sandbox.trapCommand ? [`Trap Command: ${sandbox.trapCommand}`] : []),
     ""
   ];
 }
@@ -349,6 +356,7 @@ function taskToMarkdown(task: BenchmarkTaskRecord): string {
     ...textSectionToMarkdown("Deliverable Format", task.deliverableFormat),
     ...listSectionToMarkdown("Success Checks", task.successChecks),
     ...listSectionToMarkdown("Failure Modes", task.failureModes),
+    ...listSectionToMarkdown("Traps", (task.traps ?? []).map((trap) => `${trap.id}: ${trap.description}`)),
     ...sandboxToMarkdown(task.sandbox),
     ...taskMetadataToMarkdown(normalizeTaskMetadataInput(task.metadata))
   ].join("\n");
@@ -395,6 +403,7 @@ function parseTaskMarkdown(content: string, fallbackKey: string): BenchmarkTaskR
   const failureModes = parseListSection(extractSection(content, "Failure Modes"));
   const sandbox = parseTaskSandbox(extractSection(content, "Sandbox"));
   const metadata = parseTaskMetadata(extractSection(content, "Metadata"));
+  const traps = parseTrapsSection(extractSection(content, "Traps"));
 
   const key = normalizeKey(keyMatch?.[1]?.trim() || fallbackKey);
   return {
@@ -407,6 +416,7 @@ function parseTaskMarkdown(content: string, fallbackKey: string): BenchmarkTaskR
     deliverableFormat,
     successChecks,
     failureModes,
+    ...(traps.length > 0 ? { traps } : {}),
     metadata,
     sandbox
   };

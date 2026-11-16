@@ -127,6 +127,9 @@ export function initializeSchema(db: Db): void {
   addColumnIfMissing(db, "runs", "judge_total_tokens", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "runs", "screenshot_file", "TEXT");
   addColumnIfMissing(db, "runs", "video_file", "TEXT");
+  addColumnIfMissing(db, "runs", "trap_results_json", "TEXT");
+  addColumnIfMissing(db, "runs", "blind_rank", "INTEGER");
+  addColumnIfMissing(db, "runs", "blind_notes", "TEXT");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

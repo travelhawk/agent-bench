@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
-import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
 import { readAgentRunnerCommand } from "./agents/files";
@@ -14,6 +15,11 @@ import { renderMatrixLines } from "./core/matrix-print";
 import { exportComparison, getComparisonMatrix, runBatch } from "./server/service";
 import { runDoctorChecks } from "./server/doctor";
 import { startUi } from "./ui/server";
+import { runTrapStep } from "./runtime/evaluator";
+import { runSandboxedCommand } from "./runtime/sandbox";
+import { TRAP_RESULTS_FILE, TRAPS_WORKSPACE_DIR } from "./runtime/traps";
+import { BatchRunResult } from "./types";
+import { readSetupsFile } from "./core/setups-file";
 
 const program = new Command();
 const cwd = getWorkspaceRoot();
@@ -31,30 +37,35 @@ program
   .version(TOOL_VERSION);
 
 /**
- * Copies one starter agent into the workspace. A comparison needs at least one
+ * Copies the starter agents into the workspace. A comparison needs at least one
  * *executable* agent, and a fresh checkout has none, so `init` installs the
- * model-agnostic runner rather than leaving the first run to fail.
+ * model-agnostic runner, the Claude Code workflow runner and the default blind
+ * reviewer rather than leaving the first run to fail.
  */
+const STARTER_AGENTS = ["model-coder", "claude-code", "blind-reviewer"];
+
 function installStarterAgent(examplesDir: string): string[] {
   const notes: string[] = [];
   const agentsDir = path.join(cwd, "agents");
-  const sourceFile = path.join(examplesDir, "agents", "model-coder.md");
-  const sourceDir = path.join(examplesDir, "agents", "model-coder");
-  if (!existsSync(sourceFile)) return notes;
-
   mkdirSync(agentsDir, { recursive: true });
-  const targetFile = path.join(agentsDir, "model-coder.md");
-  if (existsSync(targetFile)) {
-    notes.push("agents/model-coder.md already present, left untouched.");
-  } else {
-    copyFileSync(sourceFile, targetFile);
-    notes.push("Installed agents/model-coder.md (executable, benchmarks any gateway model).");
-  }
 
-  const targetDir = path.join(agentsDir, "model-coder");
-  if (existsSync(sourceDir) && !existsSync(targetDir)) {
-    cpSync(sourceDir, targetDir, { recursive: true });
-    notes.push("Installed agents/model-coder/run.mjs.");
+  for (const name of STARTER_AGENTS) {
+    const sourceFile = path.join(examplesDir, "agents", `${name}.md`);
+    const sourceDir = path.join(examplesDir, "agents", name);
+    const targetFile = path.join(agentsDir, `${name}.md`);
+    if (existsSync(sourceFile)) {
+      if (existsSync(targetFile)) {
+        notes.push(`agents/${name}.md already present, left untouched.`);
+      } else {
+        copyFileSync(sourceFile, targetFile);
+        notes.push(`Installed agents/${name}.md.`);
+      }
+    }
+    const targetDir = path.join(agentsDir, name);
+    if (existsSync(sourceDir) && !existsSync(targetDir)) {
+      cpSync(sourceDir, targetDir, { recursive: true });
+      notes.push(`Installed agents/${name}/run.mjs.`);
+    }
   }
   return notes;
 }
@@ -322,6 +333,62 @@ program
     console.log(`Exported ${result.setupCount} setup(s) across ${result.runCount} run(s) to ${outPath}`);
   });
 
+/** Prints a finished batch, its comparison matrix, blind-review outcome and optional export. */
+async function reportBatch(batch: BatchRunResult, opts: {
+  benchmark: string;
+  task?: string;
+  setupKeys: string[];
+  format?: string;
+  out?: string;
+  dbPath: string;
+}): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log(`${batch.completedRuns}/${batch.queueSize} run(s) completed${batch.failedRuns > 0 ? `, ${batch.failedRuns} failed` : ""}.\n`);
+  for (const failure of batch.failures) {
+    // eslint-disable-next-line no-console
+    console.error(`FAILED ${failure.setupKey} on ${failure.taskKey}: ${failure.message}`);
+  }
+  for (const review of batch.blindReviews ?? []) {
+    // eslint-disable-next-line no-console
+    console.log(review.error
+      ? `Blind review for ${review.taskKey} failed: ${review.error} (folder: ${review.blindDir})`
+      : `Blind review for ${review.taskKey}: ${review.verdicts.map((v) => `${v.letter}=${v.setupKey}#${v.rank ?? "?"}`).join(", ")} (key: ${review.keyPath})`);
+  }
+
+  const matrix = await getComparisonMatrix({
+    benchmarkKey: opts.benchmark,
+    taskKey: opts.task,
+    setupKeys: opts.setupKeys,
+    limit: batch.queueSize
+  }, opts.dbPath);
+
+  for (const line of renderMatrixLines(matrix)) {
+    // eslint-disable-next-line no-console
+    console.log(line);
+  }
+
+  if (!opts.format) return;
+
+  const result = await exportComparison({
+    format: opts.format,
+    benchmarkKey: opts.benchmark,
+    taskKey: opts.task,
+    setupKeys: opts.setupKeys,
+    limit: batch.queueSize
+  }, opts.dbPath);
+
+  if (!opts.out) {
+    // eslint-disable-next-line no-console
+    console.log(`\n${result.body}`);
+    return;
+  }
+  const outPath = path.resolve(cwd, String(opts.out));
+  mkdirSync(path.dirname(outPath), { recursive: true });
+  writeFileSync(outPath, result.body, "utf8");
+  // eslint-disable-next-line no-console
+  console.log(`\nReport written to ${outPath}`);
+}
+
 program
   .command("compare-models")
   .description("Run one task across several models and print the comparison")
@@ -331,6 +398,7 @@ program
   .option("--task <key>", "Task key inside the benchmark (omit to run the whole suite)")
   .option("--judge-model <provider/model>", "One judge for every setup (default: AGENT_BENCH_JUDGE_MODEL)")
   .option("--no-judge", "Skip the LLM judge entirely and compare on objective signals only")
+  .option("--blind-review <command>", "After all runs, rank anonymised workspaces with this reviewer command")
   .option("--format <format>", "Also write an export: md | csv | json | html")
   .option("--out <path>", "File for --format (default: stdout)")
   .option("--db <path>", "Custom sqlite path")
@@ -360,48 +428,105 @@ program
       runMode: opts.task ? "single-task" : "benchmark-cycle",
       setups,
       judgeModel: opts.judgeModel,
-      review: opts.judge === false ? "off" : "auto"
+      review: opts.judge === false ? "off" : "auto",
+      blindReview: opts.blindReview
     }, dbPath);
+
+    await reportBatch(batch, { benchmark: opts.benchmark, task: opts.task, setupKeys: uniqueModels, format: opts.format, out: opts.out, dbPath });
+  });
+
+program
+  .command("compare-setups")
+  .description("Run one task across several setups (workflow variants) from a setups file and print the comparison")
+  .requiredOption("--benchmark <key>", "Benchmark suite key")
+  .option("--task <key>", "Task key inside the benchmark (omit to run the whole suite)")
+  .option("--setups-file <path>", "JSON setups file (default: benchmarks/<benchmark>/setups.json)")
+  .option("--setups <labels>", "Comma-separated labels from the setups file to run (default: all)")
+  .option("--judge-model <provider/model>", "One judge for every setup (default: AGENT_BENCH_JUDGE_MODEL)")
+  .option("--no-judge", "Skip the LLM judge entirely and compare on objective signals only")
+  .option("--blind-review <command>", "After all runs, rank anonymised workspaces with this reviewer command")
+  .option("--format <format>", "Also write an export: md | csv | json | html")
+  .option("--out <path>", "File for --format (default: stdout)")
+  .option("--db <path>", "Custom sqlite path")
+  .action(async (opts) => {
+    const setupsFile = path.resolve(cwd, opts.setupsFile ?? path.join(resolveBenchmarksDir(cwd), opts.benchmark, "setups.json"));
+    if (!existsSync(setupsFile)) throw new Error(`Setups file not found: ${setupsFile}`);
+    const setups = readSetupsFile(setupsFile, opts.setups);
+    if (setups.length === 0) throw new Error("No setups selected.");
+
+    const dbPath = resolveDbPath(cwd, opts.db);
+    ensureDbReady(dbPath).close();
 
     // eslint-disable-next-line no-console
-    console.log(`${batch.completedRuns}/${batch.queueSize} run(s) completed${batch.failedRuns > 0 ? `, ${batch.failedRuns} failed` : ""}.\n`);
-    for (const failure of batch.failures) {
-      // eslint-disable-next-line no-console
-      console.error(`FAILED ${failure.setupKey} on ${failure.taskKey}: ${failure.message}`);
-    }
+    console.log(`Running ${setups.length} setup(s) on ${opts.benchmark}${opts.task ? `/${opts.task}` : " (full suite)"}: ${setups.map((setup) => setup.label).join(", ")}...`);
 
-    const matrix = await getComparisonMatrix({
+    const batch = await runBatch({
       benchmarkKey: opts.benchmark,
       taskKey: opts.task,
-      setupKeys: uniqueModels,
-      limit: batch.queueSize
+      runMode: opts.task ? "single-task" : "benchmark-cycle",
+      setups,
+      judgeModel: opts.judgeModel,
+      review: opts.judge === false ? "off" : "auto",
+      blindReview: opts.blindReview
     }, dbPath);
 
-    for (const line of renderMatrixLines(matrix)) {
-      // eslint-disable-next-line no-console
-      console.log(line);
-    }
-
-    if (!opts.format) return;
-
-    const result = await exportComparison({
+    await reportBatch(batch, {
+      benchmark: opts.benchmark,
+      task: opts.task,
+      setupKeys: setups.map((setup) => String(setup.label)),
       format: opts.format,
-      benchmarkKey: opts.benchmark,
-      taskKey: opts.task,
-      setupKeys: uniqueModels,
-      limit: batch.queueSize
-    }, dbPath);
+      out: opts.out,
+      dbPath
+    });
+  });
 
-    if (!opts.out) {
-      // eslint-disable-next-line no-console
-      console.log(`\n${result.body}`);
-      return;
+program
+  .command("traps")
+  .description("Run a task's hidden checks against an existing app folder (dry run, no agent)")
+  .requiredOption("--benchmark <key>", "Benchmark suite key")
+  .requiredOption("--task <key>", "Task key that declares traps")
+  .requiredOption("--workspace <dir>", "Folder holding a finished build of the task")
+  .option("--keep", "Leave traps/ and trap-results.json in the folder afterwards")
+  .action(async (opts) => {
+    const benchmarksDir = resolveBenchmarksDir(cwd);
+    const benchmark = listBenchmarkSuitesFromFiles(benchmarksDir).find((entry) => entry.key === opts.benchmark);
+    const task = benchmark?.tasks.find((entry) => entry.key === opts.task);
+    if (!benchmark || !task) throw new Error(`Unknown task ${opts.benchmark}/${opts.task}.`);
+    if (!task.traps?.length || !task.sandbox?.trapsDir || !task.sandbox.trapCommand) {
+      throw new Error(`${opts.benchmark}/${opts.task} declares no traps (needs ## Traps, Traps Dir and Trap Command).`);
     }
-    const outPath = path.resolve(cwd, String(opts.out));
-    mkdirSync(path.dirname(outPath), { recursive: true });
-    writeFileSync(outPath, result.body, "utf8");
+    const workspaceDir = path.resolve(cwd, opts.workspace);
+    if (!existsSync(workspaceDir)) throw new Error(`Workspace not found: ${workspaceDir}`);
+    const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "agent-bench-traps-"));
+
+    const { results, runner } = await runTrapStep({
+      task,
+      trapsSourceDir: path.join(benchmarksDir, benchmark.key, task.sandbox.trapsDir),
+      runnerSucceeded: true,
+      run: (command) => runSandboxedCommand({
+        command,
+        cwd: workspaceDir,
+        workspaceDir,
+        artifactsDir,
+        timeoutMs: task.sandbox!.timeoutMs,
+        allowNetwork: true,
+        label: "traps",
+        provider: "process"
+      }),
+      workspaceDir,
+      artifactsDir
+    });
+
+    if (!opts.keep) {
+      rmSync(path.join(workspaceDir, TRAPS_WORKSPACE_DIR), { recursive: true, force: true });
+      rmSync(path.join(workspaceDir, TRAP_RESULTS_FILE), { force: true });
+    }
+    for (const result of results) {
+      // eslint-disable-next-line no-console
+      console.log(`${result.status === "pass" ? "PASS" : result.status === "fail" ? "FAIL" : "????"}  ${result.id}: ${result.description}`);
+    }
     // eslint-disable-next-line no-console
-    console.log(`\nReport written to ${outPath}`);
+    console.log(`\nTrap command exit ${runner?.exitCode ?? "n/a"}. Details: ${path.join(artifactsDir, "traps.json")}`);
   });
 
 program

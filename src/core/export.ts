@@ -1,4 +1,4 @@
-import { ComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix } from "./comparison";
+import { ComparisonMatrix, ComparisonSetup, ComparisonTrapCell, formatTrapCell, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix } from "./comparison";
 
 /**
  * Shareable renderings of a comparison matrix.
@@ -51,6 +51,9 @@ export interface ComparisonExportRow {
   failedCount: number;
   lastRunAt: string | null;
   tasks: ComparisonExportTaskCell[];
+  traps: Record<string, ComparisonTrapCell>;
+  blindRank: number | null;
+  blindNotes: string | null;
 }
 
 export interface ComparisonExportWinners {
@@ -68,6 +71,7 @@ export interface ComparisonExportPayload {
   totals: ComparisonMatrix["totals"] & { setups: number };
   benchmarkKeys: string[];
   taskKeys: string[];
+  trapIds: string[];
   winners: ComparisonExportWinners;
   setups: ComparisonExportRow[];
 }
@@ -134,6 +138,7 @@ export function buildComparisonExport(matrix: ComparisonMatrix, meta: Comparison
     totals: { ...matrix.totals, setups: matrix.setups.length },
     benchmarkKeys: matrix.benchmarkKeys,
     taskKeys: matrix.taskKeys,
+    trapIds: matrix.trapIds,
     winners: buildComparisonWinners(matrix),
     setups: matrix.setups.map((setup, index) => ({
       rank: index + 1,
@@ -153,6 +158,9 @@ export function buildComparisonExport(matrix: ComparisonMatrix, meta: Comparison
       completedCount: setup.completedCount,
       failedCount: setup.failedCount,
       lastRunAt: setup.lastRunAt,
+      traps: setup.traps,
+      blindRank: setup.blindRank,
+      blindNotes: setup.blindNotes,
       tasks: matrix.taskKeys
         .map((taskKey) => setup.tasks[taskKey])
         .filter((cell): cell is NonNullable<typeof cell> => Boolean(cell))
@@ -275,6 +283,26 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
     lines.push("");
   }
 
+  if (payload.trapIds.length > 0) {
+    lines.push("## Traps (hidden checks)", "");
+    lines.push(`| Trap | ${payload.setups.map((row) => setupDisplayName(row)).join(" | ")} |`);
+    lines.push(`| --- | ${payload.setups.map(() => ":---:").join(" | ")} |`);
+    for (const trapId of payload.trapIds) {
+      lines.push(`| ${trapId} | ${payload.setups.map((row) => formatTrapCell(row.traps[trapId])).join(" | ")} |`);
+    }
+    lines.push("");
+  }
+
+  const blindRanked = payload.setups.filter((row) => row.blindRank != null).sort((a, b) => a.blindRank! - b.blindRank!);
+  if (blindRanked.length > 0) {
+    lines.push("## Blind review", "");
+    lines.push("| Rank | Setup | Notes |", "| ---: | --- | --- |");
+    for (const row of blindRanked) {
+      lines.push(`| ${row.blindRank} | ${setupDisplayName(row)} | ${(row.blindNotes ?? "").replace(/\s+/g, " ").replace(/\|/g, "\|")} |`);
+    }
+    lines.push("");
+  }
+
   lines.push("## Token accounting", "");
   lines.push(`- Judge tokens: ${formatTokens(payload.totals.judgeTokens)} ($${payload.totals.judgeCostUsd.toFixed(2)})`);
   lines.push(`- Agent tokens: ${payload.totals.agentTokens > 0 ? formatTokens(payload.totals.agentTokens) : "n/a"} ($${payload.totals.agentCostUsd.toFixed(2)})`);
@@ -300,7 +328,9 @@ export function renderComparisonCsv(matrix: ComparisonMatrix, meta: ComparisonEx
     "avg_score", "avg_quality", "tests_passed", "tests_total", "test_pass_rate",
     "avg_duration_ms", "agent_tokens", "judge_tokens", "total_cost_usd",
     "runs_completed", "runs_failed", "last_run_at",
-    ...payload.taskKeys.map((taskKey) => `task:${taskKey}`)
+    ...payload.taskKeys.map((taskKey) => `task:${taskKey}`),
+    ...(payload.setups.some((row) => row.blindRank != null) ? ["blind_rank"] : []),
+    ...payload.trapIds.map((trapId) => `trap:${trapId}`)
   ];
 
   const rows = payload.setups.map((row) => [
@@ -320,7 +350,9 @@ export function renderComparisonCsv(matrix: ComparisonMatrix, meta: ComparisonEx
     row.completedCount,
     row.failedCount,
     row.lastRunAt,
-    ...payload.taskKeys.map((taskKey) => row.tasks.find((entry) => entry.taskKey === taskKey)?.avgScore ?? null)
+    ...payload.taskKeys.map((taskKey) => row.tasks.find((entry) => entry.taskKey === taskKey)?.avgScore ?? null),
+    ...(payload.setups.some((entry) => entry.blindRank != null) ? [row.blindRank] : []),
+    ...payload.trapIds.map((trapId) => formatTrapCell(row.traps[trapId]))
   ]);
 
   return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
@@ -453,6 +485,26 @@ ${payload.setups.map((row) => `<tr><td class="setup"><strong>${escapeHtml(setupD
 </tbody></table></div></section>`
     : "";
 
+  const trapClass = (label: string) => label === "pass" ? "heat-good" : label === "FAIL" ? "heat-bad" : label.includes("/") ? "heat-warn" : "heat-none";
+  const trapPanel = payload.trapIds.length > 0
+    ? `<section class="panel">
+<p class="eyebrow">Hidden checks</p><h2>Traps</h2>
+<div class="scroll"><table><thead><tr><th>Trap</th>${payload.setups.map((row) => `<th>${escapeHtml(setupDisplayName(row))}</th>`).join("")}</tr></thead><tbody>
+${payload.trapIds.map((trapId) => `<tr><td>${escapeHtml(trapId)}</td>${payload.setups.map((row) => {
+      const label = formatTrapCell(row.traps[trapId]);
+      return `<td class="heat ${trapClass(label)}"><b>${escapeHtml(label)}</b></td>`;
+    }).join("")}</tr>`).join("\n")}
+</tbody></table></div></section>`
+    : "";
+  const blindRows = payload.setups.filter((row) => row.blindRank != null).sort((a, b) => a.blindRank! - b.blindRank!);
+  const blindPanel = blindRows.length > 0
+    ? `<section class="panel">
+<p class="eyebrow">Blind reviewer</p><h2>Blind ranking</h2>
+<div class="scroll"><table><thead><tr><th>Rank</th><th>Setup</th><th>Notes</th></tr></thead><tbody>
+${blindRows.map((row) => `<tr><td class="num">${row.blindRank}</td><td>${escapeHtml(setupDisplayName(row))}</td><td style="white-space:normal">${escapeHtml(row.blindNotes ?? "")}</td></tr>`).join("\n")}
+</tbody></table></div></section>`
+    : "";
+
   const empty = `<section class="panel"><p>No runs matched this comparison scope yet.</p></section>`;
 
   return `<!doctype html>
@@ -475,7 +527,9 @@ ${bodyRows}
 </tbody></table></div>
 ${winnerItems ? `<h2 style="margin-top:1.1rem">Winners</h2><ul class="winners">${winnerItems}</ul>` : ""}
 </section>
-${heatmap}`}
+${heatmap}
+${trapPanel}
+${blindPanel}`}
 <footer>Built from persisted agent-bench runs — rendering this report spent no model tokens.</footer>
 </main></body></html>`;
 }

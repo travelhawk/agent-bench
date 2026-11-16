@@ -14,13 +14,16 @@ import { normalizeSuiteMetadataInput, normalizeTaskMetadataInput } from "../benc
 import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesFromFiles } from "../benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
 import { createDb, initializeSchema } from "../db/schema";
-import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns } from "../db/store";
+import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns, setBlindReview } from "../db/store";
+import { mapBlindRanking, prepareBlindReview, readBlindRankingFile } from "../core/blind";
+import { runSandboxedCommand } from "../runtime/sandbox";
 import {
   AgentRecord,
   BatchRunFailure,
   BatchRunResult,
   BatchSetupSummary,
   BenchmarkSuiteRecord,
+  BlindReviewSummary,
   BenchmarkTaskRecord,
   InstalledSkillRecord,
   RunEvaluationResult,
@@ -103,6 +106,8 @@ interface BatchRunInput {
   runMode?: RunMode;
   agents?: string[];
   setups?: unknown;
+  /** Reviewer command run once after all runs over anonymised workspaces. */
+  blindReview?: string;
   jobs?: Array<{
     benchmarkKey?: string;
     taskKey?: string;
@@ -123,6 +128,7 @@ interface BatchRunJob {
   setupKey: string;
   model?: string;
   review: "auto" | "off";
+  followupPrompt?: string;
 }
 
 interface ManagedAgentBundleInput {
@@ -381,6 +387,7 @@ async function executeRun(context: ServiceContext, input: {
   providerApiKey?: string;
   review?: "auto" | "off";
   setupKey?: string;
+  followupPrompt?: string;
 }): Promise<RunEvaluationResult> {
   const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
   const bestBefore = getBestScore(context.db);
@@ -399,6 +406,7 @@ async function executeRun(context: ServiceContext, input: {
     judgeModel: input.judgeModel,
     gatewayApiKey: input.providerApiKey,
     review: input.review,
+    runnerEnv: input.followupPrompt ? { AGENT_BENCH_FOLLOWUP_PROMPT: input.followupPrompt } : undefined,
     setupSnapshot: input.setupKey
       ? { key: input.setupKey, workflowPath: input.agentPath ?? null, modelId: input.model ?? null }
       : null
@@ -716,7 +724,8 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         agentRunnerCommand: setup.agent.runnerCommand,
         setupKey: setup.setupKey,
         model: setup.model,
-        review: setup.review
+        review: setup.review,
+        followupPrompt: setup.followupPrompt
       })));
     }
 
@@ -731,7 +740,8 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
           judgeModel,
           providerApiKey,
           review: job.review,
-          setupKey: job.setupKey
+          setupKey: job.setupKey,
+          followupPrompt: job.followupPrompt
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -739,6 +749,11 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         throw Object.assign(new Error(message), { persistedFailureRun: failedRun });
       }
     });
+
+    const blindCommand = readBoundedString(input.blindReview, "blindReview", INPUT_LIMITS.maxDescriptionLength);
+    const blindReviews = blindCommand
+      ? await runBlindReviews(context, { command: blindCommand, benchmarks, benchmarkKey, taskPlan, results })
+      : undefined;
 
     return {
       runMode,
@@ -749,9 +764,101 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
       completedRuns: results.length,
       failedRuns: failures.length,
       runs: results,
-      failures
+      failures,
+      ...(blindReviews ? { blindReviews } : {})
     };
   }, dbPathInput);
+}
+
+/** What the blind reviewer gets besides the code: the task and the hidden-check list (not the trap tests). */
+function buildBlindTaskMarkdown(task: BenchmarkTaskRecord): string {
+  return [
+    `# ${task.title}`,
+    "",
+    "## Task",
+    task.description,
+    "",
+    ...(task.expectedOutcome ? ["## Expected Outcome", task.expectedOutcome, ""] : []),
+    ...(task.successChecks.length > 0 ? ["## Success Checks", ...task.successChecks.map((entry) => `- ${entry}`), ""] : []),
+    ...((task.traps ?? []).length > 0
+      ? ["## Known risk areas (check each one)", ...(task.traps ?? []).map((trap) => `- ${trap.id}: ${trap.description}`), ""]
+      : []),
+    "Each folder next to this file (A, B, C, ...) is one independent build of this task.",
+    "Write ranking.json into this folder: [{\"letter\": \"A\", \"rank\": 1, \"notes\": \"...\"}, ...] (rank 1 = best).",
+    ""
+  ].join("\n");
+}
+
+const BLIND_ENV_PASSTHROUGH = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "AGENT_BENCH_BLIND_MODEL"];
+
+/**
+ * After every run of a batch: anonymise each completed workspace per task, run
+ * the reviewer once, and store the ranks on the runs. A failing reviewer never
+ * fails the batch; the error is reported instead.
+ */
+async function runBlindReviews(context: ServiceContext, input: {
+  command: string;
+  benchmarks: BenchmarkSuiteRecord[];
+  benchmarkKey: string;
+  taskPlan: string[];
+  results: RunEvaluationResult[];
+}): Promise<BlindReviewSummary[]> {
+  const benchmark = input.benchmarks.find((entry) => entry.key === input.benchmarkKey);
+  const summaries: BlindReviewSummary[] = [];
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const configuredTimeout = Number(process.env.AGENT_BENCH_BLIND_TIMEOUT_MS);
+  const timeoutMs = configuredTimeout > 0 ? configuredTimeout : 60 * 60 * 1000;
+
+  for (const taskKey of input.taskPlan) {
+    const task = benchmark?.tasks.find((entry) => entry.key === taskKey);
+    const runs = input.results
+      .filter((result) => result.run.taskKey === taskKey && result.run.status === "completed")
+      .map((result) => ({
+        setupKey: result.run.setupKey ?? result.run.agentName,
+        runKey: result.run.runKey,
+        workspaceDir: path.join(result.run.artifactsPath, "workspace")
+      }));
+    if (!task || runs.length === 0) continue;
+
+    const prepared = prepareBlindReview({
+      rootDir: path.join(context.artifactsRoot, `blind-${stamp}-${taskKey}`),
+      runs,
+      taskMarkdown: buildBlindTaskMarkdown(task)
+    });
+    const summary: BlindReviewSummary = { taskKey, blindDir: prepared.blindDir, keyPath: prepared.keyPath, verdicts: [] };
+    try {
+      const env: Record<string, string> = {
+        AGENT_BENCH_BLIND_DIR: prepared.blindDir,
+        AGENT_BENCH_TASK_FILE: prepared.taskFile,
+        AGENT_BENCH_TRAPS: (task.traps ?? []).map((trap) => `${trap.id}: ${trap.description}`).join("\n")
+      };
+      for (const key of BLIND_ENV_PASSTHROUGH) {
+        const value = process.env[key];
+        if (value) env[key] = value;
+      }
+      const reviewer = await runSandboxedCommand({
+        command: input.command,
+        cwd: context.workspaceRoot,
+        workspaceDir: prepared.blindDir,
+        artifactsDir: prepared.rootDir,
+        timeoutMs,
+        allowNetwork: true,
+        label: "blind-reviewer",
+        provider: "process",
+        env
+      });
+      writeFileSync(path.join(prepared.rootDir, "blind-reviewer.log"), `exit ${reviewer.exitCode}\n\n${reviewer.stdout}\n\n${reviewer.stderr}`);
+      summary.verdicts = mapBlindRanking(prepared.entries, readBlindRankingFile(prepared.blindDir));
+      for (const verdict of summary.verdicts) {
+        setBlindReview(context.db, verdict.runKey, verdict.rank, verdict.notes);
+      }
+      writeFileSync(path.join(prepared.rootDir, "blind-result.json"), JSON.stringify(summary.verdicts, null, 2));
+    } catch (error: unknown) {
+      summary.error = error instanceof Error ? error.message : String(error);
+    }
+    summaries.push(summary);
+  }
+  return summaries;
 }
 
 interface ComparisonRequestInput {

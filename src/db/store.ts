@@ -1,5 +1,5 @@
 import { Db } from "./schema";
-import { RunInput, RunRecord } from "../types";
+import { RunInput, RunRecord, TrapResult } from "../types";
 
 export interface DashboardSummary {
   totalRuns: number;
@@ -18,7 +18,7 @@ export function insertRun(db: Db, input: RunInput): RunRecord {
       diff_available, diff_files_changed, diff_insertions, diff_deletions,
       verifier_tests_available, verifier_tests_total, verifier_tests_passed,
       quality_score, agent_usage_available, agent_input_tokens, agent_output_tokens, agent_cost_usd,
-      review_mode, judge_total_tokens, screenshot_file, video_file
+      review_mode, judge_total_tokens, screenshot_file, video_file, trap_results_json
     ) VALUES (
       @run_key, @experiment_key, @benchmark_key, @task_key, @setup_key, @workflow_path, @model_id, @trial_index,
       @agent_name, @agent_version, @suite_name, @status,
@@ -28,7 +28,7 @@ export function insertRun(db: Db, input: RunInput): RunRecord {
       @diff_available, @diff_files_changed, @diff_insertions, @diff_deletions,
       @verifier_tests_available, @verifier_tests_total, @verifier_tests_passed,
       @quality_score, @agent_usage_available, @agent_input_tokens, @agent_output_tokens, @agent_cost_usd,
-      @review_mode, @judge_total_tokens, @screenshot_file, @video_file
+      @review_mode, @judge_total_tokens, @screenshot_file, @video_file, @trap_results_json
     )
   `).run({
     run_key: input.runKey,
@@ -71,7 +71,8 @@ export function insertRun(db: Db, input: RunInput): RunRecord {
     review_mode: input.reviewMode ?? null,
     judge_total_tokens: input.judgeTotalTokens ?? 0,
     screenshot_file: input.screenshotFile ?? null,
-    video_file: input.videoFile ?? null
+    video_file: input.videoFile ?? null,
+    trap_results_json: input.trapResults && input.trapResults.length > 0 ? JSON.stringify(input.trapResults) : null
   });
 
   const row = db.prepare(`
@@ -87,6 +88,21 @@ export function getRunByKey(db: Db, runKey: string): RunRecord | null {
   `).get(runKey) as Record<string, unknown> | undefined;
 
   return row ? mapRun(row) : null;
+}
+
+/** Stores the blind reviewer's verdict on an already persisted run. */
+export function setBlindReview(db: Db, runKey: string, rank: number | null, notes: string | null): void {
+  db.prepare(`UPDATE runs SET blind_rank = ?, blind_notes = ? WHERE run_key = ?`).run(rank, notes, runKey);
+}
+
+function parseTrapResults(value: unknown): TrapResult[] {
+  if (typeof value !== "string" || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as TrapResult[] : [];
+  } catch {
+    return [];
+  }
 }
 
 export function deleteRunByKey(db: Db, runKey: string): boolean {
@@ -172,6 +188,9 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     agentUsageAvailable: Boolean(row.agent_usage_available),
     agentInputTokens: Number(row.agent_input_tokens ?? 0),
     agentOutputTokens: Number(row.agent_output_tokens ?? 0),
-    agentCostUsd: Number(row.agent_cost_usd ?? 0)
+    agentCostUsd: Number(row.agent_cost_usd ?? 0),
+    trapResults: parseTrapResults(row.trap_results_json),
+    blindRank: row.blind_rank == null ? null : Number(row.blind_rank),
+    blindNotes: row.blind_notes == null ? null : String(row.blind_notes)
   };
 }

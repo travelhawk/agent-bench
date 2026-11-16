@@ -126,6 +126,7 @@ export interface ResolvedBatchSetup {
   agent: AgentRecord;
   model?: string;
   review: "auto" | "off";
+  followupPrompt?: string;
 }
 
 function defaultSetupKey(agentName: string, model?: string): string {
@@ -151,13 +152,20 @@ export function resolveBatchSetups(workspaceRoot: string, input: unknown, fallba
     const model = readBoundedString(setup?.model, `setups[${index}].model`, INPUT_LIMITS.maxModelLength);
     const label = readBoundedString(setup?.label, `setups[${index}].label`, INPUT_LIMITS.maxSetupLabelLength);
     const review = setup?.review === "off" ? "off" : setup?.review === "auto" ? "auto" : fallbackReview;
+    const followupPrompt = readBoundedString(setup?.followupPrompt, `setups[${index}].followupPrompt`, INPUT_LIMITS.maxDescriptionLength);
     const agent = inspectAgentFile(workspaceRoot, agentPath);
 
-    const identity = `${agent.path}::${model ?? ""}::${label ?? ""}`;
+    const identity = `${agent.path}::${model ?? ""}::${label ?? ""}::${followupPrompt ?? ""}`;
     if (seen.has(identity)) return;
     seen.add(identity);
 
-    setups.push({ setupKey: label ?? defaultSetupKey(agent.name, model), agent, model, review });
+    setups.push({
+      setupKey: label ?? defaultSetupKey(agent.name, model),
+      agent,
+      model,
+      review,
+      ...(followupPrompt ? { followupPrompt } : {})
+    });
   });
 
   if (setups.length === 0) {

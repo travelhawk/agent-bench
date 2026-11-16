@@ -1,4 +1,4 @@
-import { ComparisonMatrix, setupDisplayName, setupModelSuffix } from "./comparison";
+import { ComparisonMatrix, formatTrapCell, setupDisplayName, setupModelSuffix } from "./comparison";
 
 /**
  * Terminal rendering of a comparison matrix. Kept separate from the CLI command
@@ -103,6 +103,7 @@ export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?:
       + ` | judge tokens ${formatTokens(setup.judgeTokens)}`
       + ` | $${(setup.judgeCostUsd + setup.agentCostUsd).toFixed(2)}`
       + ` | runs ${setup.completedCount}${failed}`
+      + (setup.blindRank != null ? ` | blind rank ${num(setup.blindRank, setup.blindRank % 1 === 0 ? 0 : 2)}` : "")
     );
 
     const taskLines = Object.values(setup.tasks)
@@ -111,8 +112,32 @@ export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?:
     if (taskLines.length > 1) lines.push(`  tasks: ${taskLines.join("  ")}`);
   }
 
+  lines.push(...renderTrapMatrixLines(matrix));
+
   const winners = options.winners === false ? [] : renderMatrixWinners(matrix);
   if (winners.length > 0) lines.push("", ...winners);
 
   return lines;
+}
+
+/** Rows = traps, columns = setups. Empty when no compared run declared traps. */
+export function renderTrapMatrixLines(matrix: ComparisonMatrix): string[] {
+  if (matrix.trapIds.length === 0) return [];
+  const labels = matrix.setups.map((setup) => setupLabel(setup));
+  const idWidth = Math.max(4, ...matrix.trapIds.map((id) => id.length));
+  const widths = labels.map((label) => Math.max(label.length, 4));
+  const row = (first: string, cells: string[]) =>
+    `${first.padEnd(idWidth)}  ${cells.map((cell, index) => cell.padEnd(widths[index])).join("  ")}`.trimEnd();
+  return [
+    "",
+    "Traps (hidden checks)",
+    row("trap", labels),
+    ...matrix.trapIds.map((id) => row(id, matrix.setups.map((setup) => formatTrapCell(setup.traps[id])))),
+    row("total", matrix.setups.map((setup) => {
+      const cells = matrix.trapIds.map((id) => setup.traps[id]).filter(Boolean);
+      const passed = cells.reduce((sum, cell) => sum + cell!.passed, 0);
+      const decided = cells.reduce((sum, cell) => sum + cell!.passed + cell!.failed, 0);
+      return decided > 0 ? `${passed}/${decided}` : "n/a";
+    }))
+  ];
 }

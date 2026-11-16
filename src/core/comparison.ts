@@ -38,6 +38,17 @@ export interface ComparisonSetup {
   reviewModes: Record<string, number>;
   tasks: Record<string, ComparisonTaskCell>;
   lastRunAt: string | null;
+  /** Hidden-check outcomes per trap id, summed over this setup's runs. */
+  traps: Record<string, ComparisonTrapCell>;
+  /** Average blind-review rank (1 = best), null when never blind-reviewed. */
+  blindRank: number | null;
+  blindNotes: string | null;
+}
+
+export interface ComparisonTrapCell {
+  passed: number;
+  failed: number;
+  unknown: number;
 }
 
 export interface ComparisonTotals {
@@ -56,6 +67,8 @@ export interface ComparisonMatrix {
   setups: ComparisonSetup[];
   taskKeys: string[];
   benchmarkKeys: string[];
+  /** Every trap id seen in the compared runs, in first-seen order. */
+  trapIds: string[];
   totals: ComparisonTotals;
 }
 
@@ -141,6 +154,8 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
   };
   const scoreSums = new Map<string, { score: number; scored: number; quality: number; qualityCount: number }>();
   const taskScoreSums = new Map<string, { score: number; scored: number }>();
+  const blindSums = new Map<string, { sum: number; count: number }>();
+  const trapIds: string[] = [];
 
   for (const run of filtered) {
     benchmarkKeySet.add(runBenchmarkKey(run));
@@ -170,7 +185,10 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
         agentCostUsd: 0,
         reviewModes: {},
         tasks: {},
-        lastRunAt: null
+        lastRunAt: null,
+        traps: {},
+        blindRank: null,
+        blindNotes: null
       };
       setupsByKey.set(key, setup);
       scoreSums.set(key, { score: 0, scored: 0, quality: 0, qualityCount: 0 });
@@ -204,6 +222,20 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
     const reviewMode = run.reviewMode ?? "unknown";
     setup.reviewModes[reviewMode] = (setup.reviewModes[reviewMode] ?? 0) + 1;
     if (!setup.lastRunAt || run.createdAt > setup.lastRunAt) setup.lastRunAt = run.createdAt;
+    for (const trap of run.trapResults ?? []) {
+      if (!trapIds.includes(trap.id)) trapIds.push(trap.id);
+      const trapCell = setup.traps[trap.id] ?? (setup.traps[trap.id] = { passed: 0, failed: 0, unknown: 0 });
+      if (trap.status === "pass") trapCell.passed += 1;
+      else if (trap.status === "fail") trapCell.failed += 1;
+      else trapCell.unknown += 1;
+    }
+    if (run.blindRank != null) {
+      const blind = blindSums.get(key) ?? { sum: 0, count: 0 };
+      blind.sum += run.blindRank;
+      blind.count += 1;
+      blindSums.set(key, blind);
+      if (run.blindNotes) setup.blindNotes = run.blindNotes;
+    }
 
     const cellId = `${key}::${taskKey}`;
     let cell = setup.tasks[taskKey];
@@ -246,6 +278,8 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
     setup.avgDurationMs = setup.runCount > 0 ? Math.round(setup.totalDurationMs / setup.runCount) : null;
     setup.judgeCostUsd = round2(setup.judgeCostUsd);
     setup.agentCostUsd = Number(setup.agentCostUsd.toFixed(4));
+    const blind = blindSums.get(setup.setupKey);
+    setup.blindRank = blind ? round2(blind.sum / blind.count) : null;
   }
 
   totals.judgeCostUsd = round2(totals.judgeCostUsd);
@@ -262,6 +296,16 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
     setups,
     taskKeys: [...taskKeySet].sort(),
     benchmarkKeys: [...benchmarkKeySet].sort(),
+    trapIds,
     totals
   };
+}
+
+/** "2/2", "0/1", or "?" when the trap never produced a pass/fail. */
+export function formatTrapCell(cell: ComparisonTrapCell | undefined): string {
+  if (!cell) return "—";
+  const decided = cell.passed + cell.failed;
+  if (decided === 0) return "?";
+  if (decided === 1) return cell.passed === 1 ? "pass" : "FAIL";
+  return `${cell.passed}/${decided}`;
 }

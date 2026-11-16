@@ -60,7 +60,16 @@ const SAFE_ENV_KEYS = [
   "TMP",
   "TEMP",
   "USER",
-  "__CF_USER_TEXT_ENCODING"
+  "__CF_USER_TEXT_ENCODING",
+  // Windows: without these node/npm cannot start reliably, and CLIs such as
+  // `claude` or Playwright cannot find their per-user config, auth or browsers.
+  // They hold paths, not secrets.
+  "SystemRoot",
+  "ComSpec",
+  "PATHEXT",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA"
 ] as const;
 
 let dockerAvailableCache: boolean | undefined;
