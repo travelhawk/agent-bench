@@ -219,9 +219,19 @@ agent-bench compare-setups --benchmark workflow-builds --task haushaltsbuch \
   `Trap Command:` in `## Sandbox`. The traps folder is copied to `<workspace>/traps` only after the runner finished;
   the trap command must write `trap-results.json` (Vitest `--reporter=json --outputFile=trap-results.json` or the
   Playwright `json` reporter). A trap passes when every test whose name contains its id passed (`unknown` when none
-  matched). Results are stored per run and shown as a trap matrix in the terminal and the md/csv/json/html exports.
+  matched). If the trap command fails before any test ran (server did not start, port in use), every trap is
+  `error` and the first output line appears as a footnote under the trap matrix. Results are stored per run and shown
+  as a trap matrix in the terminal and the md/csv/json/html exports; over several trials a cell reads e.g. `2/3`.
   They do not change the score. Dry run against any finished build, no agent involved:
-  `agent-bench traps --benchmark workflow-builds --task haushaltsbuch --workspace ../my-build` (port 4173 must be free).
+  `agent-bench traps --benchmark workflow-builds --task haushaltsbuch --workspace ../my-build`.
+- **`AGENT_BENCH_TRAP_PORT`**: right before the trap command starts, agent-bench picks a free TCP port and passes it
+  in this env var. A trap config should serve the app on it (`webServer.port` and `use.baseURL`; see
+  `benchmarks/workflow-builds/traps/haushaltsbuch/traps.config.ts`), so a server a build left running on its usual
+  port cannot block the checks. After the runner, verify and trap commands exit, processes they left running
+  (dev servers, `vite preview`) are killed (Windows: the process tree by recorded parent id; POSIX: the process group).
+- **Trials** (`--trials <n>`, 1-5, on `compare-setups` and `compare-models`): runs every setup n times. The comparison
+  then shows a metrics block per setup (wall time, agent input/output tokens, agent cost as avg with min-max over the
+  trials) and batch totals that include the blind reviewer's own tokens and cost.
 - **Blind review** (`--blind-review "<command>"`, also on `compare-models`): after all runs each completed workspace is
   copied to `<artifacts>/blind-<time>-<task>/blind/<A|B|...>` in shuffled order, without `.git`, `node_modules`,
   `result/`, `traps/`, `dist/`, `.claude/`, `CLAUDE.md`/`AGENTS.md` and test reports. The letter key goes to
@@ -229,7 +239,10 @@ agent-bench compare-setups --benchmark workflow-builds --task haushaltsbuch \
   `AGENT_BENCH_TASK_FILE` (`TASK.md`: task + trap list, not the trap tests) and `AGENT_BENCH_TRAPS`, and must write
   `ranking.json` (`[{letter, rank, notes}]`). Ranks are mapped back and shown next to each setup. The default
   reviewer (`agents/blind-reviewer/run.mjs`) runs `claude -p` with a rubric: data safety, spec fidelity, a11y,
-  code quality, and only reproduced bugs count. `AGENT_BENCH_BLIND_MODEL` pins its model,
+  code quality, and only reproduced bugs count. It writes `usage.json` (tokens, cost, time) next to the blind folder;
+  the report adds it to the batch totals. It must only stop processes it started itself: a name-based kill such as
+  `taskkill /IM node.exe` also kills agent-bench, so the runner denies those commands. A reviewer that fails never
+  costs the batch its report; the error is printed instead. `AGENT_BENCH_BLIND_MODEL` pins its model,
   `AGENT_BENCH_BLIND_TIMEOUT_MS` its timeout (default 60 min).
 - **Auth for `claude`**: the sandbox passes `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` (paths only), so the
   logged-in CLI works. An agent may list extra variables with `Env Passthrough: A, B` (claude-code forwards
