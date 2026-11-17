@@ -43,12 +43,38 @@ export interface ComparisonSetup {
   /** Average blind-review rank (1 = best), null when never blind-reviewed. */
   blindRank: number | null;
   blindNotes: string | null;
+  /** Per-trial spread over this setup's runs (avg + min/max). */
+  metrics: ComparisonSetupMetrics;
+}
+
+/** avg/min/max over the runs that reported the value; null when none did. */
+export interface MetricStat {
+  avg: number;
+  min: number;
+  max: number;
+  count: number;
+}
+
+export interface ComparisonSetupMetrics {
+  durationMs: MetricStat | null;
+  agentInputTokens: MetricStat | null;
+  agentOutputTokens: MetricStat | null;
+  agentCostUsd: MetricStat | null;
 }
 
 export interface ComparisonTrapCell {
   passed: number;
   failed: number;
   unknown: number;
+  /** Trap command broke before any test ran (see `errorDetail`). */
+  error?: number;
+  errorDetail?: string;
+}
+
+export function metricStat(values: number[]): MetricStat | null {
+  if (values.length === 0) return null;
+  const sum = values.reduce((total, value) => total + value, 0);
+  return { avg: sum / values.length, min: Math.min(...values), max: Math.max(...values), count: values.length };
 }
 
 export interface ComparisonTotals {
@@ -156,6 +182,7 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
   const taskScoreSums = new Map<string, { score: number; scored: number }>();
   const blindSums = new Map<string, { sum: number; count: number }>();
   const trapIds: string[] = [];
+  const metricSamples = new Map<string, { duration: number[]; input: number[]; output: number[]; cost: number[] }>();
 
   for (const run of filtered) {
     benchmarkKeySet.add(runBenchmarkKey(run));
@@ -188,7 +215,8 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
         lastRunAt: null,
         traps: {},
         blindRank: null,
-        blindNotes: null
+        blindNotes: null,
+        metrics: { durationMs: null, agentInputTokens: null, agentOutputTokens: null, agentCostUsd: null }
       };
       setupsByKey.set(key, setup);
       scoreSums.set(key, { score: 0, scored: 0, quality: 0, qualityCount: 0 });
@@ -212,6 +240,14 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
       setup.testsTotal += run.verifierTestsTotal;
     }
     setup.totalDurationMs += run.durationMs;
+    const samples = metricSamples.get(key) ?? { duration: [], input: [], output: [], cost: [] };
+    metricSamples.set(key, samples);
+    samples.duration.push(run.durationMs);
+    if (run.agentUsageAvailable) {
+      samples.input.push(run.agentInputTokens);
+      samples.output.push(run.agentOutputTokens);
+      samples.cost.push(run.agentCostUsd);
+    }
     if (run.agentUsageAvailable) {
       setup.agentTokens += run.agentInputTokens + run.agentOutputTokens;
       setup.agentUsageRuns += 1;
@@ -227,7 +263,10 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
       const trapCell = setup.traps[trap.id] ?? (setup.traps[trap.id] = { passed: 0, failed: 0, unknown: 0 });
       if (trap.status === "pass") trapCell.passed += 1;
       else if (trap.status === "fail") trapCell.failed += 1;
-      else trapCell.unknown += 1;
+      else if (trap.status === "error") {
+        trapCell.error = (trapCell.error ?? 0) + 1;
+        if (trap.detail && !trapCell.errorDetail) trapCell.errorDetail = trap.detail;
+      } else trapCell.unknown += 1;
     }
     if (run.blindRank != null) {
       const blind = blindSums.get(key) ?? { sum: 0, count: 0 };
@@ -278,6 +317,15 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
     setup.avgDurationMs = setup.runCount > 0 ? Math.round(setup.totalDurationMs / setup.runCount) : null;
     setup.judgeCostUsd = round2(setup.judgeCostUsd);
     setup.agentCostUsd = Number(setup.agentCostUsd.toFixed(4));
+    const samples = metricSamples.get(setup.setupKey);
+    if (samples) {
+      setup.metrics = {
+        durationMs: metricStat(samples.duration),
+        agentInputTokens: metricStat(samples.input),
+        agentOutputTokens: metricStat(samples.output),
+        agentCostUsd: metricStat(samples.cost)
+      };
+    }
     const blind = blindSums.get(setup.setupKey);
     setup.blindRank = blind ? round2(blind.sum / blind.count) : null;
   }
@@ -301,11 +349,37 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
   };
 }
 
-/** "2/2", "0/1", or "?" when the trap never produced a pass/fail. */
+/**
+ * Single run: "pass" / "FAIL" / "error" / "?". Several trials: passes over all
+ * trials ("2/3"), with errors/unknowns counted as not passed and marked "*".
+ */
 export function formatTrapCell(cell: ComparisonTrapCell | undefined): string {
   if (!cell) return "—";
+  const errors = cell.error ?? 0;
   const decided = cell.passed + cell.failed;
-  if (decided === 0) return "?";
-  if (decided === 1) return cell.passed === 1 ? "pass" : "FAIL";
-  return `${cell.passed}/${decided}`;
+  const total = decided + errors + cell.unknown;
+  if (decided === 0) return errors > 0 ? "error" : "?";
+  if (total === 1) return cell.passed === 1 ? "pass" : "FAIL";
+  return `${cell.passed}/${total}${total > decided ? "*" : ""}`;
+}
+
+/** Footnotes for the trap matrix: why a cell says "error" (first output line of the trap command). */
+export function trapErrorFootnotes(
+  trapIds: string[],
+  setups: Array<{ traps: Record<string, ComparisonTrapCell> } & Parameters<typeof setupDisplayName>[0]>
+): string[] {
+  const notes: string[] = [];
+  for (const setup of setups) {
+    const details = new Set<string>();
+    let errored = 0;
+    for (const id of trapIds) {
+      const cell = setup.traps[id];
+      if (!cell?.error) continue;
+      errored += 1;
+      if (cell.errorDetail) details.add(cell.errorDetail);
+    }
+    if (errored === 0) continue;
+    notes.push(`${setupDisplayName(setup)}: trap command failed before tests ran${details.size > 0 ? ` - ${[...details].join(" | ")}` : ""}`);
+  }
+  return notes;
 }

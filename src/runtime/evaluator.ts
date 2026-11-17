@@ -14,8 +14,9 @@ import {
   ScoreProfileKey,
   TrapResult
 } from "../types";
-import { failAllTraps, installTraps, mapTrapResults, readTrapReport, summarizeTraps, writeTrapArtifact } from "./traps";
+import { failAllTraps, installTraps, readTrapReport, resolveTrapResults, summarizeTraps, writeTrapArtifact } from "./traps";
 import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
+import { findFreePort, TRAP_PORT_ENV } from "./ports";
 import { computeWorkspaceGitDiffStats, initWorkspaceGitBaseline } from "./git-diff";
 import { isNodeTestRunnerCommand, parseNodeTestTapSummary, parseVerifierChecksMarker, TestRunSummary } from "./test-summary";
 import { AgentUsageReport, readAgentUsageReport } from "./agent-usage";
@@ -530,10 +531,13 @@ export async function runTrapStep(input: {
   task: BenchmarkTaskRecord;
   trapsSourceDir: string | null;
   runnerSucceeded: boolean;
-  run: (command: string) => Promise<SandboxCommandResult>;
+  /** `env` carries AGENT_BENCH_TRAP_PORT; callers merge it into the command env. */
+  run: (command: string, env: Record<string, string>) => Promise<SandboxCommandResult>;
   workspaceDir: string;
   artifactsDir: string;
-}): Promise<{ results: TrapResult[]; runner?: SandboxCommandResult }> {
+  /** Test seam; defaults to asking the OS for a free port. */
+  pickPort?: () => Promise<number>;
+}): Promise<{ results: TrapResult[]; runner?: SandboxCommandResult; port?: number }> {
   const traps = input.task.traps ?? [];
   const command = input.task.sandbox?.trapCommand;
   if (traps.length === 0 || !command || !input.trapsSourceDir) return { results: [] };
@@ -543,16 +547,20 @@ export async function runTrapStep(input: {
     return { results };
   }
   installTraps(input.trapsSourceDir, input.workspaceDir);
-  const runner = await input.run(command);
-  const results = mapTrapResults(traps, readTrapReport(input.workspaceDir));
+  // A fresh port per trap run: a server the build left behind on the usual
+  // port (4173) must not turn every trap into "port already used".
+  const port = await (input.pickPort ?? findFreePort)();
+  const runner = await input.run(command, { [TRAP_PORT_ENV]: String(port) });
+  const results = resolveTrapResults(traps, readTrapReport(input.workspaceDir), runner);
   writeTrapArtifact(input.artifactsDir, results, {
     command,
+    port,
     exitCode: runner.exitCode,
     timedOut: runner.timedOut,
     stdout: runner.stdout,
     stderr: runner.stderr
   });
-  return { results, runner };
+  return { results, runner, port };
 }
 
 function resolveTaskFixtureDir(benchmarksDir: string | undefined, benchmarkKey: string, task: BenchmarkTaskRecord): string | null {
@@ -878,6 +886,7 @@ async function maybeRunSandboxExecution(input: {
     timeoutMs,
     allowNetwork,
     label: "runner",
+    killLeftovers: true,
     provider,
     strictProvider: Boolean(input.strictSandbox && provider),
     env: runnerEnv as unknown as NodeJS.ProcessEnv,
@@ -896,6 +905,7 @@ async function maybeRunSandboxExecution(input: {
       timeoutMs,
       allowNetwork,
       label: "verifier",
+      killLeftovers: true,
       provider,
       strictProvider: Boolean(input.strictSandbox && provider),
       env: commandEnv as unknown as NodeJS.ProcessEnv
@@ -906,7 +916,7 @@ async function maybeRunSandboxExecution(input: {
     task: input.task,
     trapsSourceDir: resolveTaskTrapsDir(input.benchmarksDir, input.benchmark.key, input.task),
     runnerSucceeded: runner.exitCode === 0,
-    run: (command) => runSandboxedCommand({
+    run: (command, trapEnv) => runSandboxedCommand({
       command,
       cwd: workspaceDir,
       workspaceDir,
@@ -917,7 +927,8 @@ async function maybeRunSandboxExecution(input: {
       label: "traps",
       provider,
       strictProvider: Boolean(input.strictSandbox && provider),
-      env: commandEnv as unknown as NodeJS.ProcessEnv
+      killLeftovers: true,
+      env: { ...commandEnv, ...trapEnv } as unknown as NodeJS.ProcessEnv
     }),
     workspaceDir,
     artifactsDir: input.artifactsPath

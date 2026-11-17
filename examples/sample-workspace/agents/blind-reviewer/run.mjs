@@ -7,6 +7,9 @@
  * and the list of known risk areas. The reviewer must write ranking.json:
  *   [{ "letter": "A", "rank": 1, "notes": "..." }, ...]
  *
+ * It also writes usage.json (tokens, cost, time) next to the blind folder, never
+ * inside it, so the batch report can show what the review itself cost.
+ *
  * Optional: AGENT_BENCH_BLIND_MODEL pins `--model`.
  */
 import { spawnSync } from "node:child_process";
@@ -25,7 +28,10 @@ independent builds of that same task by unknown teams. You do not know who built
 
 For EACH build:
 1. Install and run it yourself (e.g. npm install, npm test, npm run build, start the app, use Playwright or a
-   browser if available). Use a different port per build or stop servers between builds.
+   browser if available). Use a different port per build (pick free ports, not 4173) and stop servers between builds.
+   Process safety (hard rule): NEVER kill processes by name or image (no "taskkill /IM", "pkill", "killall",
+   "Stop-Process -Name", "kill-port" on ports you did not open). Other tools on this machine run on node too, and
+   killing them aborts the whole review. Only stop processes you started yourself, by the PID you recorded.
 2. Judge it on this rubric, in order of weight:
    - Data safety: no silent data loss (double actions, corrupt or foreign stored data, concurrent tabs, import/export round trips).
    - Spec fidelity: every requirement in TASK.md / docs/SPEC.md, including formats and edge cases.
@@ -41,6 +47,8 @@ Finish by writing ranking.json in this folder (the folder that contains TASK.md)
 with one entry per build and rank 1 = best.`;
 
 const args = ["-p", "--permission-mode", "bypassPermissions", "--output-format", "json"];
+// Belt and braces for the prompt rule above: a name-based kill takes down agent-bench itself.
+args.push("--disallowedTools", "Bash(taskkill:*)", "Bash(pkill:*)", "Bash(killall:*)", "PowerShell(Stop-Process:*)");
 // Lean like the claude-code runner: the reviewer needs no user plugins, MCP servers or settings.
 if (process.env.AGENT_BENCH_CLAUDE_LEAN !== "0") {
   // Kept outside the blind folder so the reviewer never sees it.
@@ -59,8 +67,29 @@ if (result.error) {
   process.exit(1);
 }
 writeFileSync(path.join(blindDir, "..", "blind-reviewer.claude.json"), result.stdout ?? "");
+writeFileSync(path.join(blindDir, "..", "usage.json"), JSON.stringify(readUsage(result.stdout ?? ""), null, 2));
 if (!existsSync(path.join(blindDir, "ranking.json"))) {
   console.error("[blind-reviewer] claude finished without writing ranking.json.");
   process.exit(1);
 }
 console.log("[blind-reviewer] ranking.json written.");
+
+/** `claude -p --output-format json` prints one result object; same token math as the claude-code runner. */
+function readUsage(stdout) {
+  const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0 };
+  for (const line of stdout.split(/\r?\n/).reverse()) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(line);
+      const u = parsed.usage ?? {};
+      usage.inputTokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+      usage.outputTokens = u.output_tokens ?? 0;
+      usage.costUsd = typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : 0;
+      usage.durationMs = typeof parsed.duration_ms === "number" ? parsed.duration_ms : 0;
+      break;
+    } catch {
+      // not the result line
+    }
+  }
+  return usage;
+}

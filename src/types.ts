@@ -76,7 +76,9 @@ export interface BenchmarkTrap {
 export interface TrapResult {
   id: string;
   description: string;
-  status: "pass" | "fail" | "unknown";
+  /** error = the trap command failed before any test ran (e.g. port in use); see `detail`. */
+  status: "pass" | "fail" | "unknown" | "error";
+  detail?: string;
 }
 
 export interface RunInput {
@@ -329,7 +331,16 @@ export interface BlindReviewSummary {
   blindDir: string;
   keyPath: string;
   verdicts: Array<{ setupKey: string; runKey: string; letter: string; rank: number | null; notes: string | null }>;
+  /** What the reviewer itself spent, read from usage.json next to the blind folder. */
+  usage?: BlindReviewUsage;
   error?: string;
+}
+
+export interface BlindReviewUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  durationMs: number;
 }
 
 export interface RunResultPayload {

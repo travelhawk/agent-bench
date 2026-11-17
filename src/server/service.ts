@@ -24,6 +24,7 @@ import {
   BatchSetupSummary,
   BenchmarkSuiteRecord,
   BlindReviewSummary,
+  BlindReviewUsage,
   BenchmarkTaskRecord,
   InstalledSkillRecord,
   RunEvaluationResult,
@@ -221,6 +222,17 @@ export function resolveTaskPlan(benchmarks: BenchmarkSuiteRecord[], benchmarkKey
   }
 
   return benchmark.tasks;
+}
+
+/** Runs per setup, 1-5. */
+export function normalizeTrials(value: unknown): number {
+  return Math.max(1, Math.min(5, Math.floor(Number(value) || 1)));
+}
+
+/** setups x trials x tasks, trials of one setup kept next to each other. */
+export function expandTrialJobs<S, T>(setups: S[], tasks: T[], trials: number): Array<{ setup: S; task: T; trial: number }> {
+  return setups.flatMap((setup) => Array.from({ length: normalizeTrials(trials) }, (_, trial) =>
+    tasks.map((task) => ({ setup, task, trial: trial + 1 }))).flat());
 }
 
 export async function executeBatchPlan<T>(
@@ -723,9 +735,9 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
 
       taskPlan = tasks.map((task) => task.key);
       setupSummaries = summarizeSetups(setups, context.workspaceRoot);
-      const trials = Math.max(1, Math.min(5, Math.floor(Number(input.trials) || 1)));
+      const trials = normalizeTrials(input.trials);
       assertBatchCapacity(setups.length * trials, tasks.length);
-      jobs = setups.flatMap((setup) => Array.from({ length: trials }, () => setup)).flatMap((setup) => tasks.map((task) => ({
+      jobs = expandTrialJobs(setups, tasks, trials).map(({ setup, task }) => ({
         benchmarkKey,
         taskKey: task.key,
         agentPath: path.resolve(context.workspaceRoot, setup.agent.path),
@@ -738,7 +750,7 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         followupPrompt: setup.followupPrompt,
         buildPrompt: setup.buildPrompt,
         env: setup.env
-      })));
+      }));
     }
 
     const { results, failures } = await executeBatchPlan(jobs, async (job) => {
@@ -765,9 +777,21 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
     });
 
     const blindCommand = readBoundedString(input.blindReview, "blindReview", INPUT_LIMITS.maxDescriptionLength);
-    const blindReviews = blindCommand
-      ? await runBlindReviews(context, { command: blindCommand, benchmarks, benchmarkKey, taskPlan, results })
-      : undefined;
+    let blindReviews: BlindReviewSummary[] | undefined;
+    if (blindCommand) {
+      try {
+        blindReviews = await runBlindReviews(context, { command: blindCommand, benchmarks, benchmarkKey, taskPlan, results });
+      } catch (error: unknown) {
+        // A broken blind review must never cost the batch its report.
+        blindReviews = taskPlan.map((taskKey) => ({
+          taskKey,
+          blindDir: "",
+          keyPath: "",
+          verdicts: [],
+          error: error instanceof Error ? error.message : String(error)
+        }));
+      }
+    }
 
     return {
       runMode,
@@ -804,6 +828,24 @@ function buildBlindTaskMarkdown(task: BenchmarkTaskRecord): string {
 }
 
 const BLIND_ENV_PASSTHROUGH = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "AGENT_BENCH_BLIND_MODEL"];
+
+/** `usage.json` the reviewer writes next to (never inside) the blind folder. */
+export function readBlindUsageFile(rootDir: string): BlindReviewUsage | null {
+  const file = path.join(rootDir, "usage.json");
+  if (!existsSync(file)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+    return {
+      inputTokens: num(raw.inputTokens),
+      outputTokens: num(raw.outputTokens),
+      costUsd: num(raw.costUsd),
+      durationMs: num(raw.durationMs)
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * After every run of a batch: anonymise each completed workspace per task, run
@@ -859,9 +901,11 @@ async function runBlindReviews(context: ServiceContext, input: {
         allowNetwork: true,
         label: "blind-reviewer",
         provider: "process",
+        killLeftovers: true,
         env
       });
       writeFileSync(path.join(prepared.rootDir, "blind-reviewer.log"), `exit ${reviewer.exitCode}\n\n${reviewer.stdout}\n\n${reviewer.stderr}`);
+      summary.usage = readBlindUsageFile(prepared.rootDir) ?? undefined;
       summary.verdicts = mapBlindRanking(prepared.entries, readBlindRankingFile(prepared.blindDir));
       for (const verdict of summary.verdicts) {
         setBlindReview(context.db, verdict.runKey, verdict.rank, verdict.notes);
@@ -869,6 +913,7 @@ async function runBlindReviews(context: ServiceContext, input: {
       writeFileSync(path.join(prepared.rootDir, "blind-result.json"), JSON.stringify(summary.verdicts, null, 2));
     } catch (error: unknown) {
       summary.error = error instanceof Error ? error.message : String(error);
+      summary.usage ??= readBlindUsageFile(prepared.rootDir) ?? undefined;
     }
     summaries.push(summary);
   }
@@ -887,6 +932,8 @@ interface ComparisonExportRequestInput extends ComparisonRequestInput {
   title?: unknown;
   shareUrl?: unknown;
   generatedAt?: unknown;
+  /** Blind reviewer usage of the batch being reported (CLI); numbers only. */
+  blindReviewer?: unknown;
 }
 
 export interface ComparisonExportResult {
@@ -951,6 +998,13 @@ export function getComparisonMatrix(input: ComparisonRequestInput = {}, dbPathIn
  * self-contained html report). Nothing here calls a model, so re-exporting a
  * comparison as often as you like stays free.
  */
+function readBlindUsageInput(value: unknown): BlindReviewUsage | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const num = (entry: unknown) => (typeof entry === "number" && Number.isFinite(entry) && entry >= 0 ? entry : 0);
+  return { inputTokens: num(raw.inputTokens), outputTokens: num(raw.outputTokens), costUsd: num(raw.costUsd), durationMs: num(raw.durationMs) };
+}
+
 export function exportComparison(input: ComparisonExportRequestInput = {}, dbPathInput?: string): Promise<ComparisonExportResult> {
   return withContext((context) => {
     const format: ComparisonExportFormat = isComparisonExportFormat(input.format) ? input.format : "md";
@@ -965,7 +1019,8 @@ export function exportComparison(input: ComparisonExportRequestInput = {}, dbPat
       benchmarkKey: benchmarkKey ?? null,
       taskKey: taskKey ?? null,
       title: readBoundedString(input.title, "title", INPUT_LIMITS.maxTitleLength),
-      shareUrl: readBoundedString(input.shareUrl, "shareUrl", INPUT_LIMITS.maxDescriptionLength) ?? null
+      shareUrl: readBoundedString(input.shareUrl, "shareUrl", INPUT_LIMITS.maxDescriptionLength) ?? null,
+      blindReviewer: readBlindUsageInput(input.blindReviewer)
     };
 
     return {

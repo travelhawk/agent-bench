@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildComparisonMatrix, setupKeyForRun } from "../src/core/comparison";
+import { buildComparisonMatrix, formatTrapCell, setupKeyForRun } from "../src/core/comparison";
 import {
   buildComparisonExport,
   comparisonExportFileName,
@@ -162,6 +162,7 @@ test("markdown export lists every setup as its own leaderboard row", () => {
   assert.match(markdown, /spent no model tokens/);
 
   const leaderboardRows = markdown
+    .split("## Metrics per setup")[0]
     .split("\n")
     .filter((line) => line.startsWith("| ") && /coder-[abc]/.test(line));
   assert.equal(leaderboardRows.length, 3);
@@ -268,4 +269,56 @@ test("export file names are filesystem safe and carry the scope", () => {
     comparisonExportFileName("html", { generatedAt: "2026-08-26T09:30:00.000Z" }),
     "agent-bench-comparison-all-2026-08-26_09-30-00.html"
   );
+});
+
+test("trials aggregate per setup: avg + min/max of time, tokens, cost and trap pass rate over trials", () => {
+  const trial = (runKey: string, durationMs: number, input: number, output: number, cost: number, status: "pass" | "fail" | "error") => makeRun({
+    runKey,
+    setupKey: "vanilla",
+    durationMs,
+    agentInputTokens: input,
+    agentOutputTokens: output,
+    agentCostUsd: cost,
+    trapResults: [{ id: "double-delete", description: "d", status, ...(status === "error" ? { detail: "http://localhost:4173 is already used" } : {}) }]
+  });
+  const matrix = buildComparisonMatrix([
+    trial("t1", 60_000, 1000, 100, 0.5, "pass"),
+    trial("t2", 120_000, 3000, 300, 1.5, "pass"),
+    trial("t3", 90_000, 2000, 200, 1.0, "fail")
+  ]);
+  assert.equal(matrix.setups.length, 1);
+  const setup = matrix.setups[0];
+  assert.equal(setup.runCount, 3);
+  assert.deepEqual(setup.metrics.durationMs, { avg: 90_000, min: 60_000, max: 120_000, count: 3 });
+  assert.deepEqual(setup.metrics.agentInputTokens, { avg: 2000, min: 1000, max: 3000, count: 3 });
+  assert.equal(setup.metrics.agentCostUsd!.min, 0.5);
+  assert.equal(setup.metrics.agentCostUsd!.max, 1.5);
+  assert.equal(formatTrapCell(setup.traps["double-delete"]), "2/3");
+
+  const md = renderComparisonMarkdown(matrix, { ...META, blindReviewer: { inputTokens: 5000, outputTokens: 800, costUsd: 0.75, durationMs: 30_000 } });
+  assert.match(md, /## Metrics per setup/);
+  assert.match(md, /\| vanilla \| 3 \| 1\.5m \(1\.0m-2\.0m\) \| 2\.0k \(1\.0k-3\.0k\) \| 200 \(100-300\) \| \$1\.00 \(\$0\.50-\$1\.50\) \|/);
+  assert.match(md, /Blind reviewer: 5\.0k in \/ 800 out, \$0\.75/);
+  // judge 3 x 0.02 + agent 3.00 + reviewer 0.75
+  assert.match(md, /Total cost: \$3\.81/);
+
+  const json = JSON.parse(renderComparison(matrix, META, "json"));
+  assert.equal(json.setups[0].metrics.durationMs.max, 120_000);
+  assert.equal(json.batchTotals.agentInputTokens, 6000);
+});
+
+test("trap error status shows as 'error' with the first output line as a footnote", () => {
+  const matrix = buildComparisonMatrix([
+    makeRun({ runKey: "e1", setupKey: "forge", trapResults: [
+      { id: "double-delete", description: "d", status: "error", detail: "Error: http://localhost:4173 is already used" }
+    ] })
+  ]);
+  const cell = matrix.setups[0].traps["double-delete"];
+  assert.equal(cell.error, 1);
+  assert.equal(formatTrapCell(cell), "error");
+  const md = renderComparisonMarkdown(matrix, META);
+  assert.match(md, /- error: forge: trap command failed before tests ran - Error: http:\/\/localhost:4173 is already used/);
+  const html = renderComparison(matrix, META, "html");
+  assert.match(html, /heat-bad"><b>error<\/b>/);
+  assert.match(html, /already used/);
 });

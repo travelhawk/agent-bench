@@ -89,6 +89,33 @@ export function mapTrapResults(traps: BenchmarkTrap[], cases: TrapTestCase[]): T
   });
 }
 
+/**
+ * Like mapTrapResults, but a trap command that failed before any test ran
+ * (server did not start, port in use, config error) marks every trap `error`
+ * with the first output line, instead of a silent `unknown`.
+ */
+export function resolveTrapResults(
+  traps: BenchmarkTrap[],
+  cases: TrapTestCase[],
+  runner: { exitCode: number | null; timedOut?: boolean; stdout: string; stderr: string }
+): TrapResult[] {
+  if (cases.length > 0 || runner.exitCode === 0) return mapTrapResults(traps, cases);
+  const detail = runner.timedOut
+    ? "trap command timed out before any test ran"
+    : firstOutputLine(runner.stderr) ?? firstOutputLine(runner.stdout) ?? `trap command exited ${runner.exitCode ?? "without a code"}`;
+  return traps.map((trap) => ({ id: trap.id, description: trap.description, status: "error", detail }));
+}
+
+/** First line that says something (skips blanks and npm/playwright banner noise). */
+export function firstOutputLine(text: string | undefined): string | null {
+  for (const raw of (text ?? "").split(/\r?\n/)) {
+    const line = raw.replace(/\u001b\[[0-9;]*m/g, "").trim();
+    if (!line || /^(>|npm (warn|notice)|Running \d+ tests?)/i.test(line)) continue;
+    return line.length > 200 ? `${line.slice(0, 197)}...` : line;
+  }
+  return null;
+}
+
 export function failAllTraps(traps: BenchmarkTrap[]): TrapResult[] {
   return traps.map((trap) => ({ id: trap.id, description: trap.description, status: "fail" }));
 }

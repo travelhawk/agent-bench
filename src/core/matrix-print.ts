@@ -1,4 +1,5 @@
-import { ComparisonMatrix, formatTrapCell, setupDisplayName, setupModelSuffix } from "./comparison";
+import { ComparisonMatrix, formatTrapCell, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { BlindReviewerUsage, renderMetricsLines } from "./metrics-block";
 
 /**
  * Terminal rendering of a comparison matrix. Kept separate from the CLI command
@@ -81,7 +82,7 @@ export function renderMatrixWinners(matrix: ComparisonMatrix): string[] {
   return lines;
 }
 
-export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?: boolean } = {}): string[] {
+export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?: boolean; blindReviewer?: BlindReviewerUsage | null } = {}): string[] {
   if (matrix.setups.length === 0) {
     return ["No runs found. Launch runs first with `agent-bench compare-models` or from the workbench."];
   }
@@ -112,6 +113,7 @@ export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?:
     if (taskLines.length > 1) lines.push(`  tasks: ${taskLines.join("  ")}`);
   }
 
+  lines.push(...renderMetricsLines(matrix, options.blindReviewer));
   lines.push(...renderTrapMatrixLines(matrix));
 
   const winners = options.winners === false ? [] : renderMatrixWinners(matrix);
@@ -137,7 +139,9 @@ export function renderTrapMatrixLines(matrix: ComparisonMatrix): string[] {
       const cells = matrix.trapIds.map((id) => setup.traps[id]).filter(Boolean);
       const passed = cells.reduce((sum, cell) => sum + cell!.passed, 0);
       const decided = cells.reduce((sum, cell) => sum + cell!.passed + cell!.failed, 0);
-      return decided > 0 ? `${passed}/${decided}` : "n/a";
-    }))
+      const all = cells.reduce((sum, cell) => sum + cell!.passed + cell!.failed + cell!.unknown + (cell!.error ?? 0), 0);
+      return decided > 0 ? `${passed}/${all}` : "n/a";
+    })),
+    ...trapErrorFootnotes(matrix.trapIds, matrix.setups).map((note) => `* error - ${note}`)
   ];
 }

@@ -20,6 +20,8 @@ import { runSandboxedCommand } from "./runtime/sandbox";
 import { TRAP_RESULTS_FILE, TRAPS_WORKSPACE_DIR } from "./runtime/traps";
 import { BatchRunResult } from "./types";
 import { readSetupsFile } from "./core/setups-file";
+import { formatCliError, parseTrialsOption } from "./core/cli-helpers";
+import { sumBlindUsage } from "./core/metrics-block";
 
 const program = new Command();
 const cwd = getWorkspaceRoot();
@@ -362,7 +364,8 @@ async function reportBatch(batch: BatchRunResult, opts: {
     limit: batch.queueSize
   }, opts.dbPath);
 
-  for (const line of renderMatrixLines(matrix)) {
+  const blindReviewer = sumBlindUsage((batch.blindReviews ?? []).map((review) => review.usage));
+  for (const line of renderMatrixLines(matrix, { blindReviewer })) {
     // eslint-disable-next-line no-console
     console.log(line);
   }
@@ -374,7 +377,8 @@ async function reportBatch(batch: BatchRunResult, opts: {
     benchmarkKey: opts.benchmark,
     taskKey: opts.task,
     setupKeys: opts.setupKeys,
-    limit: batch.queueSize
+    limit: batch.queueSize,
+    blindReviewer
   }, opts.dbPath);
 
   if (!opts.out) {
@@ -394,6 +398,7 @@ program
   .description("Run one task across several models and print the comparison")
   .requiredOption("--models <list>", "Comma-separated gateway model ids to compare")
   .option("--agent <path>", "Agent definition held constant across models", "agents/model-coder.md")
+  .option("--trials <n>", "Runs per model, 1-5 (default 1)")
   .option("--benchmark <key>", "Benchmark suite key", "repo-maintenance")
   .option("--task <key>", "Task key inside the benchmark (omit to run the whole suite)")
   .option("--judge-model <provider/model>", "One judge for every setup (default: AGENT_BENCH_JUDGE_MODEL)")
@@ -430,7 +435,7 @@ program
       judgeModel: opts.judgeModel,
       review: opts.judge === false ? "off" : "auto",
       blindReview: opts.blindReview,
-      trials: opts.trials ? Number(opts.trials) : 1
+      trials: parseTrialsOption(opts.trials)
     }, dbPath);
 
     await reportBatch(batch, { benchmark: opts.benchmark, task: opts.task, setupKeys: uniqueModels, format: opts.format, out: opts.out, dbPath });
@@ -460,7 +465,7 @@ program
     ensureDbReady(dbPath).close();
 
     // eslint-disable-next-line no-console
-    console.log(`Running ${setups.length} setup(s) on ${opts.benchmark}${opts.task ? `/${opts.task}` : " (full suite)"}: ${setups.map((setup) => setup.label).join(", ")}...`);
+    console.log(`Running ${setups.length} setup(s) x ${parseTrialsOption(opts.trials)} trial(s) on ${opts.benchmark}${opts.task ? `/${opts.task}` : " (full suite)"}: ${setups.map((setup) => setup.label).join(", ")}...`);
 
     const batch = await runBatch({
       benchmarkKey: opts.benchmark,
@@ -469,7 +474,8 @@ program
       setups,
       judgeModel: opts.judgeModel,
       review: opts.judge === false ? "off" : "auto",
-      blindReview: opts.blindReview
+      blindReview: opts.blindReview,
+      trials: parseTrialsOption(opts.trials)
     }, dbPath);
 
     await reportBatch(batch, {
@@ -501,11 +507,13 @@ program
     if (!existsSync(workspaceDir)) throw new Error(`Workspace not found: ${workspaceDir}`);
     const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "agent-bench-traps-"));
 
-    const { results, runner } = await runTrapStep({
+    const { results, runner, port } = await runTrapStep({
       task,
       trapsSourceDir: path.join(benchmarksDir, benchmark.key, task.sandbox.trapsDir),
       runnerSucceeded: true,
-      run: (command) => runSandboxedCommand({
+      run: (command, env) => runSandboxedCommand({
+        env,
+        killLeftovers: true,
         command,
         cwd: workspaceDir,
         workspaceDir,
@@ -525,10 +533,12 @@ program
     }
     for (const result of results) {
       // eslint-disable-next-line no-console
-      console.log(`${result.status === "pass" ? "PASS" : result.status === "fail" ? "FAIL" : "????"}  ${result.id}: ${result.description}`);
+      const mark = result.status === "pass" ? "PASS" : result.status === "fail" ? "FAIL" : result.status === "error" ? "ERR " : "????";
+      // eslint-disable-next-line no-console
+      console.log(`${mark}  ${result.id}: ${result.description}${result.detail ? ` (${result.detail})` : ""}`);
     }
     // eslint-disable-next-line no-console
-    console.log(`\nTrap command exit ${runner?.exitCode ?? "n/a"}. Details: ${path.join(artifactsDir, "traps.json")}`);
+    console.log(`\nTrap command exit ${runner?.exitCode ?? "n/a"} on port ${port ?? "n/a"}. Details: ${path.join(artifactsDir, "traps.json")}`);
   });
 
 program
@@ -564,9 +574,21 @@ program
     startUi(dbPath, Number(opts.port));
   });
 
-void program.parseAsync().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
+function reportFatal(error: unknown): void {
   // eslint-disable-next-line no-console
-  console.error(message);
+  console.error(formatCliError(error));
+}
+
+process.on("uncaughtException", (error) => {
+  reportFatal(error);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  reportFatal(reason);
+  process.exit(1);
+});
+
+void program.parseAsync().catch((error: unknown) => {
+  reportFatal(error);
   process.exit(1);
 });

@@ -1,4 +1,5 @@
-import { ComparisonMatrix, ComparisonSetup, ComparisonTrapCell, formatTrapCell, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix } from "./comparison";
+import { ComparisonMatrix, ComparisonSetup, ComparisonSetupMetrics, ComparisonTrapCell, formatTrapCell, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { BatchTotals, BlindReviewerUsage, buildBatchTotals, buildMetricsRows, formatBatchTotals } from "./metrics-block";
 
 /**
  * Shareable renderings of a comparison matrix.
@@ -20,6 +21,8 @@ export interface ComparisonExportMeta {
   title?: string;
   /** Deep link back into the workbench comparison view, when the exporter knows the origin. */
   shareUrl?: string | null;
+  /** What the blind reviewer of this batch spent (not stored per run, so passed in). */
+  blindReviewer?: BlindReviewerUsage | null;
 }
 
 export interface ComparisonExportTaskCell {
@@ -54,6 +57,7 @@ export interface ComparisonExportRow {
   traps: Record<string, ComparisonTrapCell>;
   blindRank: number | null;
   blindNotes: string | null;
+  metrics: ComparisonSetupMetrics;
 }
 
 export interface ComparisonExportWinners {
@@ -73,6 +77,7 @@ export interface ComparisonExportPayload {
   taskKeys: string[];
   trapIds: string[];
   winners: ComparisonExportWinners;
+  batchTotals: BatchTotals;
   setups: ComparisonExportRow[];
 }
 
@@ -140,6 +145,7 @@ export function buildComparisonExport(matrix: ComparisonMatrix, meta: Comparison
     taskKeys: matrix.taskKeys,
     trapIds: matrix.trapIds,
     winners: buildComparisonWinners(matrix),
+    batchTotals: buildBatchTotals(matrix, meta.blindReviewer),
     setups: matrix.setups.map((setup, index) => ({
       rank: index + 1,
       setupKey: setup.setupKey,
@@ -161,6 +167,7 @@ export function buildComparisonExport(matrix: ComparisonMatrix, meta: Comparison
       traps: setup.traps,
       blindRank: setup.blindRank,
       blindNotes: setup.blindNotes,
+      metrics: setup.metrics,
       tasks: matrix.taskKeys
         .map((taskKey) => setup.tasks[taskKey])
         .filter((cell): cell is NonNullable<typeof cell> => Boolean(cell))
@@ -291,6 +298,8 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
       lines.push(`| ${trapId} | ${payload.setups.map((row) => formatTrapCell(row.traps[trapId])).join(" | ")} |`);
     }
     lines.push("");
+    const footnotes = trapErrorFootnotes(payload.trapIds, payload.setups);
+    if (footnotes.length > 0) lines.push(...footnotes.map((note) => `- error: ${note.replace(/\|/g, "/")}`), "");
   }
 
   const blindRanked = payload.setups.filter((row) => row.blindRank != null).sort((a, b) => a.blindRank! - b.blindRank!);
@@ -302,6 +311,13 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
     }
     lines.push("");
   }
+
+  lines.push("## Metrics per setup", "", "_avg (min-max) over trials_", "");
+  lines.push("| Setup | Runs | Wall time | Agent input tokens | Agent output tokens | Agent cost |", "| --- | ---: | ---: | ---: | ---: | ---: |");
+  for (const row of buildMetricsRows(matrix)) {
+    lines.push(`| ${row.setup} | ${row.runs} | ${row.wallTime} | ${row.inputTokens} | ${row.outputTokens} | ${row.agentCost} |`);
+  }
+  lines.push("", "**Batch totals**", "", ...formatBatchTotals(payload.batchTotals).map(([label, value]) => `- ${label}: ${value}`), "");
 
   lines.push("## Token accounting", "");
   lines.push(`- Judge tokens: ${formatTokens(payload.totals.judgeTokens)} ($${payload.totals.judgeCostUsd.toFixed(2)})`);
@@ -328,6 +344,7 @@ export function renderComparisonCsv(matrix: ComparisonMatrix, meta: ComparisonEx
     "avg_score", "avg_quality", "tests_passed", "tests_total", "test_pass_rate",
     "avg_duration_ms", "agent_tokens", "judge_tokens", "total_cost_usd",
     "runs_completed", "runs_failed", "last_run_at",
+    "duration_ms_min", "duration_ms_max", "agent_input_tokens_avg", "agent_output_tokens_avg", "agent_cost_usd_avg", "agent_cost_usd_min", "agent_cost_usd_max",
     ...payload.taskKeys.map((taskKey) => `task:${taskKey}`),
     ...(payload.setups.some((row) => row.blindRank != null) ? ["blind_rank"] : []),
     ...payload.trapIds.map((trapId) => `trap:${trapId}`)
@@ -350,6 +367,13 @@ export function renderComparisonCsv(matrix: ComparisonMatrix, meta: ComparisonEx
     row.completedCount,
     row.failedCount,
     row.lastRunAt,
+    row.metrics.durationMs?.min ?? null,
+    row.metrics.durationMs?.max ?? null,
+    row.metrics.agentInputTokens ? Math.round(row.metrics.agentInputTokens.avg) : null,
+    row.metrics.agentOutputTokens ? Math.round(row.metrics.agentOutputTokens.avg) : null,
+    row.metrics.agentCostUsd ? Number(row.metrics.agentCostUsd.avg.toFixed(4)) : null,
+    row.metrics.agentCostUsd ? Number(row.metrics.agentCostUsd.min.toFixed(4)) : null,
+    row.metrics.agentCostUsd ? Number(row.metrics.agentCostUsd.max.toFixed(4)) : null,
     ...payload.taskKeys.map((taskKey) => row.tasks.find((entry) => entry.taskKey === taskKey)?.avgScore ?? null),
     ...(payload.setups.some((entry) => entry.blindRank != null) ? [row.blindRank] : []),
     ...payload.trapIds.map((trapId) => formatTrapCell(row.traps[trapId]))
@@ -359,6 +383,12 @@ export function renderComparisonCsv(matrix: ComparisonMatrix, meta: ComparisonEx
 }
 
 /* ---------------- HTML ---------------- */
+
+function trapNotesHtml(payload: ComparisonExportPayload): string {
+  const notes = trapErrorFootnotes(payload.trapIds, payload.setups);
+  if (notes.length === 0) return "";
+  return `<ul class="winners" style="margin-top:.6rem">${notes.map((note) => `<li><strong>error:</strong> ${escapeHtml(note)}</li>`).join("")}</ul>`;
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -485,7 +515,7 @@ ${payload.setups.map((row) => `<tr><td class="setup"><strong>${escapeHtml(setupD
 </tbody></table></div></section>`
     : "";
 
-  const trapClass = (label: string) => label === "pass" ? "heat-good" : label === "FAIL" ? "heat-bad" : label.includes("/") ? "heat-warn" : "heat-none";
+  const trapClass = (label: string) => label === "pass" ? "heat-good" : label === "FAIL" || label === "error" ? "heat-bad" : label.includes("/") ? "heat-warn" : "heat-none";
   const trapPanel = payload.trapIds.length > 0
     ? `<section class="panel">
 <p class="eyebrow">Hidden checks</p><h2>Traps</h2>
@@ -494,7 +524,17 @@ ${payload.trapIds.map((trapId) => `<tr><td>${escapeHtml(trapId)}</td>${payload.s
       const label = formatTrapCell(row.traps[trapId]);
       return `<td class="heat ${trapClass(label)}"><b>${escapeHtml(label)}</b></td>`;
     }).join("")}</tr>`).join("\n")}
-</tbody></table></div></section>`
+</tbody></table></div>${trapNotesHtml(payload)}</section>`
+    : "";
+  const metricsPanel = payload.setups.length > 0
+    ? `<section class="panel">
+<p class="eyebrow">Per trial: avg (min-max)</p><h2>Metrics per setup</h2>
+<div class="scroll"><table><thead><tr><th>Setup</th><th>Runs</th><th>Wall time</th><th>Agent input tokens</th><th>Agent output tokens</th><th>Agent cost</th></tr></thead><tbody>
+${buildMetricsRows(matrix).map((row) => `<tr><td>${escapeHtml(row.setup)}</td><td class="num">${row.runs}</td><td class="num">${escapeHtml(row.wallTime)}</td><td class="num">${escapeHtml(row.inputTokens)}</td><td class="num">${escapeHtml(row.outputTokens)}</td><td class="num">${escapeHtml(row.agentCost)}</td></tr>`).join("")}
+</tbody></table></div>
+<h2 style="margin-top:1.1rem">Batch totals</h2>
+<ul class="winners">${formatBatchTotals(payload.batchTotals).map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join("")}</ul>
+</section>`
     : "";
   const blindRows = payload.setups.filter((row) => row.blindRank != null).sort((a, b) => a.blindRank! - b.blindRank!);
   const blindPanel = blindRows.length > 0
@@ -528,6 +568,7 @@ ${bodyRows}
 ${winnerItems ? `<h2 style="margin-top:1.1rem">Winners</h2><ul class="winners">${winnerItems}</ul>` : ""}
 </section>
 ${heatmap}
+${metricsPanel}
 ${trapPanel}
 ${blindPanel}`}
 <footer>Built from persisted agent-bench runs — rendering this report spent no model tokens.</footer>

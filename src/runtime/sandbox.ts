@@ -1,3 +1,4 @@
+import { watchProcessTree } from "./ports";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -18,6 +19,8 @@ export interface SandboxCommandResult {
   profilePath?: string;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  /** Pids still running after the command exited, killed when `killLeftovers` was set. */
+  killedLeftoverPids?: number[];
 }
 
 interface RunSandboxedCommandInput {
@@ -34,6 +37,11 @@ interface RunSandboxedCommandInput {
   env?: Record<string, string | undefined>;
   providerApiKey?: string;
   model?: string;
+  /**
+   * Kill processes the command left behind (e.g. a `vite preview` started in
+   * the background) once it exits. Not needed for docker (`--rm --init`).
+   */
+  killLeftovers?: boolean;
 }
 
 interface SandboxMount {
@@ -543,12 +551,15 @@ export async function runSandboxedCommand(input: RunSandboxedCommandInput): Prom
     }
   }
 
+  const killLeftovers = Boolean(input.killLeftovers) && provider !== "docker";
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: input.cwd,
       env: env as NodeJS.ProcessEnv,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      // Own process group on POSIX, so leftovers can be killed as a group.
+      detached: killLeftovers && process.platform !== "win32"
     });
 
     let stdout = "";
@@ -580,10 +591,23 @@ export async function runSandboxedCommand(input: RunSandboxedCommandInput): Prom
       if (killTimer) clearTimeout(killTimer);
       reject(error);
     });
-    child.on("close", (code) => {
+    // On "exit" (not "close"): a background server that inherited stdout keeps
+    // the pipes open, so "close" would only come after the timeout.
+    const tree = killLeftovers ? watchProcessTree(child.pid, started) : null;
+    let leftovers: Promise<number[]> | undefined;
+    const reapLeftovers = () => {
+      leftovers ??= tree ? tree.stop() : Promise.resolve([]);
+      return leftovers;
+    };
+    let finished = false;
+    const finish = async (code: number | null) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
+      const leftoverPids = await reapLeftovers();
       resolve({
+        ...(leftoverPids.length > 0 ? { killedLeftoverPids: leftoverPids } : {}),
         command: input.command,
         cwd: input.cwd,
         exitCode: code,
@@ -597,6 +621,22 @@ export async function runSandboxedCommand(input: RunSandboxedCommandInput): Prom
         stdoutTruncated,
         stderrTruncated
       });
+    };
+    child.on("exit", (code) => {
+      if (!killLeftovers) return;
+      void reapLeftovers().then(() => {
+        // A leftover we could not attribute may still hold the pipes open;
+        // do not wait for "close" forever once the command itself is done.
+        setTimeout(() => {
+          if (finished) return;
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          void finish(code);
+        }, 5000).unref();
+      });
+    });
+    child.on("close", (code) => {
+      void finish(code);
     });
   });
 }
