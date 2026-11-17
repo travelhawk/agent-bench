@@ -383,3 +383,97 @@ export function trapErrorFootnotes(
   }
   return notes;
 }
+
+/* ---------------- headline winners (traps + blind rank first) ---------------- */
+
+export interface TrapTotals {
+  passed: number;
+  total: number;
+}
+
+/** Passed / all trap outcomes over every trial of a setup; null when no trap was decided. */
+export function setupTrapTotals(setup: { traps: Record<string, ComparisonTrapCell> }): TrapTotals | null {
+  const cells = Object.values(setup.traps);
+  const decided = cells.reduce((sum, cell) => sum + cell.passed + cell.failed, 0);
+  if (decided === 0) return null;
+  const passed = cells.reduce((sum, cell) => sum + cell.passed, 0);
+  const total = cells.reduce((sum, cell) => sum + cell.passed + cell.failed + cell.unknown + (cell.error ?? 0), 0);
+  return { passed, total };
+}
+
+/** True when no run of the setup got an LLM judge, so its score is only the rules heuristic. */
+export function isRulesOnlySetup(setup: { reviewModes: Record<string, number> }): boolean {
+  const modes = Object.entries(setup.reviewModes).filter(([, count]) => count > 0).map(([mode]) => mode);
+  return modes.length > 0 && modes.every((mode) => mode === "rules" || mode === "off");
+}
+
+export interface HeadlineWinners {
+  /** Setup keys with the highest trap pass rate (several on a tie). */
+  traps: { setupKeys: string[]; passed: number; total: number } | null;
+  /** Setup keys with the lowest average blind rank (several on a tie). */
+  blindRank: { setupKeys: string[]; rank: number } | null;
+  /** One-line verdict text (without the "Verdict:" prefix), null when neither signal exists. */
+  verdict: string | null;
+  /** Score of at least one scored setup comes from rules only. */
+  scoreIsHeuristic: boolean;
+  /** Every setup with a quality has the same quality, so "best quality" means nothing. */
+  qualityAllEqual: boolean;
+}
+
+function joinKeys(keys: string[]): string {
+  return keys.join(" = ");
+}
+
+export function buildHeadlineWinners(
+  setups: Array<Pick<ComparisonSetup, "setupKey" | "traps" | "blindRank" | "reviewModes" | "avgScore" | "avgQuality">>
+): HeadlineWinners {
+  const trapRows = setups
+    .map((setup) => ({ setup, totals: setupTrapTotals(setup) }))
+    .filter((row): row is { setup: typeof row.setup; totals: TrapTotals } => row.totals != null && row.totals.total > 0);
+  let traps: HeadlineWinners["traps"] = null;
+  if (setups.length >= 2 && trapRows.length > 0) {
+    const rate = (row: typeof trapRows[number]) => row.totals.passed / row.totals.total;
+    const bestRate = Math.max(...trapRows.map(rate));
+    const top = trapRows.filter((row) => Math.abs(rate(row) - bestRate) < 1e-9);
+    traps = { setupKeys: top.map((row) => row.setup.setupKey), passed: top[0].totals.passed, total: top[0].totals.total };
+  }
+
+  const ranked = setups.filter((setup) => setup.blindRank != null);
+  let blindRank: HeadlineWinners["blindRank"] = null;
+  if (setups.length >= 2 && ranked.length > 0) {
+    const bestRank = Math.min(...ranked.map((setup) => setup.blindRank!));
+    blindRank = {
+      setupKeys: ranked.filter((setup) => Math.abs(setup.blindRank! - bestRank) < 1e-9).map((setup) => setup.setupKey),
+      rank: bestRank
+    };
+  }
+
+  let verdict: string | null = null;
+  const trapWinner = traps && traps.setupKeys.length === 1 ? traps.setupKeys[0] : null;
+  const blindWinner = blindRank && blindRank.setupKeys.length === 1 ? blindRank.setupKeys[0] : null;
+  if (traps && blindRank) {
+    if (trapWinner && trapWinner === blindWinner) {
+      verdict = `${trapWinner} (most traps passed and best blind rank)`;
+    } else {
+      verdict = `no clear winner - traps favour ${joinKeys(traps.setupKeys)}, blind review favours ${joinKeys(blindRank.setupKeys)}`;
+    }
+  } else if (traps) {
+    verdict = trapWinner ? `${trapWinner} (most traps passed; no blind review)` : `tie on traps between ${joinKeys(traps.setupKeys)}; no blind review`;
+  } else if (blindRank) {
+    verdict = blindWinner ? `${blindWinner} (best blind rank; no traps)` : `tie on blind rank between ${joinKeys(blindRank.setupKeys)}; no traps`;
+  }
+
+  const scored = setups.filter((setup) => setup.avgScore != null);
+  const qualities = setups.filter((setup) => setup.avgQuality != null).map((setup) => setup.avgQuality!.toFixed(2));
+  return {
+    traps,
+    blindRank,
+    verdict,
+    scoreIsHeuristic: scored.some((setup) => isRulesOnlySetup(setup)),
+    qualityAllEqual: qualities.length > 0 && new Set(qualities).size === 1
+  };
+}
+
+export function formatBlindRank(rank: number): string {
+  return rank.toFixed(1);
+}

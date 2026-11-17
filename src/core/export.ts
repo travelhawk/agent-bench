@@ -1,4 +1,4 @@
-import { ComparisonMatrix, ComparisonSetup, ComparisonSetupMetrics, ComparisonTrapCell, formatTrapCell, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { buildHeadlineWinners, ComparisonMatrix, ComparisonSetup, ComparisonSetupMetrics, ComparisonTrapCell, formatBlindRank, formatTrapCell, isRulesOnlySetup, setupTrapTotals, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
 import { BatchTotals, BlindReviewerUsage, buildBatchTotals, buildMetricsRows, formatBatchTotals } from "./metrics-block";
 
 /**
@@ -48,7 +48,14 @@ export interface ComparisonExportRow {
   avgDurationMs: number | null;
   agentTokens: number | null;
   judgeTokens: number;
+  /** Agent + judge cost summed over all runs of the setup. */
   totalCostUsd: number;
+  /** `totalCostUsd / runCount`. */
+  avgCostUsd: number;
+  /** No LLM judge for any run: the score is the rules heuristic only. */
+  scoreIsHeuristic: boolean;
+  trapsPassed: number | null;
+  trapsTotal: number | null;
   runCount: number;
   completedCount: number;
   failedCount: number;
@@ -61,7 +68,20 @@ export interface ComparisonExportRow {
 }
 
 export interface ComparisonExportWinners {
+  /** One-line verdict from traps + blind rank; says "no clear winner" when they disagree. */
+  verdict: string | null;
+  /** Setup key(s) with the highest trap pass rate over all trials; ties joined with " = ". */
+  traps: string | null;
+  trapsPassed: number | null;
+  trapsTotal: number | null;
+  /** Setup key(s) with the lowest average blind rank; ties joined with " = ". */
+  blindRank: string | null;
+  blindRankValue: number | null;
+  /** True when at least one scored setup was only scored by the rules heuristic (no LLM judge). */
+  scoreIsHeuristic: boolean;
+  /** Top score (a rules heuristic when `scoreIsHeuristic`). */
   score: string | null;
+  /** Null when every setup has the same quality. */
   quality: string | null;
   tests: string | null;
   speed: string | null;
@@ -112,6 +132,15 @@ function testPassRate(setup: ComparisonSetup): number | null {
   return setup.testsTotal > 0 ? Number((setup.testsPassed / setup.testsTotal).toFixed(4)) : null;
 }
 
+/** Label/value pairs for the summary list, traps and blind rank first; never calls a heuristic "Best score". */
+export function headlineWinnerEntries(winners: ComparisonExportWinners): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  if (winners.traps) entries.push(["Most traps passed", `${winners.traps} (${winners.trapsPassed}/${winners.trapsTotal})`]);
+  if (winners.blindRank && winners.blindRankValue != null) entries.push(["Best blind rank", `${winners.blindRank} (${formatBlindRank(winners.blindRankValue)})`]);
+  if (winners.score) entries.push([winners.scoreIsHeuristic ? "Rules score (heuristic)" : "Best score", winners.score]);
+  return entries;
+}
+
 function pickWinner(
   setups: ComparisonSetup[],
   eligible: (setup: ComparisonSetup) => boolean,
@@ -125,14 +154,28 @@ function pickWinner(
   return winner?.setupKey ?? null;
 }
 
+function avgCost(setup: ComparisonSetup): number {
+  return Number((totalCost(setup) / Math.max(1, setup.runCount)).toFixed(4));
+}
+
 export function buildComparisonWinners(matrix: ComparisonMatrix): ComparisonExportWinners {
+  const headline = buildHeadlineWinners(matrix.setups);
   return {
+    verdict: headline.verdict,
+    traps: headline.traps ? headline.traps.setupKeys.join(" = ") : null,
+    trapsPassed: headline.traps?.passed ?? null,
+    trapsTotal: headline.traps?.total ?? null,
+    blindRank: headline.blindRank ? headline.blindRank.setupKeys.join(" = ") : null,
+    blindRankValue: headline.blindRank?.rank ?? null,
+    scoreIsHeuristic: headline.scoreIsHeuristic,
     score: pickWinner(matrix.setups, (s) => s.avgScore != null, (a, b) => a.avgScore! > b.avgScore!),
-    quality: pickWinner(matrix.setups, (s) => s.avgQuality != null, (a, b) => a.avgQuality! > b.avgQuality!),
+    quality: headline.qualityAllEqual
+      ? null
+      : pickWinner(matrix.setups, (s) => s.avgQuality != null, (a, b) => a.avgQuality! > b.avgQuality!),
     tests: pickWinner(matrix.setups, (s) => s.testsTotal > 0, (a, b) => testPassRate(a)! > testPassRate(b)!),
     speed: pickWinner(matrix.setups, (s) => s.avgDurationMs != null, (a, b) => a.avgDurationMs! < b.avgDurationMs!),
     leanestTokens: pickWinner(matrix.setups, (s) => s.agentUsageRuns > 0, (a, b) => a.agentTokens < b.agentTokens),
-    cheapest: pickWinner(matrix.setups, () => true, (a, b) => totalCost(a) < totalCost(b))
+    cheapest: pickWinner(matrix.setups, () => true, (a, b) => avgCost(a) < avgCost(b))
   };
 }
 
@@ -160,6 +203,10 @@ export function buildComparisonExport(matrix: ComparisonMatrix, meta: Comparison
       agentTokens: setup.agentUsageRuns > 0 ? setup.agentTokens : null,
       judgeTokens: setup.judgeTokens,
       totalCostUsd: totalCost(setup),
+      avgCostUsd: avgCost(setup),
+      scoreIsHeuristic: isRulesOnlySetup(setup),
+      trapsPassed: setupTrapTotals(setup)?.passed ?? null,
+      trapsTotal: setupTrapTotals(setup)?.total ?? null,
       runCount: setup.runCount,
       completedCount: setup.completedCount,
       failedCount: setup.failedCount,
@@ -243,7 +290,8 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
   }
 
   lines.push("## Leaderboard", "");
-  lines.push("| # | Setup | Score | Quality | Tests | Avg time | Agent tokens | Judge tokens | Cost | Runs |");
+  const heuristic = payload.winners.scoreIsHeuristic;
+  lines.push(`| # | Setup | ${heuristic ? "Rules score (heuristic)" : "Score"} | Quality | Tests | Avg time | Agent tokens | Judge tokens | Cost (total over runs) | Runs |`);
   lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
   for (const row of payload.setups) {
     const runs = `${row.completedCount}${row.failedCount > 0 ? ` (+${row.failedCount} failed)` : ""}`;
@@ -256,14 +304,14 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
       formatDuration(row.avgDurationMs),
       formatTokens(row.agentTokens),
       formatTokens(row.judgeTokens),
-      `$${row.totalCostUsd.toFixed(2)}`,
+      `$${row.totalCostUsd.toFixed(2)} (avg $${row.avgCostUsd.toFixed(2)})`,
       runs
     ].map((cell) => `| ${cell} `).join("") + "|");
   }
   lines.push("");
 
   const winnerLines = [
-    payload.winners.score ? `- **Best score:** ${payload.winners.score}` : null,
+    ...headlineWinnerEntries(payload.winners).map(([label, value]) => `- **${label}:** ${value}`),
     payload.winners.quality ? `- **Best quality:** ${payload.winners.quality}` : null,
     payload.winners.tests ? `- **Best test pass rate:** ${payload.winners.tests}` : null,
     payload.winners.speed ? `- **Fastest:** ${payload.winners.speed}` : null,
@@ -271,7 +319,9 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
     payload.winners.cheapest ? `- **Cheapest:** ${payload.winners.cheapest}` : null
   ].filter(Boolean) as string[];
   if (winnerLines.length > 0) {
-    lines.push("## Winners", "", ...winnerLines, "");
+    lines.push("## Winners", "");
+    if (payload.winners.verdict) lines.push(`**Verdict:** ${payload.winners.verdict}`, "");
+    lines.push(...winnerLines, "");
   }
 
   if (payload.taskKeys.length > 1) {
@@ -463,6 +513,10 @@ td.num{font-variant-numeric:tabular-nums}
 .heat small{display:block;font-size:.68rem;color:var(--muted)}
 ul.winners{margin:0;padding-left:1.1rem;color:var(--muted)}
 ul.winners strong{color:var(--text)}
+.verdict{margin:0 0 .5rem}
+.trap-winner{box-shadow:inset 2px 0 0 var(--good),inset -2px 0 0 var(--good)}
+th.trap-winner{color:var(--good)}
+.trap-total td{border-top:2px solid var(--border)}
 footer{color:var(--muted);font-size:.8rem;text-align:center}
 `.trim();
 
@@ -481,19 +535,19 @@ footer{color:var(--muted);font-size:.8rem;text-align:center}
     const isBest = (key: string | null) => key === row.setupKey;
     return `<tr>
 <td class="setup"><strong>${escapeHtml(`${medal(row.rank)} ${setupDisplayName(row)}`)}</strong>${setupModelSuffix(row) ? `<span class="chip">${escapeHtml(setupModelSuffix(row)!)}</span>` : ""}</td>
-${cell(formatScore(row.avgScore), row.avgScore, 10, false, isBest(payload.winners.score))}
+${cell(formatScore(row.avgScore), row.avgScore, 10, false, !payload.winners.scoreIsHeuristic && isBest(payload.winners.score))}
 ${cell(formatScore(row.avgQuality), row.avgQuality, 10, false, isBest(payload.winners.quality))}
 ${cell(formatTests(row.testsPassed, row.testsTotal), row.testPassRate != null ? row.testPassRate * 10 : null, 10, false, isBest(payload.winners.tests))}
 ${cell(formatDuration(row.avgDurationMs), row.avgDurationMs, maxDuration, true, isBest(payload.winners.speed))}
 ${cell(formatTokens(row.agentTokens), row.agentTokens, maxAgentTokens, true, isBest(payload.winners.leanestTokens))}
 ${cell(formatTokens(row.judgeTokens), row.judgeTokens, maxJudgeTokens, true, false)}
-${cell(`$${row.totalCostUsd.toFixed(2)}`, row.totalCostUsd, maxCost, true, isBest(payload.winners.cheapest))}
+${cell(`$${row.totalCostUsd.toFixed(2)} (avg $${row.avgCostUsd.toFixed(2)})`, row.totalCostUsd, maxCost, true, isBest(payload.winners.cheapest))}
 <td class="num">${row.completedCount}${row.failedCount > 0 ? ` +${row.failedCount}✗` : ""}</td>
 </tr>`;
   }).join("\n");
 
   const winnerItems = [
-    payload.winners.score ? `<li><strong>Best score:</strong> ${escapeHtml(payload.winners.score)}</li>` : "",
+    ...headlineWinnerEntries(payload.winners).map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`),
     payload.winners.quality ? `<li><strong>Best quality:</strong> ${escapeHtml(payload.winners.quality)}</li>` : "",
     payload.winners.tests ? `<li><strong>Best test pass rate:</strong> ${escapeHtml(payload.winners.tests)}</li>` : "",
     payload.winners.speed ? `<li><strong>Fastest:</strong> ${escapeHtml(payload.winners.speed)}</li>` : "",
@@ -516,14 +570,17 @@ ${payload.setups.map((row) => `<tr><td class="setup"><strong>${escapeHtml(setupD
     : "";
 
   const trapClass = (label: string) => label === "pass" ? "heat-good" : label === "FAIL" || label === "error" ? "heat-bad" : label.includes("/") ? "heat-warn" : "heat-none";
+  const trapWinnerKeys = new Set(payload.winners.traps ? payload.winners.traps.split(" = ") : []);
+  const isTrapWinner = (setupKey: string) => trapWinnerKeys.has(setupKey);
   const trapPanel = payload.trapIds.length > 0
     ? `<section class="panel">
 <p class="eyebrow">Hidden checks</p><h2>Traps</h2>
-<div class="scroll"><table><thead><tr><th>Trap</th>${payload.setups.map((row) => `<th>${escapeHtml(setupDisplayName(row))}</th>`).join("")}</tr></thead><tbody>
+<div class="scroll"><table><thead><tr><th>Trap</th>${payload.setups.map((row) => `<th${isTrapWinner(row.setupKey) ? ` class="trap-winner"` : ""}>${escapeHtml(setupDisplayName(row))}${isTrapWinner(row.setupKey) ? " ★" : ""}</th>`).join("")}</tr></thead><tbody>
 ${payload.trapIds.map((trapId) => `<tr><td>${escapeHtml(trapId)}</td>${payload.setups.map((row) => {
       const label = formatTrapCell(row.traps[trapId]);
-      return `<td class="heat ${trapClass(label)}"><b>${escapeHtml(label)}</b></td>`;
+      return `<td class="heat ${trapClass(label)}${isTrapWinner(row.setupKey) ? " trap-winner" : ""}"><b>${escapeHtml(label)}</b></td>`;
     }).join("")}</tr>`).join("\n")}
+<tr class="trap-total"><td><strong>total</strong></td>${payload.setups.map((row) => `<td class="heat${isTrapWinner(row.setupKey) ? " trap-winner best" : ""}"><b>${row.trapsTotal ? `${row.trapsPassed}/${row.trapsTotal}` : "n/a"}</b></td>`).join("")}</tr>
 </tbody></table></div>${trapNotesHtml(payload)}</section>`
     : "";
   const metricsPanel = payload.setups.length > 0
@@ -561,11 +618,11 @@ ${blindRows.map((row) => `<tr><td class="num">${row.blindRank}</td><td>${escapeH
 ${payload.setups.length === 0 ? empty : `<section class="panel">
 <p class="eyebrow">Side by side</p><h2>Leaderboard</h2>
 <div class="scroll"><table>
-<thead><tr><th>Setup (agent × model)</th><th>Score</th><th>Quality</th><th>Tests</th><th>Avg time</th><th>Agent tokens</th><th>Judge tokens</th><th>Cost</th><th>Runs</th></tr></thead>
+<thead><tr><th>Setup (agent × model)</th><th>${payload.winners.scoreIsHeuristic ? "Rules score (heuristic)" : "Score"}</th><th>Quality</th><th>Tests</th><th>Avg time</th><th>Agent tokens</th><th>Judge tokens</th><th>Cost (total over runs)</th><th>Runs</th></tr></thead>
 <tbody>
 ${bodyRows}
 </tbody></table></div>
-${winnerItems ? `<h2 style="margin-top:1.1rem">Winners</h2><ul class="winners">${winnerItems}</ul>` : ""}
+${winnerItems ? `<h2 style="margin-top:1.1rem">Winners</h2>${payload.winners.verdict ? `<p class="verdict"><strong>Verdict:</strong> ${escapeHtml(payload.winners.verdict)}</p>` : ""}<ul class="winners">${winnerItems}</ul>` : ""}
 </section>
 ${heatmap}
 ${metricsPanel}

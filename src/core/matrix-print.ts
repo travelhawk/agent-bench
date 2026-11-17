@@ -1,4 +1,4 @@
-import { ComparisonMatrix, formatTrapCell, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { buildHeadlineWinners, ComparisonMatrix, formatBlindRank, formatTrapCell, isRulesOnlySetup, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
 import { BlindReviewerUsage, renderMetricsLines } from "./metrics-block";
 
 /**
@@ -27,6 +27,11 @@ export function scoreBar(value: number | null, max = 10, width = 10): string {
 function setupLabel(setup: { setupKey: string; agentName: string; modelLabel: string }): string {
   const suffix = setupModelSuffix(setup);
   return suffix ? `${setupDisplayName(setup)} · ${suffix}` : setupDisplayName(setup);
+}
+
+/** Agent + judge cost per run, so setups with different trial counts compare fairly. */
+export function avgCostPerRun(setup: { judgeCostUsd: number; agentCostUsd: number; runCount: number }): number {
+  return (setup.judgeCostUsd + setup.agentCostUsd) / Math.max(1, setup.runCount);
 }
 
 function num(value: number | null, digits = 2): string {
@@ -60,8 +65,21 @@ export function renderMatrixWinners(matrix: ComparisonMatrix): string[] {
       : rows.reduce((winner, row) =>
         (prefer === "high" ? pick(row) > pick(winner) : pick(row) < pick(winner)) ? row : winner);
 
+  const headline = buildHeadlineWinners(matrix.setups);
+  const byKey = (key: string) => matrix.setups.find((setup) => setup.setupKey === key)!;
+  const names = (keys: string[]) => keys.map((key) => label(byKey(key))).join(" = ");
+  if (headline.verdict) lines.push(`Verdict: ${headline.verdict}`);
+  if (headline.traps) lines.push(`Most traps passed: ${names(headline.traps.setupKeys)} (${headline.traps.passed}/${headline.traps.total})`);
+  if (headline.blindRank) lines.push(`Best blind rank:   ${names(headline.blindRank.setupKeys)} (${formatBlindRank(headline.blindRank.rank)})`);
+
   const topScore = best(scored, (setup) => setup.avgScore ?? 0, "high");
-  if (topScore) lines.push(`Best score:    ${label(topScore)} (${num(topScore.avgScore)})`);
+  if (topScore) {
+    lines.push(headline.scoreIsHeuristic
+      ? `Rules score (heuristic): ${label(topScore)} (${num(topScore.avgScore)})`
+      : `Best score:    ${label(topScore)} (${num(topScore.avgScore)})`);
+  }
+  const topQuality = best(matrix.setups.filter((setup) => setup.avgQuality != null), (setup) => setup.avgQuality ?? 0, "high");
+  if (topQuality && !headline.qualityAllEqual) lines.push(`Best quality:  ${label(topQuality)} (${num(topQuality.avgQuality)})`);
 
   const topTests = best(
     matrix.setups.filter((setup) => setup.testsTotal > 0),
@@ -76,8 +94,8 @@ export function renderMatrixWinners(matrix: ComparisonMatrix): string[] {
   const leanest = best(metered, (setup) => setup.agentTokens, "low");
   if (leanest) lines.push(`Fewest tokens: ${label(leanest)} (${formatTokens(leanest.agentTokens)})`);
 
-  const cheapest = best(matrix.setups, (setup) => setup.judgeCostUsd + setup.agentCostUsd, "low");
-  if (cheapest) lines.push(`Cheapest:      ${label(cheapest)} ($${(cheapest.judgeCostUsd + cheapest.agentCostUsd).toFixed(2)})`);
+  const cheapest = best(matrix.setups, (setup) => avgCostPerRun(setup), "low");
+  if (cheapest) lines.push(`Cheapest:      ${label(cheapest)} (avg $${avgCostPerRun(cheapest).toFixed(2)}/run)`);
 
   return lines;
 }
@@ -96,13 +114,13 @@ export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?:
 
     lines.push(setupLabel(setup));
     lines.push(
-      `  score ${scoreBar(setup.avgScore)} ${num(setup.avgScore)}`
+      `  ${isRulesOnlySetup(setup) ? "rules score (heuristic)" : "score"} ${scoreBar(setup.avgScore)} ${num(setup.avgScore)}`
       + ` | quality ${num(setup.avgQuality)}`
       + ` | tests ${tests}`
       + ` | avg ${formatDurationMs(setup.avgDurationMs)}`
       + ` | agent tokens ${agentTokens}`
       + ` | judge tokens ${formatTokens(setup.judgeTokens)}`
-      + ` | $${(setup.judgeCostUsd + setup.agentCostUsd).toFixed(2)}`
+      + ` | cost $${(setup.judgeCostUsd + setup.agentCostUsd).toFixed(2)} total over ${setup.runCount} run${setup.runCount === 1 ? "" : "s"} (avg $${avgCostPerRun(setup).toFixed(2)})`
       + ` | runs ${setup.completedCount}${failed}`
       + (setup.blindRank != null ? ` | blind rank ${num(setup.blindRank, setup.blindRank % 1 === 0 ? 0 : 2)}` : "")
     );
