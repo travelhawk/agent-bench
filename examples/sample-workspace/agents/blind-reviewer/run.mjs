@@ -41,6 +41,13 @@ Finish by writing ranking.json in this folder (the folder that contains TASK.md)
 with one entry per build and rank 1 = best.`;
 
 const args = ["-p", "--permission-mode", "bypassPermissions", "--output-format", "json"];
+// Lean like the claude-code runner: the reviewer needs no user plugins, MCP servers or settings.
+if (process.env.AGENT_BENCH_CLAUDE_LEAN !== "0") {
+  // Kept outside the blind folder so the reviewer never sees it.
+  const emptyMcp = path.join(path.dirname(blindDir), "empty-mcp.json");
+  writeFileSync(emptyMcp, '{"mcpServers":{}}');
+  args.push("--setting-sources", "project,local", "--strict-mcp-config", "--mcp-config", emptyMcp, "--no-chrome", "--disable-slash-commands");
+}
 if (process.env.AGENT_BENCH_BLIND_MODEL?.trim()) args.push("--model", process.env.AGENT_BENCH_BLIND_MODEL.trim());
 const options = { cwd: blindDir, input: prompt, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: process.env };
 let result = spawnSync("claude", args, options);
