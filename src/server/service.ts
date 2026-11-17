@@ -108,6 +108,7 @@ interface BatchRunInput {
   setups?: unknown;
   /** Reviewer command run once after all runs over anonymised workspaces. */
   blindReview?: string;
+  trials?: number;
   jobs?: Array<{
     benchmarkKey?: string;
     taskKey?: string;
@@ -129,6 +130,8 @@ interface BatchRunJob {
   model?: string;
   review: "auto" | "off";
   followupPrompt?: string;
+  buildPrompt?: string;
+  env?: Record<string, string>;
 }
 
 interface ManagedAgentBundleInput {
@@ -388,6 +391,8 @@ async function executeRun(context: ServiceContext, input: {
   review?: "auto" | "off";
   setupKey?: string;
   followupPrompt?: string;
+  buildPrompt?: string;
+  env?: Record<string, string>;
 }): Promise<RunEvaluationResult> {
   const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
   const bestBefore = getBestScore(context.db);
@@ -406,7 +411,11 @@ async function executeRun(context: ServiceContext, input: {
     judgeModel: input.judgeModel,
     gatewayApiKey: input.providerApiKey,
     review: input.review,
-    runnerEnv: input.followupPrompt ? { AGENT_BENCH_FOLLOWUP_PROMPT: input.followupPrompt } : undefined,
+    runnerEnv: input.followupPrompt || input.buildPrompt || input.env ? {
+      ...(input.env ?? {}),
+      ...(input.followupPrompt ? { AGENT_BENCH_FOLLOWUP_PROMPT: input.followupPrompt } : {}),
+      ...(input.buildPrompt ? { AGENT_BENCH_BUILD_PROMPT: input.buildPrompt } : {})
+    } : undefined,
     setupSnapshot: input.setupKey
       ? { key: input.setupKey, workflowPath: input.agentPath ?? null, modelId: input.model ?? null }
       : null
@@ -712,10 +721,11 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         throw new Error("Select at least one agent to run.");
       }
 
-      assertBatchCapacity(setups.length, tasks.length);
       taskPlan = tasks.map((task) => task.key);
       setupSummaries = summarizeSetups(setups, context.workspaceRoot);
-      jobs = setups.flatMap((setup) => tasks.map((task) => ({
+      const trials = Math.max(1, Math.min(5, Math.floor(Number(input.trials) || 1)));
+      assertBatchCapacity(setups.length * trials, tasks.length);
+      jobs = setups.flatMap((setup) => Array.from({ length: trials }, () => setup)).flatMap((setup) => tasks.map((task) => ({
         benchmarkKey,
         taskKey: task.key,
         agentPath: path.resolve(context.workspaceRoot, setup.agent.path),
@@ -725,7 +735,9 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         setupKey: setup.setupKey,
         model: setup.model,
         review: setup.review,
-        followupPrompt: setup.followupPrompt
+        followupPrompt: setup.followupPrompt,
+        buildPrompt: setup.buildPrompt,
+        env: setup.env
       })));
     }
 
@@ -741,7 +753,9 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
           providerApiKey,
           review: job.review,
           setupKey: job.setupKey,
-          followupPrompt: job.followupPrompt
+          followupPrompt: job.followupPrompt,
+          buildPrompt: job.buildPrompt,
+          env: job.env
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

@@ -429,7 +429,8 @@ program
       setups,
       judgeModel: opts.judgeModel,
       review: opts.judge === false ? "off" : "auto",
-      blindReview: opts.blindReview
+      blindReview: opts.blindReview,
+      trials: opts.trials ? Number(opts.trials) : 1
     }, dbPath);
 
     await reportBatch(batch, { benchmark: opts.benchmark, task: opts.task, setupKeys: uniqueModels, format: opts.format, out: opts.out, dbPath });
@@ -445,6 +446,7 @@ program
   .option("--judge-model <provider/model>", "One judge for every setup (default: AGENT_BENCH_JUDGE_MODEL)")
   .option("--no-judge", "Skip the LLM judge entirely and compare on objective signals only")
   .option("--blind-review <command>", "After all runs, rank anonymised workspaces with this reviewer command")
+  .option("--trials <n>", "Runs per setup, 1-5 (default 1). Use 3 when the result drives a decision")
   .option("--format <format>", "Also write an export: md | csv | json | html")
   .option("--out <path>", "File for --format (default: stdout)")
   .option("--db <path>", "Custom sqlite path")

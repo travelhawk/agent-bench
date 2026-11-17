@@ -127,6 +127,8 @@ export interface ResolvedBatchSetup {
   model?: string;
   review: "auto" | "off";
   followupPrompt?: string;
+  buildPrompt?: string;
+  env?: Record<string, string>;
 }
 
 function defaultSetupKey(agentName: string, model?: string): string {
@@ -153,9 +155,11 @@ export function resolveBatchSetups(workspaceRoot: string, input: unknown, fallba
     const label = readBoundedString(setup?.label, `setups[${index}].label`, INPUT_LIMITS.maxSetupLabelLength);
     const review = setup?.review === "off" ? "off" : setup?.review === "auto" ? "auto" : fallbackReview;
     const followupPrompt = readBoundedString(setup?.followupPrompt, `setups[${index}].followupPrompt`, INPUT_LIMITS.maxDescriptionLength);
+    const buildPrompt = readBoundedString(setup?.buildPrompt, `setups[${index}].buildPrompt`, INPUT_LIMITS.maxDescriptionLength);
+    const env = readSetupEnv(setup?.env, index);
     const agent = inspectAgentFile(workspaceRoot, agentPath);
 
-    const identity = `${agent.path}::${model ?? ""}::${label ?? ""}::${followupPrompt ?? ""}`;
+    const identity = `${agent.path}::${model ?? ""}::${label ?? ""}::${followupPrompt ?? ""}::${buildPrompt ?? ""}::${env ? JSON.stringify(env) : ""}`;
     if (seen.has(identity)) return;
     seen.add(identity);
 
@@ -164,7 +168,9 @@ export function resolveBatchSetups(workspaceRoot: string, input: unknown, fallba
       agent,
       model,
       review,
-      ...(followupPrompt ? { followupPrompt } : {})
+      ...(followupPrompt ? { followupPrompt } : {}),
+      ...(buildPrompt ? { buildPrompt } : {}),
+      ...(env ? { env } : {})
     });
   });
 
@@ -186,4 +192,17 @@ export function resolveBatchSetups(workspaceRoot: string, input: unknown, fallba
 /** Legacy `agents[] × model` form, expanded into the same setup shape. */
 export function setupsFromAgentList(agents: AgentRecord[], model: string | undefined, review: "auto" | "off"): ResolvedBatchSetup[] {
   return agents.map((agent) => ({ setupKey: defaultSetupKey(agent.name, model), agent, model, review }));
+}
+
+/** Per-setup runner env. Only AGENT_BENCH_* keys, so a setup cannot override PATH or auth. */
+function readSetupEnv(value: unknown, index: number): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error(`setups[${index}].env must be an object.`);
+  const env: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!/^AGENT_BENCH_[A-Z0-9_]+$/.test(key)) throw new Error(`setups[${index}].env: only AGENT_BENCH_* keys are allowed, got ${key}.`);
+    if (typeof raw !== "string" || raw.length > INPUT_LIMITS.maxDescriptionLength) throw new Error(`setups[${index}].env.${key} must be a short string.`);
+    env[key] = raw;
+  }
+  return Object.keys(env).length > 0 ? env : undefined;
 }

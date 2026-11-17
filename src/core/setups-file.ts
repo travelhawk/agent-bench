@@ -20,6 +20,8 @@ export function readSetupsFile(filePath: string, only?: string): BatchSetupInput
       label,
       model: typeof item.model === "string" ? item.model : null,
       followupPrompt: typeof item.followupPrompt === "string" ? item.followupPrompt : null,
+      buildPrompt: typeof item.buildPrompt === "string" ? item.buildPrompt : null,
+      env: item.env && typeof item.env === "object" && !Array.isArray(item.env) ? item.env as Record<string, string> : undefined,
       review: item.review === "off" ? "off" as const : item.review === "auto" ? "auto" as const : null
     };
   });

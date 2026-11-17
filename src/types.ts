@@ -291,6 +291,8 @@ export interface BatchSetupInput {
   review?: "auto" | "off" | null;
   /** Second prompt for runners that support it (claude-code: `claude -p --continue`). */
   followupPrompt?: string | null;
+  buildPrompt?: string | null;
+  env?: Record<string, string>;
 }
 
 export interface BatchSetupSummary {
