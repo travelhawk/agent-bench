@@ -14,7 +14,7 @@ import { normalizeSuiteMetadataInput, normalizeTaskMetadataInput } from "../benc
 import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesFromFiles } from "../benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
 import { createDb, initializeSchema } from "../db/schema";
-import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns, setBlindReview } from "../db/store";
+import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns, saveBlindReviewUsage, setBlindReview, sumBlindReviewUsageForRuns } from "../db/store";
 import { mapBlindRanking, prepareBlindReview, readBlindRankingFile } from "../core/blind";
 import { runSandboxedCommand } from "../runtime/sandbox";
 import {
@@ -847,6 +847,34 @@ export function readBlindUsageFile(rootDir: string): BlindReviewUsage | null {
   }
 }
 
+/** Stores the reviewer's spend with the batch so later exports can show it; never fails the batch. */
+function persistBlindUsage(context: ServiceContext, rootDir: string, taskKey: string, usage: BlindReviewUsage | null, runKeys: string[]): void {
+  try {
+    saveBlindReviewUsage(context.db, { reviewKey: path.basename(rootDir), taskKey, usage, runKeys });
+  } catch {
+    // Reporting only; the ranks are already stored.
+  }
+}
+
+/**
+ * Imports an earlier blind review folder (`blind-<stamp>-<task>/` with
+ * blind-key.json and usage.json) so runs reviewed before usage was persisted
+ * get their reviewer cost in exports. Returns the linked run count.
+ */
+export function importBlindReviewDir(rootDirInput: string, dbPathInput?: string): Promise<{ reviewKey: string; runKeys: string[]; usage: BlindReviewUsage | null }> {
+  return withContext((context) => {
+    const rootDir = path.resolve(rootDirInput);
+    const keyPath = path.join(rootDir, "blind-key.json");
+    if (!existsSync(keyPath)) throw new Error(`No blind-key.json in ${rootDir}.`);
+    const entries = JSON.parse(readFileSync(keyPath, "utf8")) as Array<{ runKey?: unknown }>;
+    const runKeys = entries.map((entry) => entry.runKey).filter((key): key is string => typeof key === "string" && Boolean(getRunByKey(context.db, key)));
+    const usage = readBlindUsageFile(rootDir);
+    const taskMatch = /^blind-.*?Z-(.+)$/.exec(path.basename(rootDir));
+    saveBlindReviewUsage(context.db, { reviewKey: path.basename(rootDir), taskKey: taskMatch?.[1] ?? null, usage, runKeys });
+    return { reviewKey: path.basename(rootDir), runKeys, usage };
+  }, dbPathInput);
+}
+
 /**
  * After every run of a batch: anonymise each completed workspace per task, run
  * the reviewer once, and store the ranks on the runs. A failing reviewer never
@@ -915,6 +943,7 @@ async function runBlindReviews(context: ServiceContext, input: {
       summary.error = error instanceof Error ? error.message : String(error);
       summary.usage ??= readBlindUsageFile(prepared.rootDir) ?? undefined;
     }
+    persistBlindUsage(context, prepared.rootDir, taskKey, summary.usage ?? null, prepared.entries.map((entry) => entry.runKey));
     summaries.push(summary);
   }
   return summaries;
@@ -1020,7 +1049,8 @@ export function exportComparison(input: ComparisonExportRequestInput = {}, dbPat
       taskKey: taskKey ?? null,
       title: readBoundedString(input.title, "title", INPUT_LIMITS.maxTitleLength),
       shareUrl: readBoundedString(input.shareUrl, "shareUrl", INPUT_LIMITS.maxDescriptionLength) ?? null,
-      blindReviewer: readBlindUsageInput(input.blindReviewer)
+      // The live batch passes its reviewer usage; otherwise read what was stored with the batch.
+      blindReviewer: readBlindUsageInput(input.blindReviewer) ?? sumBlindReviewUsageForRuns(context.db, matrix.runKeys ?? [])
     };
 
     return {

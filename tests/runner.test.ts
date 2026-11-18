@@ -81,7 +81,8 @@ test("runEvaluationInRuntime honors AGENT_BENCH_SCORE_PROFILE and folds quality 
     });
 
     assert.equal(result.scoreProfile, "craft");
-    assert.ok(result.qualityScore != null, "rules fallback should still produce a quality score");
+    // No judge: quality is n/a, never a constant heuristic number.
+    assert.equal(result.qualityScore, null, "rules fallback must not invent a quality score");
 
     // The stored total must reflect the craft weighting over its components,
     // including the quality component the default profiles ignore.
@@ -89,9 +90,10 @@ test("runEvaluationInRuntime honors AGENT_BENCH_SCORE_PROFILE and folds quality 
       profile: "craft",
       outcome: result.scores.outcome,
       process: result.scores.process,
-      review: result.scores.review,
+      // No judge ran, so there is no review component either.
+      review: undefined,
       efficiency: result.scores.efficiency,
-      quality: result.qualityScore ?? undefined
+      quality: undefined
     });
     // Recompute from the rounded stored components, so allow a small tolerance.
     assert.ok(Math.abs(result.scores.total - recomputed.total) <= 0.1,

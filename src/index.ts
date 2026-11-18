@@ -9,10 +9,10 @@ import { listBenchmarkSuitesFromFiles } from "./benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "./core/runner";
 import { createDb, initializeSchema } from "./db/schema";
 import { ensureProjectDirs, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath, resolvePackagedBenchmarksDir, resolvePackagedExamplesDir, TOOL_VERSION } from "./server/config";
-import { getBestScore, getRunByKey, insertRun, listRuns } from "./db/store";
+import { getBestScore, getRunByKey, insertRun, listRuns, sumBlindReviewUsageForRuns } from "./db/store";
 import { buildComparisonMatrix } from "./core/comparison";
 import { renderMatrixLines } from "./core/matrix-print";
-import { exportComparison, getComparisonMatrix, runBatch } from "./server/service";
+import { exportComparison, getComparisonMatrix, importBlindReviewDir, runBatch } from "./server/service";
 import { runDoctorChecks } from "./server/doctor";
 import { startUi } from "./ui/server";
 import { runTrapStep } from "./runtime/evaluator";
@@ -288,11 +288,24 @@ program
     const limit = Number(opts.limit);
     const runs = listRuns(db, Number.isFinite(limit) ? limit : 200);
     const matrix = buildComparisonMatrix(runs, opts.benchmark ? { benchmarkKey: opts.benchmark } : {});
+    const blindReviewer = sumBlindReviewUsageForRuns(db, matrix.runKeys ?? []);
 
-    for (const line of renderMatrixLines(matrix)) {
+    for (const line of renderMatrixLines(matrix, { blindReviewer })) {
       // eslint-disable-next-line no-console
       console.log(line);
     }
+  });
+
+program
+  .command("blind-import <dir>")
+  .description("Store the reviewer usage of an earlier blind review folder (blind-<stamp>-<task>) so exports show its cost")
+  .option("--db <path>", "Custom sqlite path")
+  .action(async (dir: string, opts) => {
+    const dbPath = resolveDbPath(cwd, opts.db);
+    ensureDbReady(dbPath).close();
+    const result = await importBlindReviewDir(dir, dbPath);
+    // eslint-disable-next-line no-console
+    console.log(`Linked blind review ${result.reviewKey} to ${result.runKeys.length} run(s)${result.usage ? ` ($${result.usage.costUsd.toFixed(2)})` : " (no usage.json)"}.`);
   });
 
 program

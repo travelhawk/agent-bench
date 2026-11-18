@@ -1366,18 +1366,23 @@ ${JSON.stringify(input.runnerEnv)}` : ""}`,
       }
     }
   } else {
-    const rulesReviewReason = sandbox.mode === "sandbox" ? `${assessment.reason} ${sandbox.reason}`.trim() : assessment.reason;
-    const rulesReviewScore = clampScore(assessment.reviewScore + (sandbox.mode === "sandbox" && sandbox.verifier?.exitCode === 0 ? 0.6 : 0));
-    const rulesQualityScore = sandbox.mode === "sandbox"
-      ? clampScore(sandbox.verifier?.exitCode === 0 ? 6.0 : 4.0)
-      : clampScore(assessment.reviewScore);
+    // No LLM judge: there is no review or quality signal. The old heuristic
+    // rated the agent markdown ("clear role or behavior contract ...") and
+    // stored a constant quality of 6.0, which ranked prompt wording instead of
+    // the built product. Only objective build signals are kept: the review
+    // slot mirrors the outcome score (runner exit, verifier, tests) and quality
+    // stays unset (n/a).
+    const rulesReviewReason = sandbox.mode === "sandbox"
+      ? `No LLM judge; objective build signals only. ${sandbox.reason}`.trim()
+      : "No LLM judge and no sandbox run; nothing objective to score.";
+    const rulesReviewScore = sandbox.mode === "sandbox" ? clampScore(outcomeScore) : 0;
     judge = {
       score: rulesReviewScore,
-      qualityScore: rulesQualityScore,
+      qualityScore: undefined,
       latencyMs: 1,
       totalTokens: 0,
-      rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: rulesQualityScore, reason: rulesReviewReason }),
-      reason: `${rulesReviewReason} (quality score is a low-confidence heuristic, not LLM-judged)`.trim(),
+      rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: null, reason: rulesReviewReason }),
+      reason: rulesReviewReason,
       mode: reviewDisabled ? "off" : "rules"
     };
   }
@@ -1405,7 +1410,9 @@ ${JSON.stringify(input.runnerEnv)}` : ""}`,
     profile: scoreProfile,
     outcome: outcomeScore,
     process: processScore,
-    review: judge.score,
+    // Rules/off mode has no review signal; leave it out so the total is
+    // driven by objective outcome + efficiency only.
+    review: apiKey ? judge.score : undefined,
     efficiency: efficiencyScore,
     quality: judge.qualityScore
   });

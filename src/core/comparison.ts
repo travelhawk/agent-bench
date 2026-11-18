@@ -7,6 +7,11 @@ import { RunRecord } from "../types";
  * in SQLite, so building or re-rendering a comparison never spends LLM tokens.
  */
 
+/** True when an LLM judge (fresh or cached) reviewed the run; rules/off runs carry no score or quality signal. */
+export function isJudgedRun(run: Pick<RunRecord, "reviewMode">): boolean {
+  return run.reviewMode !== "rules" && run.reviewMode !== "off";
+}
+
 export interface ComparisonTaskCell {
   taskKey: string;
   runCount: number;
@@ -96,6 +101,8 @@ export interface ComparisonMatrix {
   /** Every trap id seen in the compared runs, in first-seen order. */
   trapIds: string[];
   totals: ComparisonTotals;
+  /** Run keys aggregated into this matrix (lets exports look up blind-review usage). */
+  runKeys?: string[];
 }
 
 export interface ComparisonFilter {
@@ -228,9 +235,14 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
       setup.failedCount += 1;
     } else {
       setup.completedCount += 1;
-      sums.score += run.score;
-      sums.scored += 1;
-      if (run.qualityScore != null) {
+      // Without an LLM judge the stored score/quality are not product signals
+      // (the old rules mode rated the agent markdown and stored a constant
+      // quality), so they are left out and render as n/a.
+      if (isJudgedRun(run)) {
+        sums.score += run.score;
+        sums.scored += 1;
+      }
+      if (isJudgedRun(run) && run.qualityScore != null) {
         sums.quality += run.qualityScore;
         sums.qualityCount += 1;
       }
@@ -287,7 +299,7 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
     cell.runCount += 1;
     if (run.status === "failed") {
       cell.failedCount += 1;
-    } else {
+    } else if (isJudgedRun(run)) {
       cellSums.score += run.score;
       cellSums.scored += 1;
       cell.bestScore = cell.bestScore == null ? run.score : Math.max(cell.bestScore, run.score);
@@ -333,10 +345,18 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
   totals.judgeCostUsd = round2(totals.judgeCostUsd);
   totals.agentCostUsd = Number(totals.agentCostUsd.toFixed(4));
 
+  const trapRate = (setup: ComparisonSetup) => {
+    const totals = setupTrapTotals(setup);
+    return totals && totals.total > 0 ? totals.passed / totals.total : -1;
+  };
   const setups = [...setupsByKey.values()].sort((left, right) => {
     const leftScore = left.avgScore ?? -1;
     const rightScore = right.avgScore ?? -1;
     if (rightScore !== leftScore) return rightScore - leftScore;
+    if (trapRate(right) !== trapRate(left)) return trapRate(right) - trapRate(left);
+    const leftBlind = left.blindRank ?? Number.POSITIVE_INFINITY;
+    const rightBlind = right.blindRank ?? Number.POSITIVE_INFINITY;
+    if (leftBlind !== rightBlind) return leftBlind < rightBlind ? -1 : 1;
     return left.setupKey.localeCompare(right.setupKey);
   });
 
@@ -345,7 +365,8 @@ export function buildComparisonMatrix(runs: RunRecord[], filter: ComparisonFilte
     taskKeys: [...taskKeySet].sort(),
     benchmarkKeys: [...benchmarkKeySet].sort(),
     trapIds,
-    totals
+    totals,
+    runKeys: filtered.map((run) => run.runKey)
   };
 }
 
@@ -401,7 +422,7 @@ export function setupTrapTotals(setup: { traps: Record<string, ComparisonTrapCel
   return { passed, total };
 }
 
-/** True when no run of the setup got an LLM judge, so its score is only the rules heuristic. */
+/** True when no run of the setup got an LLM judge, so it has no score or quality (n/a). */
 export function isRulesOnlySetup(setup: { reviewModes: Record<string, number> }): boolean {
   const modes = Object.entries(setup.reviewModes).filter(([, count]) => count > 0).map(([mode]) => mode);
   return modes.length > 0 && modes.every((mode) => mode === "rules" || mode === "off");
@@ -414,8 +435,6 @@ export interface HeadlineWinners {
   blindRank: { setupKeys: string[]; rank: number } | null;
   /** One-line verdict text (without the "Verdict:" prefix), null when neither signal exists. */
   verdict: string | null;
-  /** Score of at least one scored setup comes from rules only. */
-  scoreIsHeuristic: boolean;
   /** Every setup with a quality has the same quality, so "best quality" means nothing. */
   qualityAllEqual: boolean;
 }
@@ -463,13 +482,11 @@ export function buildHeadlineWinners(
     verdict = blindWinner ? `${blindWinner} (best blind rank; no traps)` : `tie on blind rank between ${joinKeys(blindRank.setupKeys)}; no traps`;
   }
 
-  const scored = setups.filter((setup) => setup.avgScore != null);
   const qualities = setups.filter((setup) => setup.avgQuality != null).map((setup) => setup.avgQuality!.toFixed(2));
   return {
     traps,
     blindRank,
     verdict,
-    scoreIsHeuristic: scored.some((setup) => isRulesOnlySetup(setup)),
     qualityAllEqual: qualities.length > 0 && new Set(qualities).size === 1
   };
 }

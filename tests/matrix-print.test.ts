@@ -126,7 +126,7 @@ test("renderMatrixWinners picks the best per metric, not the best overall", () =
 
   // The slow, expensive model wins on quality; the cheap one wins on cost and
   // speed. A single "winner" line would hide exactly that trade-off.
-  assert.match(winners, /Best score:\s+anthropic\/claude-opus-5/);
+  assert.match(winners, /Best judge score:\s+anthropic\/claude-opus-5/);
   assert.match(winners, /Best tests:\s+anthropic\/claude-opus-5/);
   assert.match(winners, /Fastest:\s+anthropic\/claude-sonnet-5/);
   assert.match(winners, /Fewest tokens:\s+anthropic\/claude-sonnet-5/);
@@ -166,7 +166,7 @@ test("renderMatrixLines prints a model-labelled setup once, not twice", () => {
 
   assert.doesNotMatch(text, /claude-opus-5 \u00b7 anthropic\/claude-opus-5/);
   assert.match(text, /^anthropic\/claude-opus-5$/m);
-  assert.match(text, /Best score:\s+anthropic\/claude-opus-5 \(9\.00\)/);
+  assert.match(text, /Best judge score:\s+anthropic\/claude-opus-5 \(9\.00\)/);
 });
 
 test("renderMatrixLines reports failures and can drop the winners block", () => {
@@ -186,8 +186,8 @@ test("renderMatrixLines reports failures and can drop the winners block", () => 
 
   const full = renderMatrixLines(matrix).join("\n");
   assert.match(full, /\+1 failed/);
-  assert.match(full, /Best score:/);
+  assert.match(full, /Best judge score:/);
 
   const bare = renderMatrixLines(matrix, { winners: false }).join("\n");
-  assert.doesNotMatch(bare, /Best score:/);
+  assert.doesNotMatch(bare, /Best judge score:/);
 });

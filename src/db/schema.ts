@@ -130,6 +130,21 @@ export function initializeSchema(db: Db): void {
   addColumnIfMissing(db, "runs", "trap_results_json", "TEXT");
   addColumnIfMissing(db, "runs", "blind_rank", "INTEGER");
   addColumnIfMissing(db, "runs", "blind_notes", "TEXT");
+  addColumnIfMissing(db, "runs", "blind_review_key", "TEXT");
+
+  // One row per blind review (one reviewer call per task of a batch): what the
+  // reviewer spent, so exports long after the batch can still show it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS blind_reviews (
+      review_key TEXT PRIMARY KEY,
+      task_key TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+  `);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

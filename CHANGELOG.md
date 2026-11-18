@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed a fake quality score without a judge: rules/`--no-judge` runs stored a constant quality 6.00 and a "rules score" that rated the agent markdown wording. Quality and judge score are now `n/a` in every view (stored old values of rules runs are ignored), the rules-mode total uses only objective build signals, "Rules score" is gone from the winners, and setups without a judge are ordered by traps, then blind rank
+- Fixed the blind reviewer cost missing in `export` and `matrix`: reviewer usage is stored per review (`blind_reviews` table, `runs.blind_review_key`) and counted in batch totals on every export path. `agent-bench blind-import <blind-folder>` backfills older reviews
 - Fixed `compare-setups --trials n` running each setup only once: the option was parsed but never passed to the batch. Trials now work on `compare-setups` and `compare-models`; the comparison adds a metrics block per setup (wall time, agent input/output tokens, agent cost as avg with min-max) and batch totals including the blind reviewer's cost
 - Fixed every trap ending `unknown` when a build left a server on port 4173: the trap command now gets a free port in `AGENT_BENCH_TRAP_PORT`, leftover child processes of runner/verify/trap commands are killed, and a trap command that dies before any test ran marks traps `error` with the first output line as a footnote
 - Fixed the batch dying silently during blind review: the default reviewer ran `taskkill /IM node.exe`, which also killed agent-bench. The reviewer now denies name-based kills, writes `usage.json`, and a failing review never costs the batch its report. Top-level CLI errors now always print message and stack

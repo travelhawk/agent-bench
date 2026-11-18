@@ -1,5 +1,5 @@
 import { Db } from "./schema";
-import { RunInput, RunRecord, TrapResult } from "../types";
+import { BlindReviewUsage, RunInput, RunRecord, TrapResult } from "../types";
 
 export interface DashboardSummary {
   totalRuns: number;
@@ -93,6 +93,64 @@ export function getRunByKey(db: Db, runKey: string): RunRecord | null {
 /** Stores the blind reviewer's verdict on an already persisted run. */
 export function setBlindReview(db: Db, runKey: string, rank: number | null, notes: string | null): void {
   db.prepare(`UPDATE runs SET blind_rank = ?, blind_notes = ? WHERE run_key = ?`).run(rank, notes, runKey);
+}
+
+/** Records (or replaces) what one blind review spent and links it to the reviewed runs. */
+export function saveBlindReviewUsage(db: Db, input: {
+  reviewKey: string;
+  taskKey: string | null;
+  usage: BlindReviewUsage | null;
+  runKeys: string[];
+}): void {
+  const usage = input.usage ?? { inputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0 };
+  db.prepare(`
+    INSERT INTO blind_reviews (review_key, task_key, input_tokens, output_tokens, cost_usd, duration_ms, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(review_key) DO UPDATE SET
+      task_key = excluded.task_key,
+      input_tokens = excluded.input_tokens,
+      output_tokens = excluded.output_tokens,
+      cost_usd = excluded.cost_usd,
+      duration_ms = excluded.duration_ms
+  `).run(
+    input.reviewKey,
+    input.taskKey,
+    Math.round(usage.inputTokens),
+    Math.round(usage.outputTokens),
+    usage.costUsd,
+    Math.round(usage.durationMs),
+    new Date().toISOString()
+  );
+  const link = db.prepare(`UPDATE runs SET blind_review_key = ? WHERE run_key = ?`);
+  for (const runKey of input.runKeys) link.run(input.reviewKey, runKey);
+}
+
+/**
+ * Sums the blind reviews that reviewed any of these runs (each review counted
+ * once). Null when none of the runs was blind-reviewed with stored usage.
+ */
+export function sumBlindReviewUsageForRuns(db: Db, runKeys: string[]): BlindReviewUsage | null {
+  if (runKeys.length === 0) return null;
+  const reviewKeys = new Set<string>();
+  const lookup = db.prepare(`SELECT blind_review_key FROM runs WHERE run_key = ?`);
+  for (const runKey of runKeys) {
+    const row = lookup.get(runKey) as { blind_review_key?: unknown } | undefined;
+    if (row?.blind_review_key) reviewKeys.add(String(row.blind_review_key));
+  }
+  if (reviewKeys.size === 0) return null;
+  const read = db.prepare(`SELECT input_tokens, output_tokens, cost_usd, duration_ms FROM blind_reviews WHERE review_key = ?`);
+  const total: BlindReviewUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0 };
+  let found = 0;
+  for (const key of reviewKeys) {
+    const row = read.get(key) as Record<string, unknown> | undefined;
+    if (!row) continue;
+    found += 1;
+    total.inputTokens += Number(row.input_tokens ?? 0);
+    total.outputTokens += Number(row.output_tokens ?? 0);
+    total.costUsd += Number(row.cost_usd ?? 0);
+    total.durationMs += Number(row.duration_ms ?? 0);
+  }
+  return found > 0 ? total : null;
 }
 
 function parseTrapResults(value: unknown): TrapResult[] {

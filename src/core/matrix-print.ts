@@ -1,4 +1,4 @@
-import { buildHeadlineWinners, ComparisonMatrix, formatBlindRank, formatTrapCell, isRulesOnlySetup, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { buildHeadlineWinners, ComparisonMatrix, formatBlindRank, formatTrapCell, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
 import { BlindReviewerUsage, renderMetricsLines } from "./metrics-block";
 
 /**
@@ -74,9 +74,7 @@ export function renderMatrixWinners(matrix: ComparisonMatrix): string[] {
 
   const topScore = best(scored, (setup) => setup.avgScore ?? 0, "high");
   if (topScore) {
-    lines.push(headline.scoreIsHeuristic
-      ? `Rules score (heuristic): ${label(topScore)} (${num(topScore.avgScore)})`
-      : `Best score:    ${label(topScore)} (${num(topScore.avgScore)})`);
+    lines.push(`Best judge score: ${label(topScore)} (${num(topScore.avgScore)})`);
   }
   const topQuality = best(matrix.setups.filter((setup) => setup.avgQuality != null), (setup) => setup.avgQuality ?? 0, "high");
   if (topQuality && !headline.qualityAllEqual) lines.push(`Best quality:  ${label(topQuality)} (${num(topQuality.avgQuality)})`);
@@ -114,7 +112,7 @@ export function renderMatrixLines(matrix: ComparisonMatrix, options: { winners?:
 
     lines.push(setupLabel(setup));
     lines.push(
-      `  ${isRulesOnlySetup(setup) ? "rules score (heuristic)" : "score"} ${scoreBar(setup.avgScore)} ${num(setup.avgScore)}`
+      `  judge score ${setup.avgScore != null ? `${scoreBar(setup.avgScore)} ` : ""}${num(setup.avgScore)}`
       + ` | quality ${num(setup.avgQuality)}`
       + ` | tests ${tests}`
       + ` | avg ${formatDurationMs(setup.avgDurationMs)}`

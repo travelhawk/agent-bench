@@ -1,4 +1,4 @@
-import { buildHeadlineWinners, ComparisonMatrix, ComparisonSetup, ComparisonSetupMetrics, ComparisonTrapCell, formatBlindRank, formatTrapCell, isRulesOnlySetup, setupTrapTotals, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { buildHeadlineWinners, ComparisonMatrix, ComparisonSetup, ComparisonSetupMetrics, ComparisonTrapCell, formatBlindRank, formatTrapCell, setupTrapTotals, NO_MODEL_LABEL, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
 import { BatchTotals, BlindReviewerUsage, buildBatchTotals, buildMetricsRows, formatBatchTotals } from "./metrics-block";
 
 /**
@@ -52,8 +52,6 @@ export interface ComparisonExportRow {
   totalCostUsd: number;
   /** `totalCostUsd / runCount`. */
   avgCostUsd: number;
-  /** No LLM judge for any run: the score is the rules heuristic only. */
-  scoreIsHeuristic: boolean;
   trapsPassed: number | null;
   trapsTotal: number | null;
   runCount: number;
@@ -77,9 +75,7 @@ export interface ComparisonExportWinners {
   /** Setup key(s) with the lowest average blind rank; ties joined with " = ". */
   blindRank: string | null;
   blindRankValue: number | null;
-  /** True when at least one scored setup was only scored by the rules heuristic (no LLM judge). */
-  scoreIsHeuristic: boolean;
-  /** Top score (a rules heuristic when `scoreIsHeuristic`). */
+  /** Top judge score; null when no LLM judge ran (rules/no-judge runs have no score). */
   score: string | null;
   /** Null when every setup has the same quality. */
   quality: string | null;
@@ -132,12 +128,12 @@ function testPassRate(setup: ComparisonSetup): number | null {
   return setup.testsTotal > 0 ? Number((setup.testsPassed / setup.testsTotal).toFixed(4)) : null;
 }
 
-/** Label/value pairs for the summary list, traps and blind rank first; never calls a heuristic "Best score". */
+/** Label/value pairs for the summary list, traps and blind rank first; a score only when an LLM judge ran. */
 export function headlineWinnerEntries(winners: ComparisonExportWinners): Array<[string, string]> {
   const entries: Array<[string, string]> = [];
   if (winners.traps) entries.push(["Most traps passed", `${winners.traps} (${winners.trapsPassed}/${winners.trapsTotal})`]);
   if (winners.blindRank && winners.blindRankValue != null) entries.push(["Best blind rank", `${winners.blindRank} (${formatBlindRank(winners.blindRankValue)})`]);
-  if (winners.score) entries.push([winners.scoreIsHeuristic ? "Rules score (heuristic)" : "Best score", winners.score]);
+  if (winners.score) entries.push(["Best judge score", winners.score]);
   return entries;
 }
 
@@ -167,7 +163,6 @@ export function buildComparisonWinners(matrix: ComparisonMatrix): ComparisonExpo
     trapsTotal: headline.traps?.total ?? null,
     blindRank: headline.blindRank ? headline.blindRank.setupKeys.join(" = ") : null,
     blindRankValue: headline.blindRank?.rank ?? null,
-    scoreIsHeuristic: headline.scoreIsHeuristic,
     score: pickWinner(matrix.setups, (s) => s.avgScore != null, (a, b) => a.avgScore! > b.avgScore!),
     quality: headline.qualityAllEqual
       ? null
@@ -204,7 +199,6 @@ export function buildComparisonExport(matrix: ComparisonMatrix, meta: Comparison
       judgeTokens: setup.judgeTokens,
       totalCostUsd: totalCost(setup),
       avgCostUsd: avgCost(setup),
-      scoreIsHeuristic: isRulesOnlySetup(setup),
       trapsPassed: setupTrapTotals(setup)?.passed ?? null,
       trapsTotal: setupTrapTotals(setup)?.total ?? null,
       runCount: setup.runCount,
@@ -290,8 +284,7 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
   }
 
   lines.push("## Leaderboard", "");
-  const heuristic = payload.winners.scoreIsHeuristic;
-  lines.push(`| # | Setup | ${heuristic ? "Rules score (heuristic)" : "Score"} | Quality | Tests | Avg time | Agent tokens | Judge tokens | Cost (total over runs) | Runs |`);
+  lines.push(`| # | Setup | Judge score | Quality | Tests | Avg time | Agent tokens | Judge tokens | Cost (total over runs) | Runs |`);
   lines.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
   for (const row of payload.setups) {
     const runs = `${row.completedCount}${row.failedCount > 0 ? ` (+${row.failedCount} failed)` : ""}`;
@@ -535,7 +528,7 @@ footer{color:var(--muted);font-size:.8rem;text-align:center}
     const isBest = (key: string | null) => key === row.setupKey;
     return `<tr>
 <td class="setup"><strong>${escapeHtml(`${medal(row.rank)} ${setupDisplayName(row)}`)}</strong>${setupModelSuffix(row) ? `<span class="chip">${escapeHtml(setupModelSuffix(row)!)}</span>` : ""}</td>
-${cell(formatScore(row.avgScore), row.avgScore, 10, false, !payload.winners.scoreIsHeuristic && isBest(payload.winners.score))}
+${cell(formatScore(row.avgScore), row.avgScore, 10, false, isBest(payload.winners.score))}
 ${cell(formatScore(row.avgQuality), row.avgQuality, 10, false, isBest(payload.winners.quality))}
 ${cell(formatTests(row.testsPassed, row.testsTotal), row.testPassRate != null ? row.testPassRate * 10 : null, 10, false, isBest(payload.winners.tests))}
 ${cell(formatDuration(row.avgDurationMs), row.avgDurationMs, maxDuration, true, isBest(payload.winners.speed))}
@@ -618,7 +611,7 @@ ${blindRows.map((row) => `<tr><td class="num">${row.blindRank}</td><td>${escapeH
 ${payload.setups.length === 0 ? empty : `<section class="panel">
 <p class="eyebrow">Side by side</p><h2>Leaderboard</h2>
 <div class="scroll"><table>
-<thead><tr><th>Setup (agent × model)</th><th>${payload.winners.scoreIsHeuristic ? "Rules score (heuristic)" : "Score"}</th><th>Quality</th><th>Tests</th><th>Avg time</th><th>Agent tokens</th><th>Judge tokens</th><th>Cost (total over runs)</th><th>Runs</th></tr></thead>
+<thead><tr><th>Setup (agent × model)</th><th>Judge score</th><th>Quality</th><th>Tests</th><th>Avg time</th><th>Agent tokens</th><th>Judge tokens</th><th>Cost (total over runs)</th><th>Runs</th></tr></thead>
 <tbody>
 ${bodyRows}
 </tbody></table></div>
