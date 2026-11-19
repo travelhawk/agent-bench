@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -98,25 +98,30 @@ test("runSandboxedCommand can execute inside the docker provider when available"
 
 test("stopActiveChildren kills a running detached command (used by the SIGINT/SIGTERM handler)", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "agent-bench-sigint-"));
+  const previousProvider = process.env.AGENT_BENCH_SANDBOX_PROVIDER;
+  process.env.AGENT_BENCH_SANDBOX_PROVIDER = "process";
   try {
+    writeFileSync(path.join(root, "hold.js"), "setTimeout(() => {}, 60000);\n");
     const started = Date.now();
     const pending = runSandboxedCommand({
-      command: `node -e "setTimeout(() => {}, 60000)"`,
+      command: "node hold.js",
       cwd: root,
       workspaceDir: root,
       artifactsDir: root,
       timeoutMs: 60000,
       allowNetwork: false,
       label: "sigint",
-      killLeftovers: true,
-      env: { AGENT_BENCH_SANDBOX_PROVIDER: "process" }
+      killLeftovers: true
     });
     await new Promise((resolve) => setTimeout(resolve, 2500));
     await stopActiveChildren();
     const result = await pending;
     assert.ok(Date.now() - started < 30000, "command should end well before its timeout");
     assert.equal(result.timedOut, false);
+    assert.equal(result.provider, "process");
   } finally {
+    if (previousProvider === undefined) delete process.env.AGENT_BENCH_SANDBOX_PROVIDER;
+    else process.env.AGENT_BENCH_SANDBOX_PROVIDER = previousProvider;
     rmSync(root, { recursive: true, force: true });
   }
 });
