@@ -153,3 +153,12 @@ test("a setup with no passed trap is never the trap winner; errors count as not 
   assert.equal(headline.traps, null);
   assert.equal(headline.verdict, null);
 });
+
+test("blind-review notes escape pipes in the Markdown table", () => {
+  const matrix = buildComparisonMatrix([
+    run("a1", "a", { blindRank: 1, blindNotes: "fast | clean" }),
+    run("b1", "b", { blindRank: 2, blindNotes: "slow" })
+  ], {});
+  const markdown = renderComparisonMarkdown(matrix, { generatedAt: "2026-11-17T10:00:00.000Z" } as Parameters<typeof buildComparisonExport>[1]);
+  assert.ok(markdown.includes("fast \\| clean"), markdown);
+});

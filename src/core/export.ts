@@ -350,7 +350,7 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
     lines.push("## Blind review", "");
     lines.push("| Rank | Setup | Notes |", "| ---: | --- | --- |");
     for (const row of blindRanked) {
-      lines.push(`| ${row.blindRank} | ${setupDisplayName(row)} | ${(row.blindNotes ?? "").replace(/\s+/g, " ").replace(/\|/g, "\|")} |`);
+      lines.push(`| ${row.blindRank} | ${setupDisplayName(row)} | ${(row.blindNotes ?? "").replace(/\s+/g, " ").replace(/\|/g, "\\|")} |`);
     }
     lines.push("");
   }
