@@ -490,6 +490,28 @@ function buildDockerInvocation(input: {
   };
 }
 
+/** Process trees of running `killLeftovers` commands, reaped on Ctrl+C / SIGTERM. */
+const activeChildren = new Set<() => Promise<unknown>>();
+let signalHandlersInstalled = false;
+
+/**
+ * Kills every running `killLeftovers` command: the process group on POSIX
+ * (children run `detached` and would survive Ctrl+C), the tracked tree on Windows.
+ */
+export async function stopActiveChildren(): Promise<void> {
+  await Promise.all([...activeChildren].map((stop) => stop().catch(() => undefined)));
+}
+
+function installSignalHandlers(): void {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      void stopActiveChildren().finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
+    });
+  }
+}
+
 export async function runSandboxedCommand(input: RunSandboxedCommandInput): Promise<SandboxCommandResult> {
   const provider = resolveSandboxProvider(input.provider, Boolean(input.strictProvider));
   const workspaceDir = resolveRealDir(input.workspaceDir, true);
@@ -597,8 +619,13 @@ export async function runSandboxedCommand(input: RunSandboxedCommandInput): Prom
     let leftovers: Promise<number[]> | undefined;
     const reapLeftovers = () => {
       leftovers ??= tree ? tree.stop() : Promise.resolve([]);
+      if (tree) activeChildren.delete(reapLeftovers);
       return leftovers;
     };
+    if (tree) {
+      activeChildren.add(reapLeftovers);
+      installSignalHandlers();
+    }
     let finished = false;
     const finish = async (code: number | null) => {
       if (finished) return;

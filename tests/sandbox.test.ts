@@ -8,6 +8,7 @@ import {
   resolveCommandLookupSpec,
   resolveShellSpec,
   runSandboxedCommand,
+  stopActiveChildren,
   supportsDockerSandbox
 } from "../src/runtime/sandbox";
 
@@ -92,5 +93,30 @@ test("runSandboxedCommand can execute inside the docker provider when available"
     }
 
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("stopActiveChildren kills a running detached command (used by the SIGINT/SIGTERM handler)", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "agent-bench-sigint-"));
+  try {
+    const started = Date.now();
+    const pending = runSandboxedCommand({
+      command: `node -e "setTimeout(() => {}, 60000)"`,
+      cwd: root,
+      workspaceDir: root,
+      artifactsDir: root,
+      timeoutMs: 60000,
+      allowNetwork: false,
+      label: "sigint",
+      killLeftovers: true,
+      env: { AGENT_BENCH_SANDBOX_PROVIDER: "process" }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await stopActiveChildren();
+    const result = await pending;
+    assert.ok(Date.now() - started < 30000, "command should end well before its timeout");
+    assert.equal(result.timedOut, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
