@@ -482,7 +482,11 @@ export function agentRequiresNetwork(agentMarkdown: string): boolean {
   return value === "yes" || value === "true";
 }
 
-function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string }): string {
+/**
+ * Judge cache key. `evidence` is the build output (diff + sandbox result), so
+ * a trial with a different result never reuses another trial's score.
+ */
+export function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string; evidence?: string }): string {
   return createHash("sha256")
     .update(input.benchmarkKey)
     .update("\n")
@@ -495,6 +499,8 @@ function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; m
     .update(input.taskContext)
     .update("\n")
     .update(input.agentMd)
+    .update("\n")
+    .update(createHash("sha256").update(input.evidence ?? "").digest("hex"))
     .digest("hex");
 }
 
@@ -1324,7 +1330,18 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     taskContext,
     agentMd: `${material.previewMarkdown}${input.runnerEnv ? `
 ${JSON.stringify(input.runnerEnv)}` : ""}`,
-    judgeMode
+    judgeMode,
+    evidence: JSON.stringify({
+      diffPatch: sandbox.diffPatch ?? null,
+      mode: sandbox.mode,
+      outcomeScore: sandbox.outcomeScore,
+      processScore: sandbox.processScore,
+      objectiveChecks: sandbox.objectiveChecks,
+      testMetrics: sandbox.testMetrics,
+      diff: sandbox.diff,
+      runner: sandbox.runner ? { exitCode: sandbox.runner.exitCode, timedOut: sandbox.runner.timedOut } : null,
+      verifier: sandbox.verifier ? { exitCode: sandbox.verifier.exitCode, timedOut: sandbox.verifier.timedOut } : null
+    })
   });
   const cachePath = cachePathFromArtifactsRoot(input.artifactsRoot);
   const judgeCache = loadJudgeCache(cachePath);
