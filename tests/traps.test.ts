@@ -9,7 +9,7 @@ import { renderComparison } from "../src/core/export";
 import { renderTrapMatrixLines } from "../src/core/matrix-print";
 import { readSetupsFile } from "../src/core/setups-file";
 import { agentEnvPassthrough } from "../src/runtime/evaluator";
-import { mapTrapResults, parseTrapsSection, readTrapTestCases } from "../src/runtime/traps";
+import { assertNoUserTraps, installTraps, mapTrapResults, parseTrapsSection, readTrapTestCases } from "../src/runtime/traps";
 import { RunRecord } from "../src/types";
 
 test("parseTrapsSection reads '- id: description' lines and skips noise and duplicates", () => {
@@ -148,4 +148,19 @@ test("agentEnvPassthrough only accepts plain env var names", () => {
     ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
   );
   assert.deepEqual(agentEnvPassthrough("# none"), []);
+});
+
+test("assertNoUserTraps refuses a user traps/ folder but accepts one agent-bench installed", () => {
+  const source = mkdtempSync(path.join(os.tmpdir(), "agent-bench-trapsrc-"));
+  writeFileSync(path.join(source, "a.spec.ts"), "// trap");
+  const userWs = mkdtempSync(path.join(os.tmpdir(), "agent-bench-userws-"));
+  mkdirSync(path.join(userWs, "traps"));
+  writeFileSync(path.join(userWs, "traps", "mine.txt"), "keep me");
+  assert.throws(() => assertNoUserTraps(userWs), /traps\/ already exists/);
+  assert.equal(readFileSync(path.join(userWs, "traps", "mine.txt"), "utf8"), "keep me");
+
+  const ownWs = mkdtempSync(path.join(os.tmpdir(), "agent-bench-ownws-"));
+  installTraps(source, ownWs);
+  assert.doesNotThrow(() => assertNoUserTraps(ownWs));
+  assert.doesNotThrow(() => assertNoUserTraps(mkdtempSync(path.join(os.tmpdir(), "agent-bench-emptyws-"))));
 });

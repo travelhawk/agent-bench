@@ -120,6 +120,20 @@ export function failAllTraps(traps: BenchmarkTrap[]): TrapResult[] {
   return traps.map((trap) => ({ id: trap.id, description: trap.description, status: "fail" }));
 }
 
+/** Marker file that says a `traps/` folder was created by agent-bench. */
+export const TRAPS_MARKER_FILE = ".agent-bench-traps";
+
+/**
+ * Throws when `<workspace>/traps` exists and agent-bench did not create it,
+ * so a dry run on a user's folder never deletes the user's own `traps/`.
+ */
+export function assertNoUserTraps(workspaceDir: string): void {
+  const target = path.join(workspaceDir, TRAPS_WORKSPACE_DIR);
+  if (existsSync(target) && !existsSync(path.join(target, TRAPS_MARKER_FILE))) {
+    throw new Error(`${target}: traps/ already exists and was not created by agent-bench. Rename or move it, then run again.`);
+  }
+}
+
 /** Copies the holdout files into `<workspace>/traps` (replacing anything the agent put there). */
 export function installTraps(trapsSourceDir: string, workspaceDir: string): string {
   if (!existsSync(trapsSourceDir)) {
@@ -129,6 +143,7 @@ export function installTraps(trapsSourceDir: string, workspaceDir: string): stri
   rmSync(target, { recursive: true, force: true });
   rmSync(path.join(workspaceDir, TRAP_RESULTS_FILE), { force: true });
   cpSync(trapsSourceDir, target, { recursive: true });
+  writeFileSync(path.join(target, TRAPS_MARKER_FILE), "Created by agent-bench; safe to delete.\n");
   return target;
 }
 

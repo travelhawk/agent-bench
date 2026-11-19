@@ -17,7 +17,7 @@ import { runDoctorChecks } from "./server/doctor";
 import { startUi } from "./ui/server";
 import { runTrapStep } from "./runtime/evaluator";
 import { runSandboxedCommand } from "./runtime/sandbox";
-import { TRAP_RESULTS_FILE, TRAPS_WORKSPACE_DIR } from "./runtime/traps";
+import { assertNoUserTraps, TRAP_RESULTS_FILE, TRAPS_WORKSPACE_DIR } from "./runtime/traps";
 import { BatchRunResult } from "./types";
 import { readSetupsFile } from "./core/setups-file";
 import { formatCliError, parseTrialsOption } from "./core/cli-helpers";
@@ -518,6 +518,8 @@ program
     }
     const workspaceDir = path.resolve(cwd, opts.workspace);
     if (!existsSync(workspaceDir)) throw new Error(`Workspace not found: ${workspaceDir}`);
+    // Never delete a traps/ folder that belongs to the user.
+    assertNoUserTraps(workspaceDir);
     const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "agent-bench-traps-"));
 
     const { results, runner, port } = await runTrapStep({
