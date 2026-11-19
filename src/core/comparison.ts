@@ -473,6 +473,9 @@ export function buildHeadlineWinners(
   if (traps && blindRank) {
     if (trapWinner && trapWinner === blindWinner) {
       verdict = `${trapWinner} (most traps passed and best blind rank)`;
+    } else if (!trapWinner && blindWinner && traps.setupKeys.includes(blindWinner)) {
+      const others = traps.setupKeys.filter((key) => key !== blindWinner);
+      verdict = `${blindWinner} (tied on traps with ${joinKeys(others)}, best blind rank)`;
     } else {
       verdict = `no clear winner - traps favour ${joinKeys(traps.setupKeys)}, blind review favours ${joinKeys(blindRank.setupKeys)}`;
     }

@@ -135,3 +135,12 @@ test("guard: identical agent file, different traps - never a quality tie, worse 
   const judged = buildComparisonMatrix(runs.map((entry) => ({ ...entry, reviewMode: "gateway" as const })), {});
   assert.equal(judged.setups.find((setup) => setup.setupKey === "good")!.avgQuality, 6);
 });
+
+test("trap tie broken by the unique blind winner names it as verdict", () => {
+  const headline = buildHeadlineWinners([
+    { setupKey: "a", traps: { t1: { passed: 2, failed: 1, unknown: 0 } }, blindRank: 2, reviewModes: { rules: 3 }, avgScore: 9, avgQuality: 6 },
+    { setupKey: "b", traps: { t1: { passed: 2, failed: 1, unknown: 0 } }, blindRank: 1, reviewModes: { rules: 3 }, avgScore: 8, avgQuality: 6 },
+    { setupKey: "c", traps: { t1: { passed: 0, failed: 3, unknown: 0 } }, blindRank: 3, reviewModes: { rules: 3 }, avgScore: 8, avgQuality: 6 }
+  ]);
+  assert.match(headline.verdict ?? "", /^b \(tied on traps with a, best blind rank\)/);
+});
