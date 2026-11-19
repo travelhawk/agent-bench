@@ -87,31 +87,57 @@ async function listProcesses(): Promise<ProcessRow[]> {
 }
 
 /**
+ * Picks the pids `stop()` may kill. `known` maps every pid seen during the run
+ * to its creation time. A pid counts only while the live process still has
+ * that creation time: Windows reuses pids, and a reused pid must neither be
+ * killed nor used as a tree root. An unseen root counts only when it started
+ * after the run began.
+ */
+export function selectKillTargets(rows: ProcessRow[], rootPid: number, known: Map<number, number | null>, sinceMs: number): number[] {
+  const live = new Map(rows.map((row) => [row.pid, row]));
+  const same = (pid: number) => {
+    const row = live.get(pid);
+    if (!row) return false;
+    if (known.has(pid)) return known.get(pid) === row.startedAt;
+    return row.startedAt != null && row.startedAt + 1000 >= sinceMs;
+  };
+  const roots = [rootPid, ...known.keys()].filter((pid, index, all) => all.indexOf(pid) === index && same(pid));
+  const targets = new Set<number>([...roots, ...collectDescendants(rows, roots, sinceMs)]);
+  targets.delete(process.pid);
+  return [...targets];
+}
+
+/**
  * Watches the process tree of a running command, so an intermediate parent
  * that exits early (npm/npx/a spawner) does not hide the server it started.
  * `stop()` kills everything still alive that descends from the root or from
- * any process seen in the tree. Best effort: never throws.
+ * any process seen in the tree, guarded by creation time against pid reuse.
+ * On POSIX only the process group is killed. Best effort: never throws.
  */
 export function watchProcessTree(rootPid: number | undefined, sinceMs: number, intervalMs = 3000): { stop: () => Promise<number[]> } {
-  const known = new Set<number>();
+  const known = new Map<number, number | null>();
+  const isWindows = process.platform === "win32";
   let timer: NodeJS.Timeout | undefined;
   let busy = false;
   const snapshot = async () => {
     if (!rootPid || busy) return;
     busy = true;
     try {
-      for (const pid of collectDescendants(await listProcesses(), [rootPid, ...known], sinceMs)) known.add(pid);
+      const rows = await listProcesses();
+      for (const pid of selectKillTargets(rows, rootPid, known, sinceMs)) {
+        if (!known.has(pid)) known.set(pid, rows.find((row) => row.pid === pid)?.startedAt ?? null);
+      }
     } catch {
       // ignore
     } finally {
       busy = false;
     }
   };
-  if (rootPid) {
+  if (rootPid && isWindows) {
     timer = setInterval(() => void snapshot(), intervalMs);
     timer.unref();
     // Early snapshots catch short-lived launchers (npx, npm run) before they exit.
-    for (const delay of [200, 700, 1500]) {
+    for (const delay of [0, 200, 700, 1500]) {
       if (delay < intervalMs) setTimeout(() => void snapshot(), delay).unref();
     }
   }
@@ -119,21 +145,16 @@ export function watchProcessTree(rootPid: number | undefined, sinceMs: number, i
     stop: async () => {
       if (timer) clearInterval(timer);
       if (!rootPid) return [];
-      try {
-        if (process.platform !== "win32") {
-          try {
-            process.kill(-rootPid, "SIGKILL");
-          } catch {
-            // group already gone
-          }
+      if (!isWindows) {
+        try {
+          process.kill(-rootPid, "SIGKILL");
+        } catch {
+          // group already gone
         }
-        const rows = await listProcesses();
-        const alive = new Set(rows.map((row) => row.pid));
-        const targets = new Set<number>([
-          ...[...known].filter((pid) => alive.has(pid)),
-          ...collectDescendants(rows, [rootPid, ...known], sinceMs)
-        ]);
-        targets.delete(process.pid);
+        return [];
+      }
+      try {
+        const targets = selectKillTargets(await listProcesses(), rootPid, known, sinceMs);
         for (const pid of targets) {
           try {
             process.kill(pid, "SIGKILL");
@@ -141,7 +162,7 @@ export function watchProcessTree(rootPid: number | undefined, sinceMs: number, i
             // already exited
           }
         }
-        return [...targets];
+        return targets;
       } catch {
         return [];
       }

@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { formatCliError, parseTrialsOption } from "../src/core/cli-helpers";
 import { runTrapStep } from "../src/runtime/evaluator";
-import { collectDescendants, findFreePort, TRAP_PORT_ENV } from "../src/runtime/ports";
+import { collectDescendants, findFreePort, selectKillTargets, TRAP_PORT_ENV } from "../src/runtime/ports";
 import { firstOutputLine, resolveTrapResults } from "../src/runtime/traps";
 import { expandTrialJobs, normalizeTrials } from "../src/server/service";
 import { BenchmarkTaskRecord } from "../src/types";
@@ -124,4 +124,26 @@ test("a trap command that dies before any test ran marks every trap 'error' with
   assert.equal(resolveTrapResults(trapTask.traps!, [], { exitCode: 0, stdout: "", stderr: "" })[0].status, "unknown");
   assert.equal(resolveTrapResults(trapTask.traps!, [], { exitCode: null, timedOut: true, stdout: "", stderr: "" })[0].detail, "trap command timed out before any test ran");
   assert.equal(firstOutputLine("\n\n"), null);
+});
+
+test("selectKillTargets skips a known pid that Windows reused for an unrelated process", () => {
+  const since = 1_000_000;
+  // Seen during the run: root 10 and its child 11.
+  const known = new Map<number, number | null>([[10, since], [11, since + 50]]);
+  const rows = [
+    { pid: 10, ppid: 1, startedAt: since + 90_000 },   // pid 10 reused by an unrelated process
+    { pid: 11, ppid: 10, startedAt: since + 50 },      // our child, still alive
+    { pid: 20, ppid: 10, startedAt: since + 95_000 },  // child of the unrelated reused pid 10
+    { pid: 21, ppid: 11, startedAt: since + 100 }      // grandchild of our child
+  ];
+  assert.deepEqual(selectKillTargets(rows, 10, known, since).sort(), [11, 21]);
+});
+
+test("selectKillTargets uses an unseen root only when it started after the run began", () => {
+  const since = 1_000_000;
+  const rows = [
+    { pid: 10, ppid: 1, startedAt: since - 60_000 },
+    { pid: 11, ppid: 10, startedAt: since + 50 }
+  ];
+  assert.deepEqual(selectKillTargets(rows, 10, new Map(), since), []);
 });
