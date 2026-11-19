@@ -90,7 +90,7 @@ async function listProcesses(): Promise<ProcessRow[]> {
  * Picks the pids `stop()` may kill. `known` maps every pid seen during the run
  * to its creation time. A pid counts only while the live process still has
  * that creation time: Windows reuses pids, and a reused pid must neither be
- * killed nor used as a tree root. An unseen root counts only when it started
+ * killed nor used as a tree root. An exited pid is still a tree root. An unseen root counts only when it started
  * after the run began.
  */
 export function selectKillTargets(rows: ProcessRow[], rootPid: number, known: Map<number, number | null>, sinceMs: number): number[] {
@@ -101,8 +101,11 @@ export function selectKillTargets(rows: ProcessRow[], rootPid: number, known: Ma
     if (known.has(pid)) return known.get(pid) === row.startedAt;
     return row.startedAt != null && row.startedAt + 1000 >= sinceMs;
   };
-  const roots = [rootPid, ...known.keys()].filter((pid, index, all) => all.indexOf(pid) === index && same(pid));
-  const targets = new Set<number>([...roots, ...collectDescendants(rows, roots, sinceMs)]);
+  // An exited pid still works as a tree root: orphans keep its id as their
+  // recorded parent (children of a later reuse are caught by `sinceMs`).
+  const candidates = [rootPid, ...known.keys()].filter((pid, index, all) => all.indexOf(pid) === index);
+  const roots = candidates.filter((pid) => !live.has(pid) || same(pid));
+  const targets = new Set<number>([...roots.filter(same), ...collectDescendants(rows, roots, sinceMs)]);
   targets.delete(process.pid);
   return [...targets];
 }

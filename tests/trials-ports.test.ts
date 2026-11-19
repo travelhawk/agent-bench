@@ -147,3 +147,9 @@ test("selectKillTargets uses an unseen root only when it started after the run b
   ];
   assert.deepEqual(selectKillTargets(rows, 10, new Map(), since), []);
 });
+
+test("selectKillTargets still follows orphans of a root that already exited", () => {
+  const since = 1_000_000;
+  const rows = [{ pid: 11, ppid: 10, startedAt: since + 50 }];
+  assert.deepEqual(selectKillTargets(rows, 10, new Map(), since), [11]);
+});
