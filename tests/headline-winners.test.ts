@@ -144,3 +144,12 @@ test("trap tie broken by the unique blind winner names it as verdict", () => {
   ]);
   assert.match(headline.verdict ?? "", /^b \(tied on traps with a, best blind rank\)/);
 });
+
+test("a setup with no passed trap is never the trap winner; errors count as not passed", () => {
+  const headline = buildHeadlineWinners([
+    { setupKey: "a", traps: { t1: { passed: 0, failed: 3, unknown: 0 } }, blindRank: null, reviewModes: { rules: 3 }, avgScore: 9, avgQuality: 6 },
+    { setupKey: "b", traps: { t1: { passed: 0, failed: 0, unknown: 0, error: 3 } }, blindRank: null, reviewModes: { rules: 3 }, avgScore: 8, avgQuality: 6 }
+  ]);
+  assert.equal(headline.traps, null);
+  assert.equal(headline.verdict, null);
+});

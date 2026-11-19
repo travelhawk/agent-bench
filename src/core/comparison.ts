@@ -412,10 +412,13 @@ export interface TrapTotals {
   total: number;
 }
 
-/** Passed / all trap outcomes over every trial of a setup; null when no trap was decided. */
+/**
+ * Passed / all trap outcomes over every trial of a setup; null when no trap was
+ * decided. An `error` counts as decided and not passed.
+ */
 export function setupTrapTotals(setup: { traps: Record<string, ComparisonTrapCell> }): TrapTotals | null {
   const cells = Object.values(setup.traps);
-  const decided = cells.reduce((sum, cell) => sum + cell.passed + cell.failed, 0);
+  const decided = cells.reduce((sum, cell) => sum + cell.passed + cell.failed + (cell.error ?? 0), 0);
   if (decided === 0) return null;
   const passed = cells.reduce((sum, cell) => sum + cell.passed, 0);
   const total = cells.reduce((sum, cell) => sum + cell.passed + cell.failed + cell.unknown + (cell.error ?? 0), 0);
@@ -450,7 +453,8 @@ export function buildHeadlineWinners(
     .map((setup) => ({ setup, totals: setupTrapTotals(setup) }))
     .filter((row): row is { setup: typeof row.setup; totals: TrapTotals } => row.totals != null && row.totals.total > 0);
   let traps: HeadlineWinners["traps"] = null;
-  if (setups.length >= 2 && trapRows.length > 0) {
+  // A trap winner needs at least one passed trap; 0 passed everywhere is no win.
+  if (setups.length >= 2 && trapRows.some((row) => row.totals.passed > 0)) {
     const rate = (row: typeof trapRows[number]) => row.totals.passed / row.totals.total;
     const bestRate = Math.max(...trapRows.map(rate));
     const top = trapRows.filter((row) => Math.abs(rate(row) - bestRate) < 1e-9);
