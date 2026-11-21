@@ -1,12 +1,28 @@
 {
   "name": "agent-bench",
-  "version": "0.3.0",
-  "description": "CLI and full-stack workbench for benchmarking AI agents",
+  "version": "0.4.0",
+  "description": "Compare coding agents, workflows and models on the same task, with holdout tests they never see",
   "packageManager": "pnpm@10.31.0",
   "main": "dist/src/index.js",
   "bin": {
     "agent-bench": "dist/src/index.js"
   },
+  "author": "Michael Falk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/travelhawk/agent-bench.git"
+  },
+  "homepage": "https://github.com/travelhawk/agent-bench#readme",
+  "bugs": {
+    "url": "https://github.com/travelhawk/agent-bench/issues"
+  },
+  "files": [
+    "dist",
+    "benchmarks",
+    "examples",
+    ".env.sample",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "pnpm run build:app && pnpm run build:cli",
     "build:app": "next build --webpack",
@@ -21,6 +37,10 @@
   "keywords": [
     "benchmark",
     "agents",
+    "agentic",
+    "evaluation",
+    "claude-code",
+    "llm",
     "cli",
     "sqlite"
   ],

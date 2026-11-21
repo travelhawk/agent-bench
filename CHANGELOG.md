@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-21
+
+- Added a `LICENSE` file (MIT). `package.json` had declared MIT since the start, but without the file
+  GitHub showed no license, which legally means all rights reserved
+- Prepared the package for npm: `files`, `repository`, `author`, `homepage` and `bugs`, so an install
+  ships the CLI together with the benchmark suites, the example workspace and the web app
+- Fixed `agent-bench ui` failing on Windows with `spawn EINVAL`. It spawned the `node_modules/.bin`
+  shim, and since Node 20.12 Windows refuses to spawn a `.cmd` file without a shell. The Next
+  entrypoint now runs under this process's own node binary, which needs no shell on any platform
+- `agent-bench ui` outside a checkout now says that the workbench needs the repository and that every
+  other command works where it stands. Turbopack cannot treat a directory inside `node_modules` as a
+  project root, so the packaged app would have failed later with "Could not find the Next.js package"
+- Fixed `init` seeding a workspace from the wrong directory when run from an installed package:
+  `resolvePackagedBenchmarksDir` searched for a directory named `benchmarks` and found the compiled
+  `dist/src/benchmarks` module directory first, so a fresh workspace got `files.js` and `metadata.js`
+  instead of suites, and the `workflow-builds` suite — the one the README's comparison uses — was
+  missing entirely. The packaged paths now anchor on the package root
+- Fixed `init` never creating `.env` outside a checkout: it only looked for `.env.sample` in the current
+  directory, which a fresh workspace does not have. It now falls back to the packaged template
+- Made the shipped `workflow-builds` setups portable: `vanilla+review` now uses a plain review prompt
+  instead of a slash command from a third-party plugin pinned to one local path and version. Comparing a
+  plugin workflow is documented as a user-supplied setup instead of shipped as a default
+- Rewrote the README around what the tool does and how to run a comparison. It used to open with roughly
+  fifty lines of release notes before the first command; those live in this file
+- Replaced the placeholder workflow template in `AGENTS.md` with guidance specific to this repository,
+  and removed its duplicate under `.agents/` and the stale `Creator.env_sample`
 
 - Fixed a fake quality score without a judge: rules/`--no-judge` runs stored a constant quality 6.00 and a "rules score" that rated the agent markdown wording. Quality and judge score are now `n/a` in every view (stored old values of rules runs are ignored), the rules-mode total uses only objective build signals, "Rules score" is gone from the winners, and setups without a judge are ordered by traps, then blind rank
 - Fixed the blind reviewer cost missing in `export` and `matrix`: reviewer usage is stored per review (`blind_reviews` table, `runs.blind_review_key`) and counted in batch totals on every export path. `agent-bench blind-import <blind-folder>` backfills older reviews

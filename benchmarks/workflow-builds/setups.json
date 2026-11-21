@@ -8,18 +8,6 @@
     "label": "vanilla+review",
     "agent": "agents/claude-code.md",
     "review": "off",
-    "followupPrompt": "/forge:deep-review all\n\nThen fix every confirmed critical or high finding, re-run npm run typecheck, npm test and npm run build until they pass, and stop.",
-    "env": {
-      "AGENT_BENCH_CLAUDE_PLUGINS": "~/.claude/plugins/cache/forge/forge/0.8.0"
-    }
-  },
-  {
-    "label": "forge",
-    "agent": "agents/claude-code.md",
-    "review": "off",
-    "buildPrompt": "/forge:build local\n\nRun fully autonomous: approve your own wave plan, do not wait for a human, finish all features from docs/SPEC.md.",
-    "env": {
-      "AGENT_BENCH_CLAUDE_PLUGINS": "~/.claude/plugins/cache/forge/forge/0.8.0"
-    }
+    "followupPrompt": "Review the code you just wrote as if someone else had written it. Look for data-loss bugs, unhandled edge cases and spec requirements you missed. Then fix every issue you are sure about, re-run npm run typecheck, npm test and npm run build until they pass, and stop."
   }
 ]

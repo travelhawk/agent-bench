@@ -1,63 +1,55 @@
-CODEX 5.3 — AGENTIC WORKFLOW (STRICT)
+# Working in this repository
 
-GOAL: [KURZES ZIEL + AKZEPTANZKRITERIEN]
+Guidance for coding agents and new contributors. It describes this project, not a general workflow.
 
-RULES
+## What this is
 
-Follow agent order + loop exactly. No skipping.
+`agent-bench` compares coding agents, workflows and models on the same task. The point of the tool is
+evidence, so the code that produces a number has to be trustworthy. Two rules follow from that:
 
-Work in small, safe diffs. Keep project buildable/runnable.
+- **A measurement must not depend on the thing being measured.** The model under test never grades its
+  own work, trap tests never reach the agent before it is finished, and the blind reviewer never learns
+  which setup produced which build.
+- **Reading a result costs nothing.** Comparison, matrix and export render only from persisted SQLite
+  rows. Never add a model call to a code path that only displays stored data.
 
-Record decisions + assumptions. Prefer primary sources when researching.
+## Commands
 
-AGENTS (ORDER + RESPONSIBILITIES)
+```bash
+pnpm install
+pnpm test                 # builds the CLI, then runs the node:test suite
+npx tsc -p tsconfig.json --noEmit
+pnpm run build            # Next.js app + CLI
+pnpm run ui               # local workbench on http://localhost:4173
+```
 
-RESEARCHER
+`pnpm test` must pass before a commit. Some tests are platform-gated (macOS seatbelt) and skip
+elsewhere; a skip is not a failure.
 
-Clarify unknowns, constraints, interfaces, and best practices.
+## Conventions
 
-Gather up-to-date references (links + dates).
+- TypeScript throughout, Node 22.5+ (`node:sqlite` is built in — do not add a native SQLite dependency).
+- Pure functions in `src/core/`, IO and process handling in `src/runtime/`, persistence and config in
+  `src/server/`. Put logic where it can be tested without a database.
+- A comment explains *why*, not what. Most code needs none.
+- Benchmarks and agents are markdown files, not code. Adding a benchmark should never require a code
+  change.
+- Small, reviewable diffs. Keep the repo buildable at every commit.
 
-Output: “Research Brief” (key facts, risks, open questions, sources).
+## Things that are easy to get wrong
 
-ARCHITECT
+- **Trap tests are holdout data.** They live in `benchmarks/<suite>/traps/` and are copied into the
+  workspace only after the runner exits. Anything that leaks them earlier invalidates every result.
+- **The blind folder must stay blind.** `src/core/blind.ts` strips `.git`, `node_modules`, `result/`,
+  `traps/`, `dist/`, `.claude/`, `CLAUDE.md` and `AGENTS.md`. Agent output belongs in the run's
+  artifacts folder, never in the workspace.
+- **Runner environments are scrubbed by default.** A runner gets a small safe host env plus explicit
+  `AGENT_BENCH_*` variables. Widen that only through an agent's `Env Passthrough:` line.
+- **Setups must be portable.** `benchmarks/<suite>/setups.json` ships in the package, so it must not
+  reference a local plugin path, a pinned plugin version or a slash command that only exists on one
+  machine. Machine-specific variants belong in a user's own `--setups-file`.
 
-Propose architecture/options, pick one, justify.
+## Before pushing
 
-Define modules, data flow, APIs, config, error handling, security.
-
-Output: “Architecture Spec” (diagram-as-text, file tree, interfaces, tech decisions).
-
-BUILDER
-
-Implement per spec.
-
-Create/modify code, tests, configs, scripts.
-
-Output: working implementation + minimal tests + updated docs.
-
-VALIDATOR
-
-Verify against acceptance criteria, run/build/tests, lint, security sanity checks.
-
-Output: “Validation Report” (pass/fail, exact failures, reproduction steps).
-
-If implementation issues → send to BUILDER with actionable fixes.
-
-If spec/architecture flawed → send to ARCHITECT (who may re-call RESEARCHER).
-
-LOOPRepeat 2→3→4 until VALIDATOR = PASS.
-
-FINALIZATION (ONLY AFTER PASS)
-
-Update README: setup, usage, config, examples, troubleshooting.
-
-Update CHANGELOG: version + bullet summary.
-
-Create clean git commits with meaningful messages.
-
-GITHUB PUSH GATE
-
-STOP and ASK: “Ready to push to GitHub? (yes/no)”
-
-Never push without explicit “yes”.
+Update `README.md` and `CHANGELOG.md` when behaviour changes, then ask before pushing to GitHub.
+Never push without being asked to.
