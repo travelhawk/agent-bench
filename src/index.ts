@@ -8,7 +8,7 @@ import { readAgentRunnerCommand } from "./agents/files";
 import { listBenchmarkSuitesFromFiles } from "./benchmarks/files";
 import { newRunKey, runEvaluationInRuntime } from "./core/runner";
 import { createDb, initializeSchema } from "./db/schema";
-import { ensureProjectDirs, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath, resolvePackagedBenchmarksDir, resolvePackagedExamplesDir, TOOL_VERSION } from "./server/config";
+import { ensureProjectDirs, getWorkspaceRoot, resolveBenchmarksDir, resolveDbPath, resolvePackagedBenchmarksDir, resolvePackagedEnvSample, resolvePackagedExamplesDir, TOOL_VERSION } from "./server/config";
 import { getBestScore, getRunByKey, insertRun, listRuns, sumBlindReviewUsageForRuns } from "./db/store";
 import { buildComparisonMatrix } from "./core/comparison";
 import { renderMatrixLines } from "./core/matrix-print";
@@ -94,8 +94,14 @@ function installBenchmarks(): string[] {
 /** A missing .env is the most common reason a first run cannot reach a model. */
 function installEnvFile(): string[] {
   const target = path.join(cwd, ".env");
-  const sample = path.join(cwd, ".env.sample");
-  if (existsSync(target) || !existsSync(sample)) return [];
+  if (existsSync(target)) return [];
+
+  // A fresh workspace has no .env.sample of its own, so fall back to the one
+  // shipped in the package; otherwise an installed CLI silently skips this step.
+  const local = path.join(cwd, ".env.sample");
+  const sample = existsSync(local) ? local : resolvePackagedEnvSample();
+  if (!sample) return [];
+
   copyFileSync(sample, target);
   return ["Created .env from .env.sample — put your AI_GATEWAY_API_KEY in it."];
 }
