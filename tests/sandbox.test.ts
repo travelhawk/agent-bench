@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -13,11 +14,23 @@ import {
 } from "../src/runtime/sandbox";
 
 /**
- * Windows releases a killed process's handles after the kill call returns, so a
- * plain rmSync on its working directory can still fail with EPERM. Retry.
+ * Best-effort cleanup. Windows releases a killed process's directory handle some
+ * time after the kill call returns, so a removal right afterwards fails with
+ * EPERM or EBUSY, and rm's own maxRetries covers neither. Wait for the handle,
+ * but never fail a test over a leftover directory under os.tmpdir(): the run
+ * asserts what stopActiveChildren did, and that is checked before this point.
  */
-function removeDir(dir: string): void {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 });
+async function removeDir(dir: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
 }
 
 
@@ -101,7 +114,7 @@ test("runSandboxedCommand can execute inside the docker provider when available"
       process.env.AGENT_BENCH_SANDBOX_DOCKER_IMAGE = previousImage;
     }
 
-    removeDir(workspace);
+    await removeDir(workspace);
   }
 });
 
@@ -131,6 +144,6 @@ test("stopActiveChildren kills a running detached command (used by the SIGINT/SI
   } finally {
     if (previousProvider === undefined) delete process.env.AGENT_BENCH_SANDBOX_PROVIDER;
     else process.env.AGENT_BENCH_SANDBOX_PROVIDER = previousProvider;
-    removeDir(root);
+    await removeDir(root);
   }
 });
