@@ -28,16 +28,21 @@ export interface DoctorReport {
   summary: string;
 }
 
-/** node:sqlite landed in 22.5.0, so anything older cannot open the store at all. */
+/**
+ * node:sqlite landed in 22.5.0 but needed `--experimental-sqlite` until 22.13.0,
+ * so 22.5 to 22.12 cannot open the store either. `src/bin.ts` refuses those
+ * versions before this check could run; the floor is repeated here so `doctor`
+ * stays correct when it is called from a library context.
+ */
 export function checkNodeVersion(version: string): DoctorCheck {
   const [major = 0, minor = 0] = version.replace(/^v/, "").split(".").map(Number);
-  const supported = major > 22 || (major === 22 && minor >= 5);
+  const supported = major > 22 || (major === 22 && minor >= 13);
   if (!supported) {
     return {
       name: "Node",
       status: "fail",
-      detail: `${version} has no node:sqlite`,
-      fix: "Install Node 22.5 or newer (24 LTS recommended)."
+      detail: `${version} cannot load node:sqlite without a flag`,
+      fix: "Install Node 22.13 or newer (24 LTS recommended)."
     };
   }
   return {

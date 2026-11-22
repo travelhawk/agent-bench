@@ -1,11 +1,60 @@
 # Changelog
 
-## 0.4.0 — 2026-11-21
+## 0.4.0 — 2026-11-22
+
+Fixes from an independent review of the whole branch. The two guarantees held — traps never reach the
+workspace before the runner exits, and the blind key stays outside the reviewer's folder — but the
+review found ways a measurement could still go quietly wrong.
+
+- **The blind folder keeps more of its blindness.** The strip list missed `.agent/` and `.oneshot/`,
+  two of the three workflow-state folders this repo's own fixture `.gitignore` anticipates, plus
+  `.cursor/`, `.specstory/`, `.vscode/`, `.aider.*` and a workspace `.env`. A workflow that leaves
+  state behind, next to one that leaves none, splits the builds into two groups before the reviewer
+  reads a line of code. Every unrecognised dotted directory is now dropped as well, at any depth, so
+  new agent tooling cannot sign its own build; the list is matched case-insensitively, because
+  `Claude.md` used to survive while `CLAUDE.md` was stripped; and symlinks are skipped, since a link
+  can name the run it came from or lead back out to `traps/`
+- **A task can no longer hide the holdout inside its own fixture.** Benchmarks are user-written
+  markdown, so `Fixture Dir: .` used to copy `traps/` into the workspace before the agent started and
+  invalidate every number of that run, with no error. The runner now refuses that layout
+- **One locked file no longer costs a batch its whole blind review.** Laying out the letter folders sat
+  outside the per-task error handling, so a single failed copy replaced every task's summary with an
+  error — including tasks already reviewed, whose ranks were in the database
+- **Trap totals agree between the terminal and the exports.** They counted an errored trap differently,
+  so the same run printed `n/a` in one place and `0/5` in the other. An errored trap is neither a pass
+  nor a fail, so it no longer counts as decided anywhere
+- **The workbench and its report are built from the same runs.** The board rendered 100 runs while
+  "Copy report" and "Download" rendered 200, so the exported artefact disagreed with the view it came
+  from. Both use one window now
+- **Ctrl-C stops a run without waiting on the process table.** On Windows the leftover reaper was the
+  only thing that killed the tree, and it reads the process list through PowerShell, which can come
+  back empty under load: one failed enumeration left the agent and its dev server running. The tracked
+  child is now killed directly first, and the enumeration gives up after 8 seconds instead of 30
+- **The leftover reaper cannot kill an unrelated process.** An exited pid stays a tree root so orphans
+  are still found, but once Windows reuses that id, the new owner's children have our dead pid as their
+  parent, and the run-start cutoff never excluded them. A dead root now only adopts children that
+  started while it was last known to be alive
+- **`--trials` runs record which trial they were.** The trial number was computed and then dropped
+  between the planner and the job, so `runs.trial_index` was NULL for every trial of every batch
+- **A retried cell replays its setup's behaviour, not just its label.** The rebuilt job carried the
+  setup key but not the prompts or env, so a retry could file a plain run under the column of a setup
+  that has a follow-up prompt — a corrupted column that still looks valid
+- **Export escaping.** Setup labels are free text and went into Markdown tables unescaped, so a `|`
+  broke the table; in CSV they were not defused, so a label starting with `=` became a formula in
+  Excel. This suite ships a `csv-formula-roundtrip` trap for that exact bug in the builds it measures
+- **Corrected the Node floor from 22.5 to 22.13.** `node:sqlite` exists from 22.5.0 but needed
+  `--experimental-sqlite` until 22.13.0, so 22.5 to 22.12 was published as supported although the CLI
+  cannot start there. The published binary is now a small guard that checks the version before anything
+  imports `node:sqlite`; the old `doctor` FAIL branch could never print, because the process died at
+  module load with a raw "No such built-in module" stack
+- The npm tarball no longer ships the compiled web app and test suite (`dist/app`, `dist/tests`)
+
+Everything else in this release:
 
 - Added a `LICENSE` file (MIT). `package.json` had declared MIT since the start, but without the file
   GitHub showed no license, which legally means all rights reserved
 - Prepared the package for npm: `files`, `repository`, `author`, `homepage` and `bugs`, so an install
-  ships the CLI together with the benchmark suites, the example workspace and the web app
+  ships the CLI together with the benchmark suites and the example workspace
 - Fixed `agent-bench ui` failing on Windows with `spawn EINVAL`. It spawned the `node_modules/.bin`
   shim, and since Node 20.12 Windows refuses to spawn a `.cmd` file without a shell. The Next
   entrypoint now runs under this process's own node binary, which needs no shell on any platform

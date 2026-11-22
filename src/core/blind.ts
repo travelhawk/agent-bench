@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -8,13 +8,51 @@ import path from "node:path";
  */
 
 /**
- * Files that would reveal which workflow built the app (or are just noise):
- * VCS data, dependencies, harness reports, agent logs and hidden-check files.
+ * Names that must not reach the reviewer: VCS data, dependencies, harness
+ * reports, the hidden checks, build output, editor and agent state, agent
+ * instruction files, and secrets.
+ *
+ * The agent-state entries are the ones that decide whether the review is blind
+ * at all. A workflow that leaves `.oneshot/` behind, next to a build from a
+ * workflow that leaves nothing, splits the folders into two groups before the
+ * reviewer has read a line of code. New agent tooling appears faster than this
+ * list grows, which is why every unrecognised dotted directory is dropped too,
+ * at any depth.
  */
-export const BLIND_EXCLUDE = new Set([
-  ".git", "node_modules", "result", "traps", "trap-results.json", "test-results", "playwright-report",
-  ".claude", ".agents", ".forge", ".codex", "dist", "coverage", ".vite", "CLAUDE.md", "AGENTS.md"
+const BLIND_EXCLUDE_NAMES = new Set([
+  // Version control and dependencies.
+  ".git", ".svn", ".hg", "node_modules",
+  // Harness output and the hidden checks.
+  "result", "traps", "trap-results.json", "test-results", "playwright-report",
+  // Build output and caches.
+  "dist", "coverage",
+  // Agent instruction files and dotted rule files. Agent state folders are
+  // covered by the dotted-directory rule below.
+  "claude.md", "agents.md", "agent.md", "gemini.md", "qwen.md", "copilot-instructions.md",
+  "conventions.md", ".cursorrules", ".windsurfrules", ".clinerules", ".roomodes", ".claude.json",
+  // Secrets and OS noise.
+  ".env", ".ds_store", "thumbs.db"
 ]);
+
+/** Families of generated files, e.g. `.aider.chat.history.md` or `.env.local`. */
+const BLIND_EXCLUDE_PREFIXES = [".aider", ".env."];
+
+/** Dotted directories that are part of the build, not of the agent that ran it. */
+const BLIND_KEEP_DOT_DIRS = new Set([".github", ".vscode-test", ".storybook", ".husky", ".yarn"]);
+
+/**
+ * Compared lowercase throughout: Windows paths are case-insensitive, so a
+ * case-sensitive list lets `Claude.md` through while stripping `CLAUDE.md`, and
+ * the reviewer sees a file in one folder and not in another.
+ */
+export function isBlindExcluded(name: string, isDirectory: boolean): boolean {
+  const lower = name.toLowerCase();
+  if (BLIND_EXCLUDE_NAMES.has(lower)) return true;
+  if (BLIND_EXCLUDE_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true;
+  // Agent and editor state lives in dotted directories. Denying by default means
+  // a workflow this list has never heard of cannot sign its own build.
+  return isDirectory && lower.startsWith(".") && !BLIND_KEEP_DOT_DIRS.has(lower);
+}
 
 export interface BlindEntry {
   letter: string;
@@ -92,16 +130,26 @@ export function mapBlindRanking(entries: BlindEntry[], ranking: BlindRankingEntr
   });
 }
 
-/** Copies a workspace without the files in BLIND_EXCLUDE (at any depth). */
+/**
+ * Copies a workspace, dropping everything `isBlindExcluded` rejects, at any
+ * depth.
+ *
+ * Symlinks are skipped rather than copied. A link is both a leak and a hazard:
+ * its target path can name the run it came from, and following one can walk
+ * back out into the real workspace next to `traps/`. `readdirSync` with file
+ * types also avoids a `stat` per entry, so a dangling link cannot throw and
+ * cost the whole batch its review.
+ */
 export function copyWorkspaceBlind(sourceDir: string, targetDir: string): void {
   mkdirSync(targetDir, { recursive: true });
-  for (const name of readdirSync(sourceDir)) {
-    if (BLIND_EXCLUDE.has(name)) continue;
-    const from = path.join(sourceDir, name);
-    const to = path.join(targetDir, name);
-    if (statSync(from).isDirectory()) {
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    if (isBlindExcluded(entry.name, entry.isDirectory())) continue;
+    const from = path.join(sourceDir, entry.name);
+    const to = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
       copyWorkspaceBlind(from, to);
-    } else {
+    } else if (entry.isFile()) {
       cpSync(from, to);
     }
   }

@@ -8,7 +8,7 @@ import { buildComparisonMatrix } from "../src/core/comparison";
 import { renderComparison } from "../src/core/export";
 import { renderTrapMatrixLines } from "../src/core/matrix-print";
 import { readSetupsFile } from "../src/core/setups-file";
-import { agentEnvPassthrough } from "../src/runtime/evaluator";
+import { agentEnvPassthrough, assertTrapsOutsideFixture } from "../src/runtime/evaluator";
 import { assertNoUserTraps, installTraps, mapTrapResults, parseTrapsSection, readTrapTestCases } from "../src/runtime/traps";
 import { RunRecord } from "../src/types";
 
@@ -163,4 +163,33 @@ test("assertNoUserTraps refuses a user traps/ folder but accepts one agent-bench
   installTraps(source, ownWs);
   assert.doesNotThrow(() => assertNoUserTraps(ownWs));
   assert.doesNotThrow(() => assertNoUserTraps(mkdtempSync(path.join(os.tmpdir(), "agent-bench-emptyws-"))));
+});
+
+
+/**
+ * Benchmarks are user-written markdown, so this is reachable by writing a task,
+ * not by changing code. The fixture is copied into the workspace before the
+ * runner starts, so a fixture that contains traps/ hands the agent the holdout.
+ */
+test("a task may not nest its traps inside its fixture", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "trap-guard-"));
+  const fixture = path.join(root, "fixtures", "app");
+
+  assert.throws(
+    () => assertTrapsOutsideFixture(fixture, path.join(fixture, "traps")),
+    /would not be holdout data/
+  );
+  // `Fixture Dir: .` is the quiet version of the same mistake.
+  assert.throws(
+    () => assertTrapsOutsideFixture(root, path.join(root, "traps")),
+    /would not be holdout data/
+  );
+  assert.throws(() => assertTrapsOutsideFixture(fixture, fixture), /would not be holdout data/);
+});
+
+test("the normal layout, traps beside the fixture, is accepted", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "trap-guard-ok-"));
+  assertTrapsOutsideFixture(path.join(root, "fixtures", "app"), path.join(root, "traps"));
+  // A task without traps has nothing to check.
+  assertTrapsOutsideFixture(path.join(root, "fixtures", "app"), null);
 });

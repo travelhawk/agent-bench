@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   assignBlindLetters,
   blindLetter,
+  copyWorkspaceBlind,
+  isBlindExcluded,
   mapBlindRanking,
   parseBlindRanking,
   prepareBlindReview,
@@ -92,4 +94,80 @@ test("prepareBlindReview copies workspaces without revealing files and keeps the
   assert.throws(() => readBlindRankingFile(prepared.blindDir), /ranking\.json/);
   writeFileSync(path.join(prepared.blindDir, "ranking.json"), JSON.stringify([{ letter: "A", rank: 1, notes: "ok" }]));
   assert.equal(readBlindRankingFile(prepared.blindDir)[0].letter, "A");
+});
+
+
+/**
+ * The blind folder is the whole guarantee. A workflow that leaves its own state
+ * folder behind, next to one that leaves nothing, splits the builds into two
+ * groups before the reviewer reads a line of code.
+ */
+test("agent and editor state never reaches the reviewer", () => {
+  const source = mkdtempSync(path.join(os.tmpdir(), "blind-src-"));
+  const target = path.join(mkdtempSync(path.join(os.tmpdir(), "blind-dst-")), "A");
+
+  const leaks = [
+    ".agent/session.md",
+    ".oneshot/plan.md",
+    ".claude/settings.json",
+    ".cursor/rules.md",
+    ".specstory/history.md",
+    ".vscode/settings.json",
+    ".forge/state.json",
+    ".codex/log.txt",
+    "traps/trap.spec.ts",
+    "result/score.json"
+  ];
+  for (const relative of leaks) {
+    mkdirSync(path.join(source, path.dirname(relative)), { recursive: true });
+    writeFileSync(path.join(source, relative), "x");
+  }
+  for (const name of [".env", ".env.local", ".aider.chat.history.md", "CLAUDE.md", "Claude.md", "AGENTS.md", ".cursorrules"]) {
+    writeFileSync(path.join(source, name), "x");
+  }
+
+  // What a reviewer is supposed to see.
+  mkdirSync(path.join(source, "src"), { recursive: true });
+  writeFileSync(path.join(source, "src", "app.ts"), "export const app = 1;");
+  writeFileSync(path.join(source, "package.json"), "{}");
+  mkdirSync(path.join(source, ".github", "workflows"), { recursive: true });
+  writeFileSync(path.join(source, ".github", "workflows", "ci.yml"), "on: push");
+
+  copyWorkspaceBlind(source, target);
+
+  for (const relative of [...leaks, ".env", ".env.local", ".aider.chat.history.md", "CLAUDE.md", "Claude.md", "AGENTS.md", ".cursorrules"]) {
+    assert.equal(existsSync(path.join(target, relative)), false, `${relative} leaked into the blind folder`);
+  }
+  assert.equal(existsSync(path.join(target, "src", "app.ts")), true);
+  assert.equal(existsSync(path.join(target, "package.json")), true);
+  assert.equal(existsSync(path.join(target, ".github", "workflows", "ci.yml")), true);
+});
+
+test("an unknown dotted directory is excluded, so new agent tooling cannot sign a build", () => {
+  assert.equal(isBlindExcluded(".some-future-agent", true), true);
+  assert.equal(isBlindExcluded(".github", true), false);
+  // A dotted file is judged by name, not by the directory rule.
+  assert.equal(isBlindExcluded(".gitignore", false), false);
+  assert.equal(isBlindExcluded(".env.production", false), true);
+});
+
+test("the exclude list is case-insensitive, because Windows paths are", () => {
+  for (const name of ["CLAUDE.md", "Claude.md", "claude.md", "AGENTS.md", "Agents.md"]) {
+    assert.equal(isBlindExcluded(name, false), true, `${name} should be excluded`);
+  }
+  assert.equal(isBlindExcluded("Node_Modules", true), true);
+});
+
+test("a nested workspace keeps being stripped at depth", () => {
+  const source = mkdtempSync(path.join(os.tmpdir(), "blind-deep-src-"));
+  const target = path.join(mkdtempSync(path.join(os.tmpdir(), "blind-deep-dst-")), "A");
+  mkdirSync(path.join(source, "packages", "web", ".agent"), { recursive: true });
+  writeFileSync(path.join(source, "packages", "web", ".agent", "notes.md"), "x");
+  mkdirSync(path.join(source, "packages", "web", "src"), { recursive: true });
+  writeFileSync(path.join(source, "packages", "web", "src", "index.ts"), "export {};");
+
+  copyWorkspaceBlind(source, target);
+
+  assert.equal(existsSync(path.join(target, "packages", "web", ".agent")), false);
+  assert.equal(existsSync(path.join(target, "packages", "web", "src", "index.ts")), true);
 });

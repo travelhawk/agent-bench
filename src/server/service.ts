@@ -15,7 +15,7 @@ import { createBenchmarkSuiteFile, createBenchmarkTaskFile, listBenchmarkSuitesF
 import { newRunKey, runEvaluationInRuntime } from "../core/runner";
 import { createDb, initializeSchema } from "../db/schema";
 import { deleteRunByKey, getBestScore, getDashboardSummary, getRunByKey, insertRun, listRuns, saveBlindReviewUsage, setBlindReview, sumBlindReviewUsageForRuns } from "../db/store";
-import { mapBlindRanking, prepareBlindReview, readBlindRankingFile } from "../core/blind";
+import { mapBlindRanking, prepareBlindReview, readBlindRankingFile, type PreparedBlindReview } from "../core/blind";
 import { runSandboxedCommand } from "../runtime/sandbox";
 import {
   AgentRecord,
@@ -133,6 +133,8 @@ interface BatchRunJob {
   followupPrompt?: string;
   buildPrompt?: string;
   env?: Record<string, string>;
+  /** 1-based trial number when `--trials` asked for repeats, else undefined. */
+  trialIndex?: number;
 }
 
 interface ManagedAgentBundleInput {
@@ -362,6 +364,7 @@ function persistFailedRun(context: ServiceContext, job: BatchRunJob, message: st
     modelId: job.model ?? null,
     agentName: job.agentName,
     agentVersion: job.agentVersion,
+    trialIndex: job.trialIndex ?? null,
     suiteName: `${job.benchmarkKey}/${job.taskKey}`,
     status: "failed",
     scores: {
@@ -405,6 +408,7 @@ async function executeRun(context: ServiceContext, input: {
   followupPrompt?: string;
   buildPrompt?: string;
   env?: Record<string, string>;
+  trialIndex?: number;
 }): Promise<RunEvaluationResult> {
   const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
   const bestBefore = getBestScore(context.db);
@@ -428,6 +432,7 @@ async function executeRun(context: ServiceContext, input: {
       ...(input.followupPrompt ? { AGENT_BENCH_FOLLOWUP_PROMPT: input.followupPrompt } : {}),
       ...(input.buildPrompt ? { AGENT_BENCH_BUILD_PROMPT: input.buildPrompt } : {})
     } : undefined,
+    trialIndex: input.trialIndex ?? null,
     setupSnapshot: input.setupKey
       ? { key: input.setupKey, workflowPath: input.agentPath ?? null, modelId: input.model ?? null }
       : null
@@ -446,7 +451,7 @@ export function getWorkbenchSnapshot(dbPathInput?: string): Promise<WorkbenchSna
     const summary = getDashboardSummary(context.db);
     const benchmarks = listBenchmarkSuitesFromFiles(context.benchmarksDir);
     const agents = listAgentFiles(context.workspaceRoot);
-    const runs = listRuns(context.db, 100);
+    const runs = listRuns(context.db, DEFAULT_COMPARISON_RUNS);
     let projectSkills: InstalledSkillRecord[] = [];
 
     try {
@@ -684,6 +689,16 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
     if (explicitJobs.length > 0) {
       // Retry path: each job replays one already-planned cell of the matrix and
       // keeps its original setup identity so the rerun lands in the same column.
+      //
+      // Identity alone is not enough. A setup is also its prompts and its env,
+      // and a job that carried only the label would file a plain run under the
+      // column of a setup that has a follow-up prompt — a corrupted column that
+      // still looks valid. So inherit the behaviour from the setup the label
+      // names, when the caller sent the setups along.
+      const retrySetups = new Map(
+        (input.setups !== undefined ? resolveBatchSetups(context.workspaceRoot, input.setups, batchReview) : [])
+          .map((setup) => [setup.setupKey, setup])
+      );
       jobs = explicitJobs.map((job) => {
         const resolvedBenchmarkKey = readOptionalString(job.benchmarkKey) ?? benchmarkKey;
         const resolvedTaskKey = readOptionalString(job.taskKey);
@@ -700,6 +715,9 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
 
         const agentRecord = inspectAgentFile(context.workspaceRoot, resolvedAgentPath);
         const jobModel = readBoundedString(job.model, "jobs[].model", INPUT_LIMITS.maxModelLength) ?? batchModel;
+        const setupKey = readBoundedString(job.setupKey, "jobs[].setupKey", INPUT_LIMITS.maxSetupLabelLength)
+          ?? `${agentRecord.name} \u00b7 ${jobModel ?? NO_MODEL_LABEL}`;
+        const origin = retrySetups.get(setupKey);
         return {
           benchmarkKey: resolvedBenchmarkKey,
           taskKey: resolvedTaskKey,
@@ -707,10 +725,12 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
           agentName: agentRecord.name,
           agentVersion: agentVersionFor(agentRecord.name),
           agentRunnerCommand: agentRecord.runnerCommand,
-          setupKey: readBoundedString(job.setupKey, "jobs[].setupKey", INPUT_LIMITS.maxSetupLabelLength)
-            ?? `${agentRecord.name} \u00b7 ${jobModel ?? NO_MODEL_LABEL}`,
+          setupKey,
           model: jobModel,
-          review: job.review === "off" ? "off" : job.review === "auto" ? "auto" : batchReview
+          review: job.review === "off" ? "off" : job.review === "auto" ? "auto" : batchReview,
+          followupPrompt: origin?.followupPrompt,
+          buildPrompt: origin?.buildPrompt,
+          env: origin?.env
         };
       });
       taskPlan = [...new Set(jobs.map((job) => job.taskKey))];
@@ -737,7 +757,7 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
       setupSummaries = summarizeSetups(setups, context.workspaceRoot);
       const trials = normalizeTrials(input.trials);
       assertBatchCapacity(setups.length * trials, tasks.length);
-      jobs = expandTrialJobs(setups, tasks, trials).map(({ setup, task }) => ({
+      jobs = expandTrialJobs(setups, tasks, trials).map(({ setup, task, trial }) => ({
         benchmarkKey,
         taskKey: task.key,
         agentPath: path.resolve(context.workspaceRoot, setup.agent.path),
@@ -749,7 +769,10 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
         review: setup.review,
         followupPrompt: setup.followupPrompt,
         buildPrompt: setup.buildPrompt,
-        env: setup.env
+        env: setup.env,
+        // `runs.trial_index` stayed NULL for every trial of every batch because
+        // this was dropped here: the only code path that produces trials.
+        trialIndex: trials > 1 ? trial : undefined
       }));
     }
 
@@ -767,7 +790,8 @@ export function runBatch(input: BatchRunInput, dbPathInput?: string): Promise<Ba
           setupKey: job.setupKey,
           followupPrompt: job.followupPrompt,
           buildPrompt: job.buildPrompt,
-          env: job.env
+          env: job.env,
+          trialIndex: job.trialIndex
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -904,11 +928,27 @@ async function runBlindReviews(context: ServiceContext, input: {
       }));
     if (!task || runs.length === 0) continue;
 
-    const prepared = prepareBlindReview({
-      rootDir: path.join(context.artifactsRoot, `blind-${stamp}-${taskKey}`),
-      runs,
-      taskMarkdown: buildBlindTaskMarkdown(task)
-    });
+    // Laying out the folders is its own failure case (a locked file on Windows, a
+    // dangling link). It used to sit outside the try, so one task losing its copy
+    // threw away the whole batch's report, including tasks already reviewed.
+    let prepared: PreparedBlindReview;
+    try {
+      prepared = prepareBlindReview({
+        rootDir: path.join(context.artifactsRoot, `blind-${stamp}-${taskKey}`),
+        runs,
+        taskMarkdown: buildBlindTaskMarkdown(task)
+      });
+    } catch (error: unknown) {
+      summaries.push({
+        taskKey,
+        blindDir: "",
+        keyPath: "",
+        verdicts: [],
+        error: error instanceof Error ? error.message : String(error)
+      });
+      continue;
+    }
+
     const summary: BlindReviewSummary = { taskKey, blindDir: prepared.blindDir, keyPath: prepared.keyPath, verdicts: [] };
     try {
       const env: Record<string, string> = {
@@ -976,9 +1016,18 @@ export interface ComparisonExportResult {
 
 const MAX_COMPARISON_RUNS = 2000;
 
+/**
+ * How many recent runs a comparison covers by default. The workbench loads the
+ * same window, so the board on screen and the report its Copy/Download button
+ * produces are built from the same rows. They used to differ (100 against 200),
+ * which gave the exported artefact a different `Runs:` count and different
+ * averages than the view it came from.
+ */
+export const DEFAULT_COMPARISON_RUNS = 200;
+
 function resolveComparisonLimit(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 200;
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_COMPARISON_RUNS;
   return Math.min(Math.floor(parsed), MAX_COMPARISON_RUNS);
 }
 

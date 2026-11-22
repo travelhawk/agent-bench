@@ -1,4 +1,4 @@
-import { buildHeadlineWinners, ComparisonMatrix, formatBlindRank, formatTrapCell, setupDisplayName, setupModelSuffix, trapErrorFootnotes } from "./comparison";
+import { buildHeadlineWinners, ComparisonMatrix, formatBlindRank, formatTrapCell, setupDisplayName, setupModelSuffix, setupTrapTotals, trapErrorFootnotes } from "./comparison";
 import { BlindReviewerUsage, renderMetricsLines } from "./metrics-block";
 
 /**
@@ -152,11 +152,8 @@ export function renderTrapMatrixLines(matrix: ComparisonMatrix): string[] {
     row("trap", labels),
     ...matrix.trapIds.map((id) => row(id, matrix.setups.map((setup) => formatTrapCell(setup.traps[id])))),
     row("total", matrix.setups.map((setup) => {
-      const cells = matrix.trapIds.map((id) => setup.traps[id]).filter(Boolean);
-      const passed = cells.reduce((sum, cell) => sum + cell!.passed, 0);
-      const decided = cells.reduce((sum, cell) => sum + cell!.passed + cell!.failed, 0);
-      const all = cells.reduce((sum, cell) => sum + cell!.passed + cell!.failed + cell!.unknown + (cell!.error ?? 0), 0);
-      return decided > 0 ? `${passed}/${all}` : "n/a";
+      const totals = setupTrapTotals(setup);
+      return totals ? `${totals.passed}/${totals.total}` : "n/a";
     })),
     ...trapErrorFootnotes(matrix.trapIds, matrix.setups).map((note) => `* error - ${note}`)
   ];

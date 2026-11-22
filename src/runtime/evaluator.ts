@@ -522,6 +522,26 @@ function resolveTaskTrapsDir(benchmarksDir: string | undefined, benchmarkKey: st
   return path.join(benchmarksDir, benchmarkKey, task.sandbox.trapsDir);
 }
 
+/**
+ * Benchmarks are user-written markdown, so a task can name any `Fixture Dir:`.
+ * A fixture that contains the traps folder copies the holdout checks into the
+ * workspace before the runner starts and silently invalidates every number of
+ * that run. Refuse instead, so the holdout is structural and not a convention.
+ */
+export function assertTrapsOutsideFixture(fixtureDir: string, trapsDir: string | null): void {
+  if (!trapsDir) return;
+  const fixture = path.resolve(fixtureDir);
+  const traps = path.resolve(trapsDir);
+  const relative = path.relative(fixture, traps);
+  const inside = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  if (inside) {
+    throw new Error(
+      `Traps Dir (${traps}) is inside Fixture Dir (${fixture}). The fixture is copied into the workspace ` +
+        "before the agent runs, so the traps would not be holdout data. Move traps/ outside the fixture."
+    );
+  }
+}
+
 /** `Env Passthrough: A, B` in an agent file names host env vars its runner may see (e.g. auth tokens). */
 export function agentEnvPassthrough(agentMarkdown: string): string[] {
   const match = agentMarkdown.match(/^Env Passthrough:\s*(.+)$/mi);
@@ -822,6 +842,7 @@ async function maybeRunSandboxExecution(input: {
   if (!fixtureDir || !existsSync(fixtureDir)) {
     throw new Error(`Sandbox fixture not found for ${input.benchmark.key}/${input.task.key}.`);
   }
+  assertTrapsOutsideFixture(fixtureDir, resolveTaskTrapsDir(input.benchmarksDir, input.benchmark.key, input.task));
 
   const workspaceDir = path.join(input.artifactsPath, "workspace");
   const taskBriefPath = path.join(input.artifactsPath, "task-brief.md");

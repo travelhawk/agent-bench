@@ -418,7 +418,11 @@ export interface TrapTotals {
  */
 export function setupTrapTotals(setup: { traps: Record<string, ComparisonTrapCell> }): TrapTotals | null {
   const cells = Object.values(setup.traps);
-  const decided = cells.reduce((sum, cell) => sum + cell.passed + cell.failed + (cell.error ?? 0), 0);
+  // An errored trap is neither a pass nor a fail: the check never ran. Counting
+  // it as decided would report `0/5` for a setup whose trap command crashed,
+  // which reads as five failed checks instead of no evidence. Every renderer
+  // goes through here, so the terminal and the exports cannot disagree.
+  const decided = cells.reduce((sum, cell) => sum + cell.passed + cell.failed, 0);
   if (decided === 0) return null;
   const passed = cells.reduce((sum, cell) => sum + cell.passed, 0);
   const total = cells.reduce((sum, cell) => sum + cell.passed + cell.failed + cell.unknown + (cell.error ?? 0), 0);

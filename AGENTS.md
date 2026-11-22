@@ -28,7 +28,8 @@ elsewhere; a skip is not a failure.
 
 ## Conventions
 
-- TypeScript throughout, Node 22.5+ (`node:sqlite` is built in — do not add a native SQLite dependency).
+- TypeScript throughout, Node 22.13+ (`node:sqlite` is built in — do not add a native SQLite
+  dependency). The module exists from 22.5.0 but needed `--experimental-sqlite` until 22.13.0.
 - Pure functions in `src/core/`, IO and process handling in `src/runtime/`, persistence and config in
   `src/server/`. Put logic where it can be tested without a database.
 - A comment explains *why*, not what. Most code needs none.
@@ -40,9 +41,12 @@ elsewhere; a skip is not a failure.
 
 - **Trap tests are holdout data.** They live in `benchmarks/<suite>/traps/` and are copied into the
   workspace only after the runner exits. Anything that leaks them earlier invalidates every result.
-- **The blind folder must stay blind.** `src/core/blind.ts` strips `.git`, `node_modules`, `result/`,
-  `traps/`, `dist/`, `.claude/`, `CLAUDE.md` and `AGENTS.md`. Agent output belongs in the run's
-  artifacts folder, never in the workspace.
+- **The blind folder must stay blind.** `src/core/blind.ts` strips VCS data, dependencies, harness
+  output, `traps/`, agent instruction files, secrets — and every dotted directory it does not
+  explicitly keep, at any depth. That last rule is the important one: a workflow that leaves
+  `.oneshot/` or `.agent/` behind, next to one that leaves nothing, tells the reviewer which build is
+  which before it reads a line of code. So the list denies by default and names only the exceptions.
+  Agent output belongs in the run's artifacts folder, never in the workspace.
 - **Runner environments are scrubbed by default.** A runner gets a small safe host env plus explicit
   `AGENT_BENCH_*` variables. Widen that only through an agent's `Env Passthrough:` line.
 - **Setups must be portable.** `benchmarks/<suite>/setups.json` ships in the package, so it must not

@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.31.0",
   "main": "dist/src/index.js",
   "bin": {
-    "agent-bench": "dist/src/index.js"
+    "agent-bench": "dist/src/bin.js"
   },
   "author": "Michael Falk",
   "repository": {
@@ -17,7 +17,7 @@
     "url": "https://github.com/travelhawk/agent-bench/issues"
   },
   "files": [
-    "dist",
+    "dist/src",
     "benchmarks",
     "examples",
     ".env.sample",
@@ -31,7 +31,7 @@
     "prepare": "pnpm run build:cli",
     "test": "pnpm run build:cli && node scripts/run-node-tests.cjs",
     "test:e2e": "playwright test",
-    "start": "node dist/src/index.js",
+    "start": "node dist/src/bin.js",
     "ui": "next dev --port 4173"
   },
   "keywords": [
@@ -46,7 +46,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "ai": "^5.0.146",

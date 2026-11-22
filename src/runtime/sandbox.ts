@@ -618,6 +618,18 @@ export async function runSandboxedCommand(input: RunSandboxedCommandInput): Prom
     const tree = killLeftovers ? watchProcessTree(child.pid, started) : null;
     let leftovers: Promise<number[]> | undefined;
     const reapLeftovers = () => {
+      // Kill the process we hold a handle to before asking the watcher for the
+      // rest. On Windows the watcher reads the process table through PowerShell,
+      // which can come back empty under load, and it used to be the only thing
+      // Ctrl-C relied on: one failed enumeration left the agent and its dev
+      // server running for the rest of the session.
+      if (!finished) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already exited
+        }
+      }
       leftovers ??= tree ? tree.stop() : Promise.resolve([]);
       if (tree) activeChildren.delete(reapLeftovers);
       return leftovers;

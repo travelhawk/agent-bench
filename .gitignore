@@ -15,3 +15,6 @@ next-env.d.ts
 test-results/
 playwright-report/
 reports/
+
+# Reviewer subagent notes, not part of the project.
+.claude/agent-memory/

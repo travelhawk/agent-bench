@@ -34,7 +34,17 @@ export interface ProcessRow {
  * finds a `vite preview` whose shell already exited. The start-time filter
  * guards against pid reuse by unrelated older processes.
  */
-export function collectDescendants(rows: ProcessRow[], rootPid: number | number[], sinceMs: number): number[] {
+export function collectDescendants(
+  rows: ProcessRow[],
+  rootPid: number | number[],
+  sinceMs: number,
+  /**
+   * Latest start time a descendant of that root may have, inherited down the
+   * tree. `selectKillTargets` sets it for roots that have already exited; see
+   * the note there on pid reuse.
+   */
+  startedBefore?: Map<number, number>
+): number[] {
   const roots = Array.isArray(rootPid) ? rootPid : [rootPid];
   const children = new Map<number, ProcessRow[]>();
   for (const row of rows) {
@@ -44,23 +54,33 @@ export function collectDescendants(rows: ProcessRow[], rootPid: number | number[
   }
   const found: number[] = [];
   const seen = new Set<number>(roots);
-  const queue = [...roots];
+  const queue = roots.map((pid) => ({ pid, limit: startedBefore?.get(pid) }));
   while (queue.length > 0) {
-    const parent = queue.shift()!;
+    const { pid: parent, limit } = queue.shift()!;
     for (const child of children.get(parent) ?? []) {
       if (seen.has(child.pid)) continue;
       if (child.startedAt != null && child.startedAt + 1000 < sinceMs) continue;
+      if (limit != null && child.startedAt != null && child.startedAt > limit) continue;
       seen.add(child.pid);
       found.push(child.pid);
-      queue.push(child.pid);
+      queue.push({ pid: child.pid, limit });
     }
   }
   return found;
 }
 
+/**
+ * Enumerating the process table normally takes well under a second. The wait is
+ * short because reaping leftovers is best effort and sits on the Ctrl-C path:
+ * a 30 second bound here made quitting a run take 30 seconds whenever the
+ * machine was loaded enough to stall PowerShell.
+ */
+const PROCESS_LIST_TIMEOUT_MS = 8_000;
+
 function run(bin: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
-    execFile(bin, args, { windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: 30_000 }, (error, stdout) => {
+    const options = { windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: PROCESS_LIST_TIMEOUT_MS };
+    execFile(bin, args, options, (error, stdout) => {
       resolve(error ? "" : String(stdout));
     });
   });
@@ -86,26 +106,51 @@ async function listProcesses(): Promise<ProcessRow[]> {
   })).filter((row) => Number.isFinite(row.pid) && Number.isFinite(row.ppid));
 }
 
+/** What the watcher remembers about a pid it saw during the run. */
+export interface KnownProcess {
+  /** Creation time, or null when the platform did not report one. */
+  startedAt: number | null;
+  /** When this pid was last confirmed alive, in ms since epoch. */
+  lastSeenMs: number;
+}
+
 /**
- * Picks the pids `stop()` may kill. `known` maps every pid seen during the run
- * to its creation time. A pid counts only while the live process still has
- * that creation time: Windows reuses pids, and a reused pid must neither be
- * killed nor used as a tree root. An exited pid is still a tree root. An unseen root counts only when it started
- * after the run began.
+ * How stale `lastSeenMs` may be: a child can appear between two snapshots, so
+ * the bound has to be at least the watch interval plus clock skew.
  */
-export function selectKillTargets(rows: ProcessRow[], rootPid: number, known: Map<number, number | null>, sinceMs: number): number[] {
+const REUSE_GRACE_MS = 15_000;
+
+/**
+ * Picks the pids `stop()` may kill. A pid counts only while the live process
+ * still has the creation time we recorded, because Windows reuses pids and a
+ * reused pid must neither be killed nor used as a tree root. An unseen root
+ * counts only when it started after the run began.
+ *
+ * An exited pid stays a tree root, because an orphan keeps its id as the
+ * recorded parent. That is also the dangerous case: once Windows hands the id
+ * to a stranger, the stranger's children have our dead pid as their parent.
+ * `sinceMs` does not catch them, since it is the start of the run and every
+ * process born during the run passes it. So a dead root only adopts children
+ * that started while we last knew it was alive.
+ */
+export function selectKillTargets(rows: ProcessRow[], rootPid: number, known: Map<number, KnownProcess>, sinceMs: number): number[] {
   const live = new Map(rows.map((row) => [row.pid, row]));
   const same = (pid: number) => {
     const row = live.get(pid);
     if (!row) return false;
-    if (known.has(pid)) return known.get(pid) === row.startedAt;
+    const seen = known.get(pid);
+    if (seen) return seen.startedAt === row.startedAt;
     return row.startedAt != null && row.startedAt + 1000 >= sinceMs;
   };
-  // An exited pid still works as a tree root: orphans keep its id as their
-  // recorded parent (children of a later reuse are caught by `sinceMs`).
   const candidates = [rootPid, ...known.keys()].filter((pid, index, all) => all.indexOf(pid) === index);
   const roots = candidates.filter((pid) => !live.has(pid) || same(pid));
-  const targets = new Set<number>([...roots.filter(same), ...collectDescendants(rows, roots, sinceMs)]);
+  const startedBefore = new Map<number, number>();
+  for (const pid of roots) {
+    if (live.has(pid)) continue;
+    const seen = known.get(pid);
+    if (seen) startedBefore.set(pid, seen.lastSeenMs + REUSE_GRACE_MS);
+  }
+  const targets = new Set<number>([...roots.filter(same), ...collectDescendants(rows, roots, sinceMs, startedBefore)]);
   targets.delete(process.pid);
   return [...targets];
 }
@@ -116,9 +161,14 @@ export function selectKillTargets(rows: ProcessRow[], rootPid: number, known: Ma
  * `stop()` kills everything still alive that descends from the root or from
  * any process seen in the tree, guarded by creation time against pid reuse.
  * On POSIX only the process group is killed. Best effort: never throws.
+ *
+ * Each snapshot is a full WMI process enumeration through PowerShell, and a
+ * task may run for 90 minutes on the same machine whose wall time becomes the
+ * efficiency score. The steady interval is therefore loose; the early snapshots
+ * below are what catch a launcher that exits seconds in.
  */
-export function watchProcessTree(rootPid: number | undefined, sinceMs: number, intervalMs = 3000): { stop: () => Promise<number[]> } {
-  const known = new Map<number, number | null>();
+export function watchProcessTree(rootPid: number | undefined, sinceMs: number, intervalMs = 10_000): { stop: () => Promise<number[]> } {
+  const known = new Map<number, KnownProcess>();
   const isWindows = process.platform === "win32";
   let timer: NodeJS.Timeout | undefined;
   let busy = false;
@@ -127,8 +177,11 @@ export function watchProcessTree(rootPid: number | undefined, sinceMs: number, i
     busy = true;
     try {
       const rows = await listProcesses();
+      const now = Date.now();
       for (const pid of selectKillTargets(rows, rootPid, known, sinceMs)) {
-        if (!known.has(pid)) known.set(pid, rows.find((row) => row.pid === pid)?.startedAt ?? null);
+        const seen = known.get(pid);
+        if (seen) seen.lastSeenMs = now;
+        else known.set(pid, { startedAt: rows.find((row) => row.pid === pid)?.startedAt ?? null, lastSeenMs: now });
       }
     } catch {
       // ignore

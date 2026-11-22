@@ -350,7 +350,7 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
     lines.push("## Blind review", "");
     lines.push("| Rank | Setup | Notes |", "| ---: | --- | --- |");
     for (const row of blindRanked) {
-      lines.push(`| ${row.blindRank} | ${setupDisplayName(row)} | ${(row.blindNotes ?? "").replace(/\s+/g, " ").replace(/\|/g, "\\|")} |`);
+      lines.push(`| ${row.blindRank} | ${mdCell(setupDisplayName(row))} | ${mdCell(row.blindNotes ?? "")} |`);
     }
     lines.push("");
   }
@@ -358,7 +358,7 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
   lines.push("## Metrics per setup", "", "_avg (min-max) over trials_", "");
   lines.push("| Setup | Runs | Wall time | Agent input tokens | Agent output tokens | Agent cost |", "| --- | ---: | ---: | ---: | ---: | ---: |");
   for (const row of buildMetricsRows(matrix)) {
-    lines.push(`| ${row.setup} | ${row.runs} | ${row.wallTime} | ${row.inputTokens} | ${row.outputTokens} | ${row.agentCost} |`);
+    lines.push(`| ${mdCell(row.setup)} | ${row.runs} | ${row.wallTime} | ${row.inputTokens} | ${row.outputTokens} | ${row.agentCost} |`);
   }
   lines.push("", "**Batch totals**", "", ...formatBatchTotals(payload.batchTotals).map(([label, value]) => `- ${label}: ${value}`), "");
 
@@ -372,11 +372,31 @@ export function renderComparisonMarkdown(matrix: ComparisonMatrix, meta: Compari
   return lines.join("\n");
 }
 
+/**
+ * Setup labels are free text up to 80 characters, so a `|` in one would break
+ * the table row it lands in. Reviewer notes were already escaped; the labels
+ * were not.
+ */
+function mdCell(value: string): string {
+  return value.replace(/\s+/g, " ").replace(/\|/g, "\\|");
+}
+
 /* ---------------- CSV ---------------- */
+
+/**
+ * A cell opening with `=`, `+`, `@` or a lone `-` runs as a formula when the CSV
+ * is opened in Excel or Sheets, and setup labels are free text. A leading
+ * apostrophe keeps the value readable and inert. This suite ships a
+ * `csv-formula-roundtrip` trap for the same bug in the builds it measures.
+ */
+function csvFormulaSafe(text: string): string {
+  const risky = /^[=+@\t\r]/.test(text) || (text.startsWith("-") && !Number.isFinite(Number(text)));
+  return risky ? `'${text}` : text;
+}
 
 function csvCell(value: string | number | null): string {
   if (value == null) return "";
-  const text = String(value);
+  const text = typeof value === "number" ? String(value) : csvFormulaSafe(value);
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { formatCliError, parseTrialsOption } from "../src/core/cli-helpers";
 import { runTrapStep } from "../src/runtime/evaluator";
-import { collectDescendants, findFreePort, selectKillTargets, TRAP_PORT_ENV } from "../src/runtime/ports";
+import { collectDescendants, findFreePort, type KnownProcess, selectKillTargets, TRAP_PORT_ENV } from "../src/runtime/ports";
 import { firstOutputLine, resolveTrapResults } from "../src/runtime/traps";
 import { expandTrialJobs, normalizeTrials } from "../src/server/service";
 import { BenchmarkTaskRecord } from "../src/types";
@@ -129,7 +129,10 @@ test("a trap command that dies before any test ran marks every trap 'error' with
 test("selectKillTargets skips a known pid that Windows reused for an unrelated process", () => {
   const since = 1_000_000;
   // Seen during the run: root 10 and its child 11.
-  const known = new Map<number, number | null>([[10, since], [11, since + 50]]);
+  const known = new Map<number, KnownProcess>([
+    [10, { startedAt: since, lastSeenMs: since }],
+    [11, { startedAt: since + 50, lastSeenMs: since + 50 }]
+  ]);
   const rows = [
     { pid: 10, ppid: 1, startedAt: since + 90_000 },   // pid 10 reused by an unrelated process
     { pid: 11, ppid: 10, startedAt: since + 50 },      // our child, still alive
@@ -152,4 +155,32 @@ test("selectKillTargets still follows orphans of a root that already exited", ()
   const since = 1_000_000;
   const rows = [{ pid: 11, ppid: 10, startedAt: since + 50 }];
   assert.deepEqual(selectKillTargets(rows, 10, new Map(), since), [11]);
+});
+
+test("selectKillTargets does not adopt a stranger's child after a dead pid was reused", () => {
+  const since = 1_000_000;
+  // Our launcher held pid 10 and was last seen two seconds into the run. It is
+  // gone from the live table now, so it still works as a root for its orphans.
+  const known = new Map<number, KnownProcess>([[10, { startedAt: since, lastSeenMs: since + 2_000 }]]);
+  const rows = [
+    // A genuine orphan: started while we still knew the launcher was alive.
+    { pid: 11, ppid: 10, startedAt: since + 1_500 },
+    // Windows handed pid 10 to a stranger an hour later; this is the stranger's
+    // child. `sinceMs` does not exclude it, because the run is still going.
+    { pid: 20, ppid: 10, startedAt: since + 3_600_000 }
+  ];
+  assert.deepEqual(selectKillTargets(rows, 10, known, since).sort(), [11]);
+});
+
+test("collectDescendants honours a per-root start-time ceiling", () => {
+  const since = 1_000_000;
+  const rows = [
+    { pid: 11, ppid: 10, startedAt: since + 100 },
+    { pid: 12, ppid: 11, startedAt: since + 200 },
+    { pid: 20, ppid: 10, startedAt: since + 90_000 }
+  ];
+  const ceiling = new Map([[10, since + 1_000]]);
+  // The ceiling is inherited down the tree, so 12 survives with its parent.
+  assert.deepEqual(collectDescendants(rows, 10, since, ceiling).sort(), [11, 12]);
+  assert.deepEqual(collectDescendants(rows, 10, since).sort(), [11, 12, 20]);
 });

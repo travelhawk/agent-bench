@@ -5,11 +5,22 @@ import { checkNodeVersion, DoctorCheck, summarizeDoctorChecks } from "../src/ser
 test("checkNodeVersion fails below the node:sqlite cutoff", () => {
   const check = checkNodeVersion("v22.4.1");
   assert.equal(check.status, "fail");
-  assert.match(check.fix ?? "", /22\.5/);
+  assert.match(check.fix ?? "", /22\.13/);
+});
+
+/**
+ * node:sqlite exists from 22.5.0 but needed `--experimental-sqlite` until
+ * 22.13.0, so the store cannot be opened on 22.5 to 22.12 either. The floor
+ * used to be 22.5, which would have published a supported range the CLI cannot
+ * start in.
+ */
+test("checkNodeVersion fails while node:sqlite still needed a flag", () => {
+  assert.equal(checkNodeVersion("v22.5.0").status, "fail");
+  assert.equal(checkNodeVersion("v22.12.0").status, "fail");
 });
 
 test("checkNodeVersion warns while node:sqlite is experimental", () => {
-  assert.equal(checkNodeVersion("v22.5.0").status, "warn");
+  assert.equal(checkNodeVersion("v22.13.0").status, "warn");
   assert.equal(checkNodeVersion("v23.1.0").status, "warn");
 });
 

@@ -28,6 +28,9 @@ That is one task at n=3, so treat it as a signal rather than a law. Reproduce it
 
 ## Install
 
+Needs **Node 22.13 or newer** (24 LTS recommended). Runs are stored with the built-in `node:sqlite`
+module, which older versions do not expose without a command-line flag.
+
 ```bash
 npx agent-bench init
 npx agent-bench doctor
@@ -601,7 +604,7 @@ Important:
 
 ## Troubleshooting
 
-- If the Next.js app fails to start after dependency changes, run `pnpm install` again. Persistence uses Node's built-in `node:sqlite`, so changing the local Node version no longer requires rebuilding a native module — but Node **22.5 or newer** is required (24+ recommended, where `node:sqlite` is stable).
+- If the Next.js app fails to start after dependency changes, run `pnpm install` again. Persistence uses Node's built-in `node:sqlite`, so changing the local Node version no longer requires rebuilding a native module — but Node **22.13 or newer** is required (24+ recommended, where `node:sqlite` is stable). The module exists from 22.5.0 but needed `--experimental-sqlite` until 22.13.0, so the CLI refuses anything older with a plain message instead of a stack trace.
 - If skills search or project skill management fails on Windows, retry after `pnpm install`; the app now invokes `skills.sh` through `cmd.exe` because direct `spawnSync("npx.cmd", ...)` is not reliable inside the Node server process.
 - Existing SQLite databases are migrated on startup. If startup reports a missing run column, stop duplicate `next dev` processes and restart so the latest schema migration can run once.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.
