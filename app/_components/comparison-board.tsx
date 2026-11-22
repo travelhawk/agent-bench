@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { RunRecord } from "../../src/types";
-import { buildComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, runBenchmarkKey, runTaskKey, setupDisplayName, setupKeyForRun, setupModelSuffix } from "../../src/core/comparison";
+import { buildComparisonMatrix, type ComparisonMatrix, ComparisonSetup, NO_MODEL_LABEL, runBenchmarkKey, runTaskKey, setupDisplayName, setupKeyForRun, setupModelSuffix } from "../../src/core/comparison";
 import type { ComparisonExportFormat } from "../../src/core/export";
 
 const EXPORT_FORMATS: Array<{ value: ComparisonExportFormat; label: string; hint: string }> = [
@@ -27,6 +27,16 @@ function formatDuration(ms: number | null): string {
 
 function testsRatioLabel(passed: number, total: number): string {
   return total > 0 ? `${passed}/${total}` : "n/a";
+}
+
+/** "only N run(s) …" needs something to be `only` next to, or the sentence starts mid-thought. */
+function reviewCostLabel(totals: ComparisonMatrix["totals"]): string {
+  const free: string[] = [];
+  if (totals.cachedReviews > 0) free.push(`${totals.cachedReviews} review(s) were served from the judge cache`);
+  const deterministic = totals.rulesReviews + totals.offReviews;
+  if (deterministic > 0) free.push(`${deterministic} used the deterministic rules rubric`);
+  const spent = `${totals.gatewayReviews} run(s) spent fresh judge tokens.`;
+  return free.length > 0 ? `${free.join(", ")} — only ${spent}` : spent;
 }
 
 function scoreTone(score: number | null): string {
@@ -204,7 +214,7 @@ export function ComparisonBoard({ runs, initialBenchmarkKey }: { runs: RunRecord
       </div>
       {shareState.message && <p className={`status-line status-line-${shareState.tone}`}>{shareState.message}</p>}
 
-      <p className="status-line">This view aggregates persisted runs only — filtering and re-rendering never call a model. {matrix.totals.cachedReviews > 0 ? `${matrix.totals.cachedReviews} review(s) were served from the judge cache, ` : ""}{matrix.totals.rulesReviews + matrix.totals.offReviews > 0 ? `${matrix.totals.rulesReviews + matrix.totals.offReviews} used the deterministic rules rubric — ` : ""}only {matrix.totals.gatewayReviews} run(s) spent fresh judge tokens.</p>
+      <p className="status-line">This view aggregates persisted runs only — filtering and re-rendering never call a model. {reviewCostLabel(matrix.totals)}</p>
 
       <div className="table-scroll">
         <table className="matrix-table">

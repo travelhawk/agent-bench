@@ -51,6 +51,8 @@ review found ways a measurement could still go quietly wrong.
 
 Everything else in this release:
 
+- The comparison board's review-cost line no longer starts mid-sentence. With every run judged, the
+  two optional clauses before it dropped out and left a bare "only 10 run(s) spent fresh judge tokens"
 - Added a `LICENSE` file (MIT). `package.json` had declared MIT since the start, but without the file
   GitHub showed no license, which legally means all rights reserved
 - Prepared the package for npm: `files`, `repository`, `author`, `homepage` and `bugs`, so an install

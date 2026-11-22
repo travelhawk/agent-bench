@@ -12,6 +12,15 @@ import {
   supportsDockerSandbox
 } from "../src/runtime/sandbox";
 
+/**
+ * Windows releases a killed process's handles after the kill call returns, so a
+ * plain rmSync on its working directory can still fail with EPERM. Retry.
+ */
+function removeDir(dir: string): void {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 });
+}
+
+
 test("resolveCommandLookupSpec uses where on Windows and which elsewhere", () => {
   assert.deepEqual(resolveCommandLookupSpec("node", "win32"), {
     bin: "where",
@@ -92,7 +101,7 @@ test("runSandboxedCommand can execute inside the docker provider when available"
       process.env.AGENT_BENCH_SANDBOX_DOCKER_IMAGE = previousImage;
     }
 
-    rmSync(workspace, { recursive: true, force: true });
+    removeDir(workspace);
   }
 });
 
@@ -122,6 +131,6 @@ test("stopActiveChildren kills a running detached command (used by the SIGINT/SI
   } finally {
     if (previousProvider === undefined) delete process.env.AGENT_BENCH_SANDBOX_PROVIDER;
     else process.env.AGENT_BENCH_SANDBOX_PROVIDER = previousProvider;
-    rmSync(root, { recursive: true, force: true });
+    removeDir(root);
   }
 });
