@@ -11,9 +11,12 @@ import {
   RunInput,
   RuntimeEvaluationRequest,
   ScoreConfidence,
-  ScoreProfileKey
+  ScoreProfileKey,
+  TrapResult
 } from "../types";
+import { failAllTraps, installTraps, readTrapReport, resolveTrapResults, summarizeTraps, writeTrapArtifact } from "./traps";
 import { runSandboxedCommand, SandboxCommandResult } from "./sandbox";
+import { findFreePort, TRAP_PORT_ENV } from "./ports";
 import { computeWorkspaceGitDiffStats, initWorkspaceGitBaseline } from "./git-diff";
 import { isNodeTestRunnerCommand, parseNodeTestTapSummary, parseVerifierChecksMarker, TestRunSummary } from "./test-summary";
 import { AgentUsageReport, readAgentUsageReport } from "./agent-usage";
@@ -98,6 +101,8 @@ interface SandboxExecutionResult {
   diffPatch?: string;
   testMetrics: TestRunSummary;
   agentUsage: AgentUsageReport;
+  trapResults: TrapResult[];
+  trapRunner?: SandboxCommandResult;
 }
 
 type JudgeCacheMap = Record<string, JudgeCacheEntry>;
@@ -451,7 +456,37 @@ export function resolveJudgeModel(model?: string): string {
   return model?.trim() || process.env.AGENT_BENCH_JUDGE_MODEL?.trim() || DEFAULT_MODEL;
 }
 
-function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string }): string {
+/**
+ * A runner-backed agent spends `model` on its own work, so letting that model
+ * also pick the judge would change two variables at once in a model-vs-model
+ * comparison. Only a review-only agent has no model of its own, so there
+ * `model` can still mean "judge" the way it always has.
+ */
+export function resolveJudgeModelForRun(input: {
+  judgeModel?: string;
+  model?: string;
+  hasRunner: boolean;
+}): string {
+  if (input.judgeModel?.trim()) return input.judgeModel.trim();
+  return resolveJudgeModel(input.hasRunner ? undefined : input.model);
+}
+
+/**
+ * A runner that calls a model needs egress even when the task itself does not.
+ * The task declares what the *work* needs; the agent declares what the
+ * *workflow* needs, and a sandboxed run has to satisfy both.
+ */
+export function agentRequiresNetwork(agentMarkdown: string): boolean {
+  const match = agentMarkdown.match(/^Requires Network:\s*(.+)$/mi);
+  const value = match?.[1]?.trim().toLowerCase();
+  return value === "yes" || value === "true";
+}
+
+/**
+ * Judge cache key. `evidence` is the build output (diff + sandbox result), so
+ * a trial with a different result never reuses another trial's score.
+ */
+export function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; model: string; taskContext: string; agentMd: string; judgeMode?: string; evidence?: string }): string {
   return createHash("sha256")
     .update(input.benchmarkKey)
     .update("\n")
@@ -464,6 +499,8 @@ function makeJudgeFingerprint(input: { benchmarkKey: string; taskKey?: string; m
     .update(input.taskContext)
     .update("\n")
     .update(input.agentMd)
+    .update("\n")
+    .update(createHash("sha256").update(input.evidence ?? "").digest("hex"))
     .digest("hex");
 }
 
@@ -478,6 +515,78 @@ function loadJudgeCache(cachePath: string): JudgeCacheMap {
 
 function saveJudgeCache(cachePath: string, cache: JudgeCacheMap): void {
   writeFileSync(cachePath, JSON.stringify(cache, null, 2));
+}
+
+function resolveTaskTrapsDir(benchmarksDir: string | undefined, benchmarkKey: string, task: BenchmarkTaskRecord): string | null {
+  if (!benchmarksDir || !task.sandbox?.trapsDir) return null;
+  return path.join(benchmarksDir, benchmarkKey, task.sandbox.trapsDir);
+}
+
+/**
+ * Benchmarks are user-written markdown, so a task can name any `Fixture Dir:`.
+ * A fixture that contains the traps folder copies the holdout checks into the
+ * workspace before the runner starts and silently invalidates every number of
+ * that run. Refuse instead, so the holdout is structural and not a convention.
+ */
+export function assertTrapsOutsideFixture(fixtureDir: string, trapsDir: string | null): void {
+  if (!trapsDir) return;
+  const fixture = path.resolve(fixtureDir);
+  const traps = path.resolve(trapsDir);
+  const relative = path.relative(fixture, traps);
+  const inside = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  if (inside) {
+    throw new Error(
+      `Traps Dir (${traps}) is inside Fixture Dir (${fixture}). The fixture is copied into the workspace ` +
+        "before the agent runs, so the traps would not be holdout data. Move traps/ outside the fixture."
+    );
+  }
+}
+
+/** `Env Passthrough: A, B` in an agent file names host env vars its runner may see (e.g. auth tokens). */
+export function agentEnvPassthrough(agentMarkdown: string): string[] {
+  const match = agentMarkdown.match(/^Env Passthrough:\s*(.+)$/mi);
+  if (!match) return [];
+  return match[1].split(",").map((entry) => entry.trim()).filter((entry) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(entry));
+}
+
+/**
+ * Hidden checks: after the runner finished, copy the holdout files in, run the
+ * trap command and map its JSON report to the declared trap ids.
+ */
+export async function runTrapStep(input: {
+  task: BenchmarkTaskRecord;
+  trapsSourceDir: string | null;
+  runnerSucceeded: boolean;
+  /** `env` carries AGENT_BENCH_TRAP_PORT; callers merge it into the command env. */
+  run: (command: string, env: Record<string, string>) => Promise<SandboxCommandResult>;
+  workspaceDir: string;
+  artifactsDir: string;
+  /** Test seam; defaults to asking the OS for a free port. */
+  pickPort?: () => Promise<number>;
+}): Promise<{ results: TrapResult[]; runner?: SandboxCommandResult; port?: number }> {
+  const traps = input.task.traps ?? [];
+  const command = input.task.sandbox?.trapCommand;
+  if (traps.length === 0 || !command || !input.trapsSourceDir) return { results: [] };
+  if (!input.runnerSucceeded) {
+    const results = failAllTraps(traps);
+    writeTrapArtifact(input.artifactsDir, results, { skipped: "runner failed" });
+    return { results };
+  }
+  installTraps(input.trapsSourceDir, input.workspaceDir);
+  // A fresh port per trap run: a server the build left behind on the usual
+  // port (4173) must not turn every trap into "port already used".
+  const port = await (input.pickPort ?? findFreePort)();
+  const runner = await input.run(command, { [TRAP_PORT_ENV]: String(port) });
+  const results = resolveTrapResults(traps, readTrapReport(input.workspaceDir), runner);
+  writeTrapArtifact(input.artifactsDir, results, {
+    command,
+    port,
+    exitCode: runner.exitCode,
+    timedOut: runner.timedOut,
+    stdout: runner.stdout,
+    stderr: runner.stderr
+  });
+  return { results, runner, port };
 }
 
 function resolveTaskFixtureDir(benchmarksDir: string | undefined, benchmarkKey: string, task: BenchmarkTaskRecord): string | null {
@@ -705,6 +814,7 @@ async function maybeRunSandboxExecution(input: {
   resolvedSandboxProvider?: RuntimeEvaluationRequest["resolvedSandboxProvider"];
   model?: string;
   providerApiKey?: string;
+  runnerEnv?: Record<string, string>;
 }): Promise<SandboxExecutionResult> {
   if (!input.task?.sandbox || !input.agentRunnerCommand) {
     return {
@@ -723,7 +833,8 @@ async function maybeRunSandboxExecution(input: {
       durationMs: 0,
       diff: { available: false, filesChanged: 0, insertions: 0, deletions: 0 },
       testMetrics: UNAVAILABLE_TEST_METRICS,
-      agentUsage: UNAVAILABLE_AGENT_USAGE
+      agentUsage: UNAVAILABLE_AGENT_USAGE,
+      trapResults: []
     };
   }
 
@@ -731,6 +842,7 @@ async function maybeRunSandboxExecution(input: {
   if (!fixtureDir || !existsSync(fixtureDir)) {
     throw new Error(`Sandbox fixture not found for ${input.benchmark.key}/${input.task.key}.`);
   }
+  assertTrapsOutsideFixture(fixtureDir, resolveTaskTrapsDir(input.benchmarksDir, input.benchmark.key, input.task));
 
   const workspaceDir = path.join(input.artifactsPath, "workspace");
   const taskBriefPath = path.join(input.artifactsPath, "task-brief.md");
@@ -749,7 +861,7 @@ async function maybeRunSandboxExecution(input: {
     systemRoots: input.agentSystemRoots
   });
   const readOnlyDirs = [...new Set(input.agentSystemRoots.filter(Boolean))];
-  const allowNetwork = input.task.metadata.requiresNetwork;
+  const allowNetwork = input.task.metadata.requiresNetwork || agentRequiresNetwork(input.agentMarkdown);
   cpSync(fixtureDir, workspaceDir, { recursive: true });
   initWorkspaceGitBaseline(workspaceDir);
   writeFileSync(taskBriefPath, buildTaskBrief(input.benchmark, input.task), "utf8");
@@ -780,6 +892,12 @@ async function maybeRunSandboxExecution(input: {
   if (agentArtifactDir) {
     commandEnv.AGENT_BENCH_AGENT_ARTIFACT_DIR = agentArtifactDir;
   }
+  const runnerEnv: Record<string, string> = { ...commandEnv };
+  for (const key of agentEnvPassthrough(input.agentMarkdown)) {
+    const value = process.env[key];
+    if (value) runnerEnv[key] = value;
+  }
+  Object.assign(runnerEnv, input.runnerEnv ?? {});
   const timeoutMs = input.task.sandbox.timeoutMs;
   const provider = input.resolvedSandboxProvider && input.resolvedSandboxProvider !== "mixed"
     ? input.resolvedSandboxProvider
@@ -795,9 +913,10 @@ async function maybeRunSandboxExecution(input: {
     timeoutMs,
     allowNetwork,
     label: "runner",
+    killLeftovers: true,
     provider,
     strictProvider: Boolean(input.strictSandbox && provider),
-    env: commandEnv as unknown as NodeJS.ProcessEnv,
+    env: runnerEnv as unknown as NodeJS.ProcessEnv,
     providerApiKey: input.providerApiKey,
     model: input.model
   });
@@ -813,12 +932,34 @@ async function maybeRunSandboxExecution(input: {
       timeoutMs,
       allowNetwork,
       label: "verifier",
+      killLeftovers: true,
       provider,
       strictProvider: Boolean(input.strictSandbox && provider),
       env: commandEnv as unknown as NodeJS.ProcessEnv
     })
     : undefined;
   const summary = summarizeSandboxExecution(runner, verifier, input.task.sandbox.verifyCommand);
+  const traps = await runTrapStep({
+    task: input.task,
+    trapsSourceDir: resolveTaskTrapsDir(input.benchmarksDir, input.benchmark.key, input.task),
+    runnerSucceeded: runner.exitCode === 0,
+    run: (command, trapEnv) => runSandboxedCommand({
+      command,
+      cwd: workspaceDir,
+      workspaceDir,
+      artifactsDir: input.artifactsPath,
+      readOnlyDirs,
+      timeoutMs,
+      allowNetwork,
+      label: "traps",
+      provider,
+      strictProvider: Boolean(input.strictSandbox && provider),
+      killLeftovers: true,
+      env: { ...commandEnv, ...trapEnv } as unknown as NodeJS.ProcessEnv
+    }),
+    workspaceDir,
+    artifactsDir: input.artifactsPath
+  });
 
   return {
     mode: "sandbox",
@@ -829,6 +970,8 @@ async function maybeRunSandboxExecution(input: {
     runner,
     verifier,
     durationMs: runner.durationMs + (verifier?.durationMs ?? 0),
+    trapResults: traps.results,
+    trapRunner: traps.runner,
     diff: {
       available: diffStats.available,
       filesChanged: diffStats.filesChanged,
@@ -1109,7 +1252,11 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const agentVersion = /v\d+/i.test(agentName) ? agentName.match(/v\d+/i)![0] : "v1";
   const taskContext = buildTaskContext(input.benchmarks, input.benchmarkKey, input.taskKey);
   const assessment = buildRulesAssessment(selectedBenchmark, selectedTask, material.previewMarkdown);
-  const model = resolveJudgeModel(input.model);
+  const judgeModel = resolveJudgeModelForRun({
+    judgeModel: input.judgeModel,
+    model: input.model,
+    hasRunner: Boolean(input.agentRunnerCommand)
+  });
   const artifactsPath = path.join(input.artifactsRoot, input.runKey);
   mkdirSync(artifactsPath, { recursive: true });
   const sandbox = await maybeRunSandboxExecution({
@@ -1130,8 +1277,10 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     agentRunnerCommand: input.agentRunnerCommand,
     strictSandbox: input.strictSandbox,
     resolvedSandboxProvider: input.resolvedSandboxProvider,
-    model,
-    providerApiKey: input.gatewayApiKey
+    // The runner gets the model under test, never the judge's model.
+    model: input.model,
+    providerApiKey: input.gatewayApiKey,
+    runnerEnv: input.runnerEnv
   });
   const outcomeScore = sandbox.mode === "sandbox" ? sandbox.outcomeScore : assessment.outcomeScore;
   const processScore = sandbox.mode === "sandbox" && sandbox.processScore > 0 ? sandbox.processScore : assessment.processScore;
@@ -1198,10 +1347,22 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
   const fingerprint = makeJudgeFingerprint({
     benchmarkKey: input.benchmarkKey,
     taskKey: input.taskKey,
-    model,
+    model: judgeModel,
     taskContext,
-    agentMd: material.previewMarkdown,
-    judgeMode
+    agentMd: `${material.previewMarkdown}${input.runnerEnv ? `
+${JSON.stringify(input.runnerEnv)}` : ""}`,
+    judgeMode,
+    evidence: JSON.stringify({
+      diffPatch: sandbox.diffPatch ?? null,
+      mode: sandbox.mode,
+      outcomeScore: sandbox.outcomeScore,
+      processScore: sandbox.processScore,
+      objectiveChecks: sandbox.objectiveChecks,
+      testMetrics: sandbox.testMetrics,
+      diff: sandbox.diff,
+      runner: sandbox.runner ? { exitCode: sandbox.runner.exitCode, timedOut: sandbox.runner.timedOut } : null,
+      verifier: sandbox.verifier ? { exitCode: sandbox.verifier.exitCode, timedOut: sandbox.verifier.timedOut } : null
+    })
   });
   const cachePath = cachePathFromArtifactsRoot(input.artifactsRoot);
   const judgeCache = loadJudgeCache(cachePath);
@@ -1222,7 +1383,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     } else {
       judge = await runJudgeReview({
         apiKey,
-        model,
+        model: judgeModel,
         benchmarkKey: input.benchmarkKey,
         taskKey: input.taskKey,
         agentPath: material.agentPathLabel,
@@ -1243,18 +1404,23 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       }
     }
   } else {
-    const rulesReviewReason = sandbox.mode === "sandbox" ? `${assessment.reason} ${sandbox.reason}`.trim() : assessment.reason;
-    const rulesReviewScore = clampScore(assessment.reviewScore + (sandbox.mode === "sandbox" && sandbox.verifier?.exitCode === 0 ? 0.6 : 0));
-    const rulesQualityScore = sandbox.mode === "sandbox"
-      ? clampScore(sandbox.verifier?.exitCode === 0 ? 6.0 : 4.0)
-      : clampScore(assessment.reviewScore);
+    // No LLM judge: there is no review or quality signal. The old heuristic
+    // rated the agent markdown ("clear role or behavior contract ...") and
+    // stored a constant quality of 6.0, which ranked prompt wording instead of
+    // the built product. Only objective build signals are kept: the review
+    // slot mirrors the outcome score (runner exit, verifier, tests) and quality
+    // stays unset (n/a).
+    const rulesReviewReason = sandbox.mode === "sandbox"
+      ? `No LLM judge; objective build signals only. ${sandbox.reason}`.trim()
+      : "No LLM judge and no sandbox run; nothing objective to score.";
+    const rulesReviewScore = sandbox.mode === "sandbox" ? clampScore(outcomeScore) : 0;
     judge = {
       score: rulesReviewScore,
-      qualityScore: rulesQualityScore,
+      qualityScore: undefined,
       latencyMs: 1,
       totalTokens: 0,
-      rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: rulesQualityScore, reason: rulesReviewReason }),
-      reason: `${rulesReviewReason} (quality score is a low-confidence heuristic, not LLM-judged)`.trim(),
+      rawText: JSON.stringify({ score: rulesReviewScore, qualityScore: null, reason: rulesReviewReason }),
+      reason: rulesReviewReason,
       mode: reviewDisabled ? "off" : "rules"
     };
   }
@@ -1282,7 +1448,9 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     profile: scoreProfile,
     outcome: outcomeScore,
     process: processScore,
-    review: judge.score,
+    // Rules/off mode has no review signal; leave it out so the total is
+    // driven by objective outcome + efficiency only.
+    review: apiKey ? judge.score : undefined,
     efficiency: efficiencyScore,
     quality: judge.qualityScore
   });
@@ -1319,7 +1487,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Review mode: ${judge.mode}`,
     `Score profile: ${scoreProfile}`,
     `Score confidence: ${scoreConfidence}`,
-    `Model: ${model}`,
+    `Model under test: ${input.model ?? "n/a"}`,
+    `Judge model: ${judgeModel}`,
     `Outcome score: ${outcomeScore}`,
     `Process score: ${processScore}`,
     `Review score: ${judge.score}`,
@@ -1332,6 +1501,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     `Agent usage: ${sandbox.agentUsage.available ? `${sandbox.agentUsage.inputTokens}in/${sandbox.agentUsage.outputTokens}out, $${agentCostUsd.toFixed(4)}` : "n/a"}`,
     `Visual artifacts: ${[visuals.screenshotFile, visuals.videoFile].filter(Boolean).join(", ") || "none"}`,
     `Objective checks: ${sandbox.objectiveChecks.passed}/${sandbox.objectiveChecks.available}`,
+    `Traps: ${summarizeTraps(sandbox.trapResults)}`,
     `Matched signals: ${matchedSignals.join("; ") || "none"}`,
     `Open gaps: ${missingSignals.join("; ") || "none"}`,
     `Recommended next actions: ${recommendedNextActions.join(" | ") || "none"}`,
@@ -1369,7 +1539,8 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
       assetFileCount: material.assetFileCount,
       skills: material.skills
     },
-    model,
+    model: input.model ?? null,
+    judgeModel,
     executionMode: sandbox.mode,
     reviewMode: judge.mode,
     resolvedSandboxProvider: input.resolvedSandboxProvider ?? sandbox.provider ?? null,
@@ -1389,6 +1560,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     objectivePass,
     diff: sandbox.diff,
     testMetrics: sandbox.testMetrics,
+    trapResults: sandbox.trapResults,
     qualityScore: judge.qualityScore ?? null,
     visuals,
     agentUsage: {
@@ -1478,6 +1650,7 @@ export async function evaluate(input: RuntimeEvaluationRequest): Promise<RunInpu
     agentUsageAvailable: sandbox.agentUsage.available,
     agentInputTokens: sandbox.agentUsage.inputTokens,
     agentOutputTokens: sandbox.agentUsage.outputTokens,
-    agentCostUsd
+    agentCostUsd,
+    trapResults: sandbox.trapResults
   };
 }

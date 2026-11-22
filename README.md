@@ -1,93 +1,137 @@
 # agent-bench
 
-Local-first full-stack benchmarking workbench for AI agents.
+Compare coding agents, workflows and models on the same task — with tests they never get to see.
 
-`agent-bench` now combines a CLI, a Next.js workbench, SQLite persistence, benchmark markdown files, and artifact snapshots so you can load agents, queue eval playlists, and inspect runs without needing a hosted evaluation platform first.
+An agent writes its own tests, so a green suite only proves it covered what it already thought of.
+`agent-bench` adds the part the agent cannot study for: **traps**, holdout checks written before the run
+and copied into the workspace only after the agent has finished. On top of that it can rank the finished
+builds **blind**, with the reviewer never learning which setup produced which build.
 
-## What Changed Since v0.3.0
+It runs locally: SQLite for history, markdown for benchmarks and agents, a CLI plus a small web
+workbench. Comparing and exporting render only from stored rows, so re-reading a result costs no tokens.
 
-- Replaced the older broad default suites with a smaller benchmark-grade set: `repo-maintenance`, `product-builds`, and `creative-frontend`.
-- Added deterministic seeded fixtures for a security audit task, a CLI build task, and a simple web-app task, plus a bounded landing-page task for human and LLM review.
-- Restored benchmark metadata fields for `Reliability`, `Time Budget Ms`, `Cost Budget Usd`, and `Default Trials` so tasks are easier to compare after small agent prompt changes.
-- Added strict sandbox-provider support so callers can fail closed instead of silently degrading to host-process execution when a dedicated sandbox is required.
-- Reframed the Test Lab around a guided local runner flow with explicit blocker states, next-step guidance, and post-run actions.
-- Persisted failed batch jobs as first-class run history entries with failure summaries, logs, and rerun support.
-- Replaced the old fixed score framing in the UI with evaluator-aware outcome/process/review/efficiency breakdowns plus confidence labels.
-- Extended benchmark tasks with structured sections for `Why This Task`, `Inputs`, `Deliverable Format`, `Success Checks`, and `Failure Modes`.
-- Upgraded the seeded benchmark tasks so the shipped suites are more specific and benchmark-grade by default.
-- Added run-detail evidence panels with objective checks, matched/missing signals, and recommended next actions.
-- Added the first real sandbox execution path for fixture-backed benchmark tasks plus markdown agents that declare a `Runner:` command.
-- Sandboxed runs now execute the runner from the agent directory, expose the task workspace via environment variables, and verify the result with an explicit task command.
-- On macOS, sandboxed runs now use `sandbox-exec` with workspace/artifact write restrictions and network denial unless the task explicitly requires network access.
-- On hosts without macOS seatbelt, `auto` mode now chooses Docker only when the daemon is ready and the configured image already exists locally; otherwise it falls back to `process`.
-- Hardened Windows execution paths by using `where` for binary lookup, keeping Docker container shells on `/bin/sh`, and standardizing seeded verifier commands on explicit relative test-file globs.
-- The default seeded tasks now bias toward repo, CLI, web-app, and landing-page work instead of broader environment simulations.
-- The sample workspace now includes runnable browser and computer-use example agents under `./examples/sample-workspace`.
-- Runner environments are now scrubbed by default and only receive a small safe host env plus explicit `AGENT_BENCH_*` runtime variables.
-- Added a GitHub Actions CI matrix so the branch is validated on `ubuntu-latest`, `macos-latest`, and `windows-latest`.
-- Hardened API input handling so JSON routes reject invalid or non-object payloads with explicit client errors.
-- Batch execution now tolerates per-run failures and reports partial results instead of aborting the whole queue on the first runtime error.
-- Replaced hash-based local fallback scores with deterministic rules-based review tied to actual agent/task fit.
-- Replaced pseudo-screenshot artifacts with generated run reports that describe the real evaluation signals.
-- Benchmark metadata now covers resolution, interaction surface, evaluator mode, difficulty, and environment constraints.
-- Added seeded higher-resolution suites for agentic workflows plus browser/computer-use interaction surfaces.
-- Moved the sample workspace out of `./agents` into `./examples/sample-workspace` so a fresh checkout no longer auto-loads example agents as real inputs.
-- Added research-backed benchmark notes in `docs/AGENTIC_TEST_RESEARCH.md`.
+## A measured example
 
-## What Changed In v0.3.0
+Three Claude Code workflows, one spec (a small budgeting app), three runs each, five hidden checks:
 
-- Migrated the UI into a Next.js full-stack app with App Router pages and API routes.
-- The Test Lab now runs real server-backed batch flows with persisted logs and report artifacts.
-- Provider setup, agent loading, benchmark authoring, history, and artifact access all go through the same application surface.
-- The runtime path no longer depends on `dist`-only evaluator scripts, so batch runs work from both the CLI and the Next server.
-- Research, architecture, and validation notes live in:
-  - `docs/RESEARCH_BRIEF.md`
-  - `docs/ARCHITECTURE_SPEC.md`
-  - `docs/VALIDATION_REPORT.md`
+| Setup | Traps passed | Cost per run | Time per run |
+| --- | --- | --- | --- |
+| plain `claude -p` plus a plugin workflow | 12/15 | $1.31 | 14.8 min |
+| plain `claude -p` | 8/15 | $0.64 | 9.1 min |
+| plain `claude -p` plus a review pass | 8/15 | $1.96 | 10.1 min |
 
-## Quick Start
+The review pass cost three times as much and moved the hidden checks by nothing. Every build shipped a
+green test suite — one with 108 passing tests — and still lost a row when the app was open in two
+browser tabs. One run per setup had looked like a tie; the gap only showed up over three.
 
-Install dependencies:
+That is one task at n=3, so treat it as a signal rather than a law. Reproduce it with the commands below.
+
+## Install
+
+Needs **Node 22.13 or newer** (24 LTS recommended). Runs are stored with the built-in `node:sqlite`
+module, which older versions do not expose without a command-line flag.
 
 ```bash
-pnpm install
+npx agent-bench init
+npx agent-bench doctor
 ```
 
-CI derives the pnpm version from `package.json#packageManager`, so future pnpm upgrades only need that field changed.
+`init` creates the database and installs the benchmark suites, the shipped agents and a `.env` from
+`.env.sample` into the current directory. `doctor` then reports PASS / WARN / FAIL per check with the
+fix next to each problem, and exits non-zero only on a FAIL.
 
-Start the local workbench:
+The web workbench needs a checkout, because Next cannot build a project from inside `node_modules`:
 
 ```bash
-pnpm exec agent-bench init
-pnpm exec agent-bench ui
+git clone https://github.com/travelhawk/agent-bench
+cd agent-bench && pnpm install
+agent-bench init
 ```
 
-By default the UI starts on `http://localhost:4173`.
+Every command below works either way; only `agent-bench ui` requires the checkout.
 
-Build the production app and CLI:
+## Compare two agent workflows
+
+This is the flow the example above used. It needs the `claude` CLI on your PATH and logged in, plus
+Chromium for the browser traps:
 
 ```bash
-pnpm run build
+npx playwright install chromium
+
+agent-bench compare-setups \
+  --benchmark workflow-builds --task haushaltsbuch \
+  --setups vanilla,vanilla+review --no-judge --trials 3 \
+  --blind-review "node agents/blind-reviewer/run.mjs" \
+  --format html --out reports/comparison.html
 ```
 
-If you want to run the sample browser operator, ensure Google Chrome is installed locally.
-If Chrome is installed in a non-standard path, set `CHROME_BIN` to that executable before running E2E tests.
+Both setups are the same agent with different prompts, defined in
+`benchmarks/workflow-builds/setups.json` — no new agent file needed. To compare your own workflow,
+add an entry there (or pass your own `--setups-file`) with a `buildPrompt` or `followupPrompt`; that is
+how the plugin workflow in the table above was added.
 
-Run the end-to-end UI regression suite locally:
+Leave out `--trials 3` for a quick single run, but do not draw conclusions from it: run-to-run variance
+is larger than the difference between workflows.
+
+## Compare two models
 
 ```bash
-pnpm run test:e2e
+agent-bench compare-models \
+  --models anthropic/claude-sonnet-5,anthropic/claude-opus-5 \
+  --task fix-react-bug
 ```
 
-Use the CLI directly:
+Needs a gateway key in `.env`. The model under test is not the judge: it spends `--model` on its own
+work, and `--judge-model` picks the grader.
+
+## Open the workbench
+
+From a checkout:
 
 ```bash
-pnpm exec agent-bench run
-pnpm exec agent-bench run --no-judge   # deterministic review only, zero grader tokens
-pnpm exec agent-bench history
-pnpm exec agent-bench compare --left <run-key> --right <run-key>
-pnpm exec agent-bench matrix           # all agent × model setups side by side
+agent-bench ui
 ```
+
+Runs on `http://localhost:4173` and reads the same database as the CLI.
+
+## What changed
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## All commands
+
+```bash
+agent-bench doctor            # can this machine run a comparison?
+agent-bench init              # seed db, benchmarks, agents, .env
+
+agent-bench compare-setups --setups a,b     # workflows/prompts, same agent
+agent-bench compare-models --models a/b,c/d # models, same agent and task
+agent-bench run                             # one agent, one task
+agent-bench run --no-judge                  # objective signals only, zero grader tokens
+agent-bench run --judge-model openai/gpt-4.1
+
+agent-bench traps --workspace <dir>         # run holdout checks against any finished build
+agent-bench history
+agent-bench compare <run-key> <run-key> [...]   # first key is the baseline
+agent-bench matrix            # all setups side by side
+agent-bench export --format md|csv|json|html    # shareable report
+agent-bench ui                # local workbench
+```
+
+`compare-setups` and `compare-models` both take `--trials <n>` (1-5), `--blind-review "<command>"`,
+and `--format` / `--out`.
+
+## Development
+
+```bash
+pnpm test                  # builds the CLI, then the node:test suite
+pnpm run build             # Next.js app + CLI
+pnpm run test:e2e          # Playwright UI regression suite
+```
+
+CI derives the pnpm version from `package.json#packageManager`, so a pnpm upgrade only needs that field
+changed. The sample browser operator and the E2E suite need Chrome locally; set `CHROME_BIN` if it is
+installed in a non-standard path.
 
 ## Comparing Agents And Models
 
@@ -102,7 +146,146 @@ The workbench's **Comparison** tab (and the `matrix` CLI command) shows every ag
 
 The comparison is aggregated from runs already persisted in SQLite, so opening, filtering, and re-rendering it costs **zero tokens**. Token spend is also made visible: the view counts how many reviews came from the judge cache or the deterministic rules rubric (free) versus fresh gateway calls.
 
-To compare models, launch the same agents and tasks with different `Review model` values (UI) or `--model` (CLI); each run now persists its model id, benchmark, task, review mode, and judge token usage.
+Each run persists its model id, benchmark, task, review mode, and judge token usage, so the grouping survives a restart.
+
+### Comparing two models on the same task
+
+`compare-models` is the short path: it plans one setup per model, runs them against the same agent and task, and prints the ranked table.
+
+```bash
+agent-bench compare-models \
+  --models anthropic/claude-sonnet-5,anthropic/claude-opus-5 \
+  --task fix-react-bug \
+  --format html --out report.html
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--models <list>` | Two or more gateway model ids, comma or newline separated. Duplicates collapse |
+| `--agent <path>` | The workflow held constant across models. Defaults to `agents/model-coder.md` |
+| `--benchmark <key>` | Benchmark suite. Defaults to `repo-maintenance` |
+| `--task <key>` | One task. Omit to run the whole suite |
+| `--judge-model <id>` | The grader. One judge across every setup |
+| `--no-judge` | Compare on objective signals only: verifier tests, diff, duration, agent tokens |
+| `--format`, `--out` | Also write the comparison as `md`, `csv`, `json`, or `html` |
+
+The agent is held constant on purpose. `agents/model-coder.md` is a deliberately minimal single-shot coder: it reads the task brief and the workspace, asks `AGENT_BENCH_PROVIDER_MODEL` for a complete set of file edits, applies them, and restores `tests/` so the verifier cannot be gamed. Because the scaffolding is identical for every setup, a batch that varies only the model measures the model.
+
+### The model under test is not the judge
+
+Two different models are involved in a run:
+
+- the **model under test** (`--model`, or one entry of `--models`) is handed to the agent's runner and does the work
+- the **judge model** (`--judge-model`, or `AGENT_BENCH_JUDGE_MODEL`, default `openai/gpt-4.1-mini`) reads the result and grades it
+
+For a runner-backed agent these never collapse into one: letting the subject grade itself would vary two things at once, and a batch therefore uses a single judge across every setup. A review-only agent has no model of its own, so there `--model` still means "the judge", as it always did.
+
+For an agent whose runner calls a model, declare the need in the agent file:
+
+```markdown
+Runner: node model-coder/run.mjs
+Requires Network: yes
+```
+
+The task declares what the *work* needs; the agent declares what the *workflow* needs. A sandboxed run satisfies both, so a benchmark task can stay `Requires Network: no` while the runner still reaches the gateway.
+
+### Comparing more than two setups in one batch
+
+A **setup** is one comparable configuration: an agent plus the review model it runs against. The Test Lab's `Model(s) under test` box takes one model per line (with the judge in its own field beside it), and a batch is planned as the cross product of the selected agents and those models — three agents × two models is six setups in one launch. The chip row under the field previews exactly which setups will run, and the plan metric reads `Setups × Tasks = Runs`.
+
+The API takes the same shape directly, with an optional per-setup label and review override:
+
+```json
+POST /api/run/batch
+{
+  "benchmarkKey": "repo-maintenance",
+  "setups": [
+    { "agentPath": "agents/coder.md", "model": "openai/gpt-4.1-mini", "label": "baseline" },
+    { "agentPath": "agents/coder.md", "model": "anthropic/claude-sonnet-5" },
+    { "agentPath": "agents/loop.md", "model": "anthropic/claude-sonnet-5", "review": "off" }
+  ]
+}
+```
+
+Labels must be unique, identical agent+model entries are collapsed, and the older `{ "agents": [...], "model": "..." }` form still works as the single-model shorthand. Run History compares up to six runs at once, each shown as a delta against the first one you picked.
+
+### Comparing workflows: traps and blind review
+
+To compare *workflows* (e.g. plain Claude Code vs. Claude Code plus a review pass) on one spec, use a setups
+file and the `claude-code` agent. `benchmarks/workflow-builds/` ships the Haushaltsbuch task for this.
+
+```bash
+agent-bench init            # installs agents/claude-code(.md), agents/blind-reviewer, benchmarks
+agent-bench doctor
+npx playwright install chromium   # the Haushaltsbuch traps drive a real browser
+
+agent-bench compare-setups --benchmark workflow-builds --task haushaltsbuch \
+  --setups vanilla,vanilla+review --no-judge \
+  --blind-review "node agents/blind-reviewer/run.mjs" \
+  --format html --out reports/haushaltsbuch.html
+```
+
+- **Setups file** (`benchmarks/<suite>/setups.json`, or `--setups-file`): `[{ "label", "agent", "model"?, "followupPrompt"?, "review"? }]`.
+  One agent may appear under several labels; `followupPrompt` reaches the runner as `AGENT_BENCH_FOLLOWUP_PROMPT`
+  (`claude-code` runs it as a second `claude -p --continue`). `--setups a,b` picks labels.
+- **Traps** (hidden checks): a task lists `## Traps` as `- <id>: <description>` and sets `Traps Dir:` and
+  `Trap Command:` in `## Sandbox`. The traps folder is copied to `<workspace>/traps` only after the runner finished;
+  the trap command must write `trap-results.json` (Vitest `--reporter=json --outputFile=trap-results.json` or the
+  Playwright `json` reporter). A trap passes when every test whose name contains its id passed (`unknown` when none
+  matched). If the trap command fails before any test ran (server did not start, port in use), every trap is
+  `error` and the first output line appears as a footnote under the trap matrix. Results are stored per run and shown
+  as a trap matrix in the terminal and the md/csv/json/html exports; over several trials a cell reads e.g. `2/3`.
+  They do not change the score. Dry run against any finished build, no agent involved:
+  `agent-bench traps --benchmark workflow-builds --task haushaltsbuch --workspace ../my-build`.
+- **`AGENT_BENCH_TRAP_PORT`**: right before the trap command starts, agent-bench picks a free TCP port and passes it
+  in this env var. A trap config should serve the app on it (`webServer.port` and `use.baseURL`; see
+  `benchmarks/workflow-builds/traps/haushaltsbuch/traps.config.ts`), so a server a build left running on its usual
+  port cannot block the checks. After the runner, verify and trap commands exit, processes they left running
+  (dev servers, `vite preview`) are killed (Windows: the process tree by recorded parent id; POSIX: the process group).
+- **Trials** (`--trials <n>`, 1-5, on `compare-setups` and `compare-models`): runs every setup n times. The comparison
+  then shows a metrics block per setup (wall time, agent input/output tokens, agent cost as avg with min-max over the
+  trials) and batch totals that include the blind reviewer's own tokens and cost.
+- **Blind review** (`--blind-review "<command>"`, also on `compare-models`): after all runs each completed workspace is
+  copied to `<artifacts>/blind-<time>-<task>/blind/<A|B|...>` in shuffled order, without `.git`, `node_modules`,
+  `result/`, `traps/`, `dist/`, `.claude/`, `CLAUDE.md`/`AGENTS.md` and test reports. The letter key goes to
+  `blind-key.json` next to (not inside) that folder. The command runs once with `AGENT_BENCH_BLIND_DIR`,
+  `AGENT_BENCH_TASK_FILE` (`TASK.md`: task + trap list, not the trap tests) and `AGENT_BENCH_TRAPS`, and must write
+  `ranking.json` (`[{letter, rank, notes}]`). Ranks are mapped back and shown next to each setup. The default
+  reviewer (`agents/blind-reviewer/run.mjs`) runs `claude -p` with a rubric: data safety, spec fidelity, a11y,
+  code quality, and only reproduced bugs count. It writes `usage.json` (tokens, cost, time) next to the blind folder;
+  the report adds it to the batch totals. It must only stop processes it started itself: a name-based kill such as
+  `taskkill /IM node.exe` also kills agent-bench, so the runner denies those commands. A reviewer that fails never
+  costs the batch its report; the error is printed instead. `AGENT_BENCH_BLIND_MODEL` pins its model,
+  `AGENT_BENCH_BLIND_TIMEOUT_MS` its timeout (default 60 min).
+- **Auth for `claude`**: the sandbox passes `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` (paths only), so the
+  logged-in CLI works. An agent may list extra variables with `Env Passthrough: A, B` (claude-code forwards
+  `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `AGENT_BENCH_CLAUDE_MODEL` when set).
+
+### Exporting and sharing a comparison
+
+The Comparison tab has a share bar with four formats:
+
+| Format | Use it for |
+| --- | --- |
+| `md` | pasting into a PR, an issue, or a doc |
+| `csv` | pulling the leaderboard into a spreadsheet |
+| `json` | feeding another tool (`agent-bench.comparison/v1` schema) |
+| `html` | a self-contained report: no scripts, no external requests, light/dark aware |
+
+- **Copy report** puts the rendered report on the clipboard.
+- **Download** saves it as `agent-bench-comparison-<scope>-<timestamp>.<ext>`.
+- **Copy link** copies a deep link (`?view=compare&benchmark=...`) for people who already have the workbench open.
+- The **Share** column on the leaderboard chooses which setups go into the export; unchecked rows are dimmed and left out of both the file and the link.
+
+Every export ranks all setups, names a winner per metric (score, quality, tests, speed, leanest tokens, cheapest), and carries the per-task heatmap. The same thing from the CLI:
+
+```bash
+pnpm exec agent-bench export --format md
+pnpm exec agent-bench export --format html --benchmark repo-maintenance --out report.html
+pnpm exec agent-bench export --format csv --setups "coder · openai/gpt-4.1-mini,loop · anthropic/claude-sonnet-5"
+```
+
+Exports render purely from persisted rows, so sharing a comparison also costs **zero tokens**.
 
 ### Visual comparison (screenshots + videos)
 
@@ -148,7 +331,9 @@ Capture is best-effort: a missing browser or a timeout leaves the artifact out w
 - `/api/workbench` returns the current dashboard snapshot.
 - `/api/skills/search` searches `skills.sh` through the official `skills` CLI.
 - `/api/agents/bundles` creates managed agent bundles under `./.agent-bench/agents`.
-- `/api/run/batch` executes multi-agent runs for either one task or a full benchmark cycle.
+- `/api/run/batch` executes multi-setup runs for either one task or a full benchmark cycle.
+- `/api/comparison` returns the aggregated agent × model matrix as JSON.
+- `/api/comparison/export` renders that matrix as `md`, `csv`, `json`, or a self-contained `html` report.
 - `/api/run/[runKey]/result` returns the persisted run summary used by the inspector.
 - `/api/artifacts/[runKey]/[file]` serves generated run reports and result files.
 
@@ -163,6 +348,8 @@ cp .env.sample .env
 ```bash
 export AI_GATEWAY_API_KEY="your_key"
 ```
+
+One key covers both roles: the agent runner reaches the gateway with it, and so does the judge. `AGENT_BENCH_JUDGE_MODEL` sets the default grader (`openai/gpt-4.1-mini` if unset); `--judge-model` overrides it per run or batch.
 
 You can also paste a key directly into the UI for the current browser session. That session key is not written to SQLite or run artifacts.
 
@@ -268,7 +455,7 @@ Every run now also carries automatically-derived and judge-scored metrics, all w
 
 - **Diff**: files changed / insertions / deletions, computed by git-diffing the sandboxed workspace before and after the agent runs. Requires `git` on the host running `agent-bench` (not inside the sandbox); degrades to unavailable if git is missing.
 - **Tests / checks**: pass/fail/total counts, parsed from `node --test` TAP output when a task's `Verify Command` invokes it, or from an `AGENT_BENCH_CHECKS: <passed>/<total>` line that a custom verify script may print. This count also grades the outcome score (partial credit), so partially-passing workflows are ranked rather than collapsed to pass/fail. A verifier that emits neither reports "unavailable" (never a guessed count).
-- **Quality**: an LLM-judge-scored 0–10 rating of the produced code's readability, style, and error handling, kept separate from the existing task-fit review score so the two are independently comparable. Falls back to a clearly-labeled low-confidence heuristic when no `AI_GATEWAY_API_KEY` is configured.
+- **Quality**: an LLM-judge-scored 0–10 rating of the produced code's readability, style, and error handling, kept separate from the existing task-fit review score so the two are independently comparable. Without an LLM judge (no `AI_GATEWAY_API_KEY`, `--no-judge`) quality and the judge score are `n/a` everywhere (terminal, md, html, csv, json); winners then come from traps, blind rank, time, tokens and cost. Blind reviewer usage is stored in the DB (`blind_reviews` table), so `export` and `matrix` show it later; `agent-bench blind-import <blind-folder>` backfills reviews made before this.
 - **Agent usage**: the agent-under-test's own token usage/cost, self-reported by the runner writing `result/usage.json` (`{"inputTokens": ..., "outputTokens": ..., "costUsd": ...}` — `costUsd` is optional) into `$AGENT_BENCH_WORKSPACE`. Most runners don't implement this yet, so it reports "unavailable" by default.
 
 ## Benchmarks
@@ -410,13 +597,14 @@ Important:
 - Multi-agent suites are still structurally modeled, but they only become truly executable when they are backed by concrete fixtures and verification commands.
 - The UI now supports multi-agent batch execution and partial-failure reporting, but trace-level grading, experiment comparison views, and artifact diffs are still future work.
 - The strongest next step is upgrading benchmark tasks into richer dataset-backed eval cases.
-- Batch execution is intentionally capped at `48` runs per launch to keep the local workbench responsive and predictable.
+- Batch execution is intentionally capped at `48` runs and `12` setups per launch to keep the local workbench responsive and predictable.
+- Run History compares at most `6` runs side by side; use the Comparison tab and its exports for wider sweeps.
 - Graded scoring reads `node --test` TAP output or an `AGENT_BENCH_CHECKS: <passed>/<total>` marker from a custom verifier; a verifier that emits neither still works but only as binary pass/fail.
 - Agent-under-test token usage is opt-in and voluntary (`result/usage.json`); `agent-bench` cannot observe LLM calls made from inside an opaque runner process or container.
 
 ## Troubleshooting
 
-- If the Next.js app fails to start after dependency changes, run `pnpm install` again. If the local Node version changed, run `pnpm rebuild better-sqlite3` before retrying.
+- If the Next.js app fails to start after dependency changes, run `pnpm install` again. Persistence uses Node's built-in `node:sqlite`, so changing the local Node version no longer requires rebuilding a native module — but Node **22.13 or newer** is required (24+ recommended, where `node:sqlite` is stable). The module exists from 22.5.0 but needed `--experimental-sqlite` until 22.13.0, so the CLI refuses anything older with a plain message instead of a stack trace.
 - If skills search or project skill management fails on Windows, retry after `pnpm install`; the app now invokes `skills.sh` through `cmd.exe` because direct `spawnSync("npx.cmd", ...)` is not reliable inside the Node server process.
 - Existing SQLite databases are migrated on startup. If startup reports a missing run column, stop duplicate `next dev` processes and restart so the latest schema migration can run once.
 - If you want production verification instead of dev mode, run `pnpm run build` and then `./node_modules/.bin/next start --port 4173`.

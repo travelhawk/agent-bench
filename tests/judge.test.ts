@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judgeWithVercelAiSdk, resolveGatewayApiKey, resolveJudgeModel, runJudgeReview } from "../src/runtime/evaluator";
+import { judgeWithVercelAiSdk, resolveGatewayApiKey, resolveJudgeModel, runJudgeReview, makeJudgeFingerprint } from "../src/runtime/evaluator";
 
 test("judgeWithVercelAiSdk calls generateText and parses score", async () => {
   let capturedArgs: Record<string, unknown> | undefined;
@@ -182,4 +182,12 @@ test("resolveJudgeModel falls back to AGENT_BENCH_JUDGE_MODEL", () => {
       process.env.AGENT_BENCH_JUDGE_MODEL = previousModel;
     }
   }
+});
+
+test("judge cache key changes when the build output differs between trials", () => {
+  const base = { benchmarkKey: "b", taskKey: "t", model: "m", taskContext: "ctx", agentMd: "agent", judgeMode: "s1" };
+  const trial1 = makeJudgeFingerprint({ ...base, evidence: JSON.stringify({ diffPatch: "+a", outcomeScore: 80 }) });
+  const trial2 = makeJudgeFingerprint({ ...base, evidence: JSON.stringify({ diffPatch: "+b", outcomeScore: 40 }) });
+  assert.notEqual(trial1, trial2);
+  assert.equal(trial1, makeJudgeFingerprint({ ...base, evidence: JSON.stringify({ diffPatch: "+a", outcomeScore: 80 }) }));
 });

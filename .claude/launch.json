@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "agent-bench",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "ui"],
+      "port": 4173
+    }
+  ]
+}

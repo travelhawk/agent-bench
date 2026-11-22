@@ -25,7 +25,8 @@ interface BenchmarkFormState {
 }
 
 interface StatusMessage { tone: AsyncTone; message: string; }
-interface RetryJob { benchmarkKey: string; taskKey: string; agentPath: string; }
+interface RetryJob { benchmarkKey: string; taskKey: string; agentPath: string; model?: string; setupKey?: string; }
+interface BatchSetup { agentPath: string; model?: string; label: string; }
 interface SkillSearchResultView {
   source: string;
   skillName: string;
@@ -38,12 +39,15 @@ interface BundleUploadFile { path: string; content: string; }
 interface ProjectSkillsResponse { skills: InstalledSkillRecord[]; }
 
 const MAX_BATCH_RUNS = 48;
+const MAX_BATCH_SETUPS = 12;
+const MAX_COMPARE_RUNS = 6;
+const NO_MODEL_LABEL = "rules / no model";
 const RESOLUTION_OPTIONS: BenchmarkResolution[] = ["atomic", "workflow", "campaign", "swarm"];
 const INTERACTION_OPTIONS: BenchmarkInteractionMode[] = ["artifact", "terminal", "browser", "tool-use", "computer-use", "multi-agent"];
 const EVALUATOR_OPTIONS: BenchmarkEvaluatorMode[] = ["state", "artifact", "trace", "judge", "hybrid"];
 const DIFFICULTY_OPTIONS = ["low", "medium", "high"] as const;
 const THEME_KEY = "agent-bench:theme";
-const STORAGE_KEYS = { selectedAgents: "agent-bench:selected-agents", benchmarkKey: "agent-bench:benchmark-key", taskKey: "agent-bench:task-key", runMode: "agent-bench:run-mode", model: "agent-bench:model", providerApiKey: "agent-bench:provider-api-key", skipJudge: "agent-bench:skip-judge" } as const;
+const STORAGE_KEYS = { selectedAgents: "agent-bench:selected-agents", benchmarkKey: "agent-bench:benchmark-key", taskKey: "agent-bench:task-key", runMode: "agent-bench:run-mode", model: "agent-bench:model", judgeModel: "agent-bench:judge-model", providerApiKey: "agent-bench:provider-api-key", skipJudge: "agent-bench:skip-judge" } as const;
 
 const emptyForm = (): BenchmarkFormState => ({
   type: "suite", benchmarkKey: "", key: "", title: "", description: "", expectedOutcome: "", whyThisTask: "", inputs: "",
@@ -94,20 +98,48 @@ async function mutateJson<T>(url: string, method: "POST" | "PATCH" | "DELETE", b
 const VIEW_SUBTITLE: Record<ViewMode, string> = {
   lab: "Load agents, choose tasks, run a bounded benchmark, and inspect the evidence.",
   compare: "Every agent × model setup side by side — score, quality, tests, speed, tokens, and cost — computed from persisted runs at zero token cost.",
-  history: "Every run with its score, diff, tests, quality, and cost — open one to inspect, or compare two.",
+  history: "Every run with its score, diff, tests, quality, and cost — open one to inspect, or compare several side by side.",
   benchmarks: "Author new suites and tasks, and browse the seeded benchmark library."
 };
 
-function compareRows(left: RunRecord, right: RunRecord): Array<{ label: string; left: string; right: string; delta: number | null }> {
-  const quand = left.qualityScore != null && right.qualityScore != null;
-  return [
-    { label: "Score", left: left.score.toFixed(2), right: right.score.toFixed(2), delta: right.score - left.score },
-    { label: "Quality", left: left.qualityScore != null ? left.qualityScore.toFixed(2) : "n/a", right: right.qualityScore != null ? right.qualityScore.toFixed(2) : "n/a", delta: quand ? right.qualityScore! - left.qualityScore! : null },
-    { label: "Diff files", left: left.diffAvailable ? String(left.diffFilesChanged) : "n/a", right: right.diffAvailable ? String(right.diffFilesChanged) : "n/a", delta: null },
-    { label: "Tests", left: left.verifierTestsAvailable ? `${left.verifierTestsPassed}/${left.verifierTestsTotal}` : "n/a", right: right.verifierTestsAvailable ? `${right.verifierTestsPassed}/${right.verifierTestsTotal}` : "n/a", delta: null },
-    { label: "Cost", left: `$${left.costUsd.toFixed(2)}`, right: `$${right.costUsd.toFixed(2)}`, delta: null },
-    { label: "Duration", left: `${(left.durationMs / 1000).toFixed(1)}s`, right: `${(right.durationMs / 1000).toFixed(1)}s`, delta: null }
-  ];
+/**
+ * Metrics rendered for an N-way run comparison. `delta` is measured against the
+ * first selected run (the baseline); metrics without a meaningful delta return null.
+ */
+const COMPARE_METRICS: Array<{ label: string; value: (run: RunRecord) => string; delta: (run: RunRecord, baseline: RunRecord) => number | null }> = [
+  { label: "Score", value: (run) => run.score.toFixed(2), delta: (run, baseline) => run.score - baseline.score },
+  {
+    label: "Quality",
+    value: (run) => run.qualityScore != null ? run.qualityScore.toFixed(2) : "n/a",
+    delta: (run, baseline) => run.qualityScore != null && baseline.qualityScore != null ? run.qualityScore - baseline.qualityScore : null
+  },
+  {
+    label: "Diff files",
+    value: (run) => run.diffAvailable ? String(run.diffFilesChanged) : "n/a",
+    delta: (run, baseline) => run.diffAvailable && baseline.diffAvailable ? run.diffFilesChanged - baseline.diffFilesChanged : null
+  },
+  {
+    label: "Tests",
+    value: (run) => run.verifierTestsAvailable ? `${run.verifierTestsPassed}/${run.verifierTestsTotal}` : "n/a",
+    delta: () => null
+  },
+  { label: "Cost", value: (run) => `$${run.costUsd.toFixed(2)}`, delta: () => null },
+  { label: "Duration", value: (run) => `${(run.durationMs / 1000).toFixed(1)}s`, delta: () => null }
+];
+
+/** Agent names can repeat across paths; disambiguate so every setup label is unique. */
+function buildBatchSetups(agents: AgentRecord[], models: string[]): BatchSetup[] {
+  const nameCounts = new Map<string, number>();
+  for (const agent of agents) nameCounts.set(agent.name, (nameCounts.get(agent.name) ?? 0) + 1);
+
+  return agents.flatMap((agent) => models.map((model) => {
+    const agentLabel = (nameCounts.get(agent.name) ?? 0) > 1 ? `${agent.name} (${agent.path})` : agent.name;
+    return {
+      agentPath: agent.path,
+      model: model || undefined,
+      label: `${agentLabel} \u00b7 ${model || NO_MODEL_LABEL}`
+    };
+  }));
 }
 
 export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: WorkbenchSnapshot }) {
@@ -118,6 +150,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [taskKey, setTaskKey] = useState(initialSnapshot.benchmarks[0]?.tasks[0]?.key ?? "");
   const [runMode, setRunMode] = useState<RunMode>("benchmark-cycle");
   const [model, setModel] = useState("");
+  const [judgeModel, setJudgeModel] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
   const [manualAgentPath, setManualAgentPath] = useState("");
   const [manualAgentState, setManualAgentState] = useState<StatusMessage>({ tone: "neutral", message: "" });
@@ -148,18 +181,26 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   const [skipJudge, setSkipJudge] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
   const [compareKeys, setCompareKeys] = useState<string[]>([]);
+  const [deepLinkBenchmark, setDeepLinkBenchmark] = useState<string | null>(null);
 
   useEffect(() => {
     const savedAgents = localStorage.getItem(STORAGE_KEYS.selectedAgents), savedBenchmark = localStorage.getItem(STORAGE_KEYS.benchmarkKey),
       savedTask = localStorage.getItem(STORAGE_KEYS.taskKey), savedRunMode = localStorage.getItem(STORAGE_KEYS.runMode),
-      savedModel = localStorage.getItem(STORAGE_KEYS.model), savedApiKey = sessionStorage.getItem(STORAGE_KEYS.providerApiKey);
+      savedModel = localStorage.getItem(STORAGE_KEYS.model), savedJudgeModel = localStorage.getItem(STORAGE_KEYS.judgeModel), savedApiKey = sessionStorage.getItem(STORAGE_KEYS.providerApiKey);
     if (savedAgents) try { const parsed = JSON.parse(savedAgents) as string[]; if (Array.isArray(parsed) && parsed.length > 0) setSelectedAgentPaths(parsed); } catch {}
     if (savedBenchmark) setBenchmarkKey(savedBenchmark); if (savedTask) setTaskKey(savedTask);
     if (savedRunMode === "single-task" || savedRunMode === "benchmark-cycle") setRunMode(savedRunMode);
-    if (savedModel) setModel(savedModel); if (savedApiKey) setProviderApiKey(savedApiKey);
+    if (savedModel) setModel(savedModel); if (savedJudgeModel) setJudgeModel(savedJudgeModel); if (savedApiKey) setProviderApiKey(savedApiKey);
     if (localStorage.getItem(STORAGE_KEYS.skipJudge) === "true") setSkipJudge(true);
     const savedTheme = localStorage.getItem(THEME_KEY);
     if (savedTheme === "light" || savedTheme === "dark") setThemeMode(savedTheme);
+
+    // Shared comparison links land straight on the comparison view, pre-filtered.
+    const params = new URLSearchParams(window.location.search);
+    const linkedView = params.get("view");
+    if (linkedView === "compare" || linkedView === "history" || linkedView === "lab" || linkedView === "benchmarks") setView(linkedView);
+    const linkedBenchmark = params.get("benchmark");
+    if (linkedBenchmark) setDeepLinkBenchmark(linkedBenchmark);
   }, []);
 
   useEffect(() => {
@@ -168,20 +209,32 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
     localStorage.setItem(STORAGE_KEYS.taskKey, taskKey);
     localStorage.setItem(STORAGE_KEYS.runMode, runMode);
     localStorage.setItem(STORAGE_KEYS.model, model);
+    localStorage.setItem(STORAGE_KEYS.judgeModel, judgeModel);
     localStorage.setItem(STORAGE_KEYS.skipJudge, String(skipJudge));
     sessionStorage.setItem(STORAGE_KEYS.providerApiKey, providerApiKey);
-  }, [benchmarkKey, model, providerApiKey, runMode, selectedAgentPaths, skipJudge, taskKey]);
+  }, [benchmarkKey, judgeModel, model, providerApiKey, runMode, selectedAgentPaths, skipJudge, taskKey]);
 
   const selectedBenchmark = snapshot.benchmarks.find((entry) => entry.key === benchmarkKey) ?? snapshot.benchmarks[0] ?? null;
   const selectedTask = selectedBenchmark?.tasks.find((entry) => entry.key === taskKey) ?? selectedBenchmark?.tasks[0] ?? null;
   const plannedTasks = selectedBenchmark ? (runMode === "single-task" ? selectedBenchmark.tasks.filter((task) => task.key === (selectedTask?.key ?? taskKey)) : selectedBenchmark.tasks) : [];
   const selectedAgents = snapshot.agents.filter((agent) => selectedAgentPaths.includes(agent.path));
-  const totalRuns = selectedAgents.length * plannedTasks.length;
+  // One review model per line (or comma-separated) = one extra setup per agent,
+  // so a single batch can carry three or more comparable configurations.
+  const modelPlan = (() => {
+    const parsed = [...new Set(model.split(/[\r\n,]+/).map((entry) => entry.trim()).filter(Boolean))];
+    return parsed.length > 0 ? parsed : [""];
+  })();
+  const batchSetups = buildBatchSetups(selectedAgents, modelPlan);
+  const totalRuns = batchSetups.length * plannedTasks.length;
   const batchOverflow = totalRuns > MAX_BATCH_RUNS;
+  const setupOverflow = batchSetups.length > MAX_BATCH_SETUPS;
   const recentRuns = snapshot.runs.slice(0, 8), historyRuns = snapshot.runs, failedHistoryRuns = snapshot.runs.filter((run) => run.status === "failed");
   const bestRun = snapshot.runs.filter((run) => run.status === "completed").sort((left, right) => right.score - left.score)[0];
-  const compareLeft = snapshot.runs.find((run) => run.runKey === compareKeys[0]) ?? null;
-  const compareRight = snapshot.runs.find((run) => run.runKey === compareKeys[1]) ?? null;
+  // N-way: every selected run becomes a column, measured against the first pick.
+  const compareRuns = compareKeys
+    .map((runKey) => snapshot.runs.find((run) => run.runKey === runKey))
+    .filter((run): run is RunRecord => Boolean(run));
+  const compareBaseline = compareRuns[0] ?? null;
 
   useEffect(() => {
     if (!selectedBenchmark) return;
@@ -197,6 +250,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   if (runMode === "single-task" && !selectedTask) blockers.push("Select one challenge for single-task mode.");
   if (plannedTasks.length === 0) blockers.push("The current benchmark selection does not queue any tasks.");
   if (batchOverflow) blockers.push(`The current selection creates ${totalRuns} runs, above the ${MAX_BATCH_RUNS}-run cap.`);
+  if (setupOverflow) blockers.push(`The current selection creates ${batchSetups.length} setups, above the ${MAX_BATCH_SETUPS}-setup cap.`);
   const workflowState: WorkflowState = isRunningBatch ? "running" : blockers.length > 0 ? "blocked" : lastBatchResult?.failedRuns ? "completed-with-failures" : lastBatchResult ? "completed-clean" : "ready";
 
   async function refreshSnapshot() { const nextSnapshot = await getJson<WorkbenchSnapshot>("/api/workbench"); startTransition(() => setSnapshot(nextSnapshot)); }
@@ -219,7 +273,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   function toggleCompareKey(runKey: string) {
     setCompareKeys((current) => current.includes(runKey)
       ? current.filter((key) => key !== runKey)
-      : current.length >= 2 ? [current[1], runKey] : [...current, runKey]);
+      : current.length >= MAX_COMPARE_RUNS ? [...current.slice(1), runKey] : [...current, runKey]);
   }
 
   async function inspectManualAgent() {
@@ -335,16 +389,26 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
   }
 
   async function runBatchAction(retryJobs?: RetryJob[]) {
-    if (!retryJobs && selectedAgents.length === 0) { setRunState({ tone: "error", message: "Select at least one agent before starting." }); return; }
+    if (!retryJobs && batchSetups.length === 0) { setRunState({ tone: "error", message: "Select at least one agent before starting." }); return; }
     if (!retryJobs && plannedTasks.length === 0) { setRunState({ tone: "error", message: "Pick a benchmark challenge before starting." }); return; }
-    setIsRunningBatch(true); setRunState({ tone: "neutral", message: retryJobs ? `Rerunning ${retryJobs.length} failed job(s)...` : `Launching ${totalRuns} run(s)...` });
+    setIsRunningBatch(true); setRunState({ tone: "neutral", message: retryJobs ? `Rerunning ${retryJobs.length} failed job(s)...` : `Launching ${totalRuns} run(s) across ${batchSetups.length} setup(s)...` });
     try {
       const response = await mutateJson<BatchRunResult>("/api/run/batch", "POST", {
-        agents: retryJobs ? [] : selectedAgents.map((agent) => agent.path), benchmarkKey, taskKey: retryJobs ? undefined : runMode === "single-task" ? selectedTask?.key : undefined,
-        runMode, model: model || undefined, providerApiKey: providerApiKey || undefined, review: skipJudge ? "off" : undefined, jobs: retryJobs
+        agents: [], setups: retryJobs ? undefined : batchSetups, benchmarkKey, taskKey: retryJobs ? undefined : runMode === "single-task" ? selectedTask?.key : undefined,
+        runMode, judgeModel: judgeModel.trim() || undefined, providerApiKey: providerApiKey || undefined,
+        review: skipJudge ? "off" : undefined, jobs: retryJobs
       });
       setLastBatchResult(response);
-      setLastBatchFailureJobs(response.failures.map((failure) => ({ benchmarkKey: response.benchmarkKey, taskKey: failure.taskKey, agentPath: failure.agentPath })));
+      setLastBatchFailureJobs(response.failures.map((failure) => {
+        const setup = response.setups.find((entry) => entry.setupKey === failure.setupKey);
+        return {
+          benchmarkKey: response.benchmarkKey,
+          taskKey: failure.taskKey,
+          agentPath: failure.agentPath,
+          setupKey: failure.setupKey,
+          model: setup && setup.modelLabel !== NO_MODEL_LABEL ? setup.modelLabel : undefined
+        };
+      }));
       setRunState(response.failedRuns > 0 ? { tone: "error", message: `Completed ${response.completedRuns}/${response.queueSize} run(s). ${response.failedRuns} failed.` } : { tone: "success", message: `Completed ${response.queueSize} run(s) cleanly.` });
       await refreshSnapshot();
       const firstRun = response.runs[0]?.run.runKey ?? response.failures[0]?.run?.run.runKey;
@@ -507,14 +571,19 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                 </article>
 
                 <details className="disclosure">
-                  <summary>Provider &amp; review model<span className="disclosure-hint">{providerApiKey ? "session key set" : "optional"}</span></summary>
+                  <summary>Models &amp; gateway<span className="disclosure-hint">{providerApiKey ? "session key set" : "optional"}</span></summary>
                   <div className="disclosure-body">
                     <div className="config-grid">
                       <label className="field"><span>Gateway API key</span><input value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} placeholder="Optional for model-based review" /></label>
-                      <label className="field"><span>Review model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="openai/gpt-4.1-mini" /></label>
+                      <label className="field field-span-2"><span>Model(s) under test — one per line</span><textarea rows={3} value={model} onChange={(event) => setModel(event.target.value)} placeholder={"anthropic/claude-sonnet-5\nanthropic/claude-opus-5"} /></label>
+                      <label className="field field-span-2"><span>Judge model</span><input value={judgeModel} onChange={(event) => setJudgeModel(event.target.value)} placeholder="Defaults to AGENT_BENCH_JUDGE_MODEL" /></label>
                       <label className="field field-checkbox"><span>Skip LLM judge (0 tokens)</span><input type="checkbox" checked={skipJudge} onChange={(event) => setSkipJudge(event.target.checked)} /></label>
                     </div>
-                    <p className="status-line">Add a Gateway key for model review. Leave empty to use the env key or the deterministic rules fallback. Skipping the judge keeps runs fully deterministic and spends zero grader tokens — verifier-backed outcome, tests, diff, duration, and agent-usage metrics still work.</p>
+                    <p className="status-line">The model under test runs the work; the judge only grades it. One judge across the whole batch keeps a model comparison honest. Leave the key empty to use the env key or the deterministic rules fallback. Skipping the judge keeps runs fully deterministic and spends zero grader tokens — verifier-backed outcome, tests, diff, duration, and agent-usage metrics still work.</p>
+                    <p className="status-line">Each model line pairs with every selected agent, so one batch can compare three or more setups at once (max {MAX_BATCH_SETUPS}). Pick one executable agent and several models to compare models; pick several agents and one model to compare workflows.</p>
+                    {batchSetups.length > 0 && (
+                      <div className="chip-row">{batchSetups.slice(0, MAX_BATCH_SETUPS).map((setup) => <span className="mini-chip" key={setup.label}>{setup.label}</span>)}</div>
+                    )}
                   </div>
                 </details>
               </div>
@@ -525,7 +594,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
                   <div className="chip-row"><span className={`status-chip workflow-chip workflow-chip-${workflowState}`}>{workflowState.replace(/-/g, " ")}</span></div>
                   <p className="status-line">{nextActionCopy}</p>
                   <div className="run-plan">
-                    <div className="plan-metric"><strong>{selectedAgents.length}</strong><span>Agents</span></div>
+                    <div className="plan-metric"><strong>{batchSetups.length}</strong><span>Setups</span></div>
                     <span className="plan-equals">×</span>
                     <div className="plan-metric"><strong>{plannedTasks.length}</strong><span>Tasks</span></div>
                     <span className="plan-equals">=</span>
@@ -566,7 +635,7 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
           <section className="view-stack">
             <article className="panel">
               <div className="section-header"><div><p className="eyebrow">Side by side</p><h2>Agent × Model Comparison</h2></div><button type="button" className="secondary-action" onClick={() => refreshSnapshot()}>Refresh</button></div>
-              <ComparisonBoard runs={snapshot.runs} />
+              <ComparisonBoard runs={snapshot.runs} initialBenchmarkKey={deepLinkBenchmark ?? undefined} />
             </article>
           </section>
         )}
@@ -575,23 +644,45 @@ export function WorkbenchClient({ initialSnapshot }: { initialSnapshot: Workbenc
           <section className="view-stack">
             <article className="panel">
               <div className="section-header"><div><p className="eyebrow">Audit trail</p><h2>Run History</h2></div><button type="button" className="secondary-action" disabled={historyRuns.length < 2} onClick={() => { setCompareMode((current) => !current); setCompareKeys([]); }}>{compareMode ? "Exit compare" : "Compare runs"}</button></div>
-              {compareMode && <div className="callout callout-neutral"><span>{compareKeys.length < 2 ? `Select ${2 - compareKeys.length} more run(s) to compare.` : "Comparing the two selected runs."}</span></div>}
-              {compareMode && compareLeft && compareRight && (
-                <div className="panel" style={{ marginTop: "0.9rem" }}>
-                  <div className="compare-grid">
-                    <span className="compare-row-label">Metric</span>
-                    <span className="compare-head">{compareLeft.agentName}</span>
-                    <span className="compare-head">{compareRight.agentName}</span>
-                    {compareRows(compareLeft, compareRight).map((row) => (
-                      <div key={row.label} style={{ display: "contents" }}>
-                        <span className="compare-row-label">{row.label}</span>
-                        <span className="compare-cell">{row.left}</span>
-                        <span className={`compare-cell ${row.delta != null && row.delta > 0 ? "delta-pos" : row.delta != null && row.delta < 0 ? "delta-neg" : ""}`}>{row.right}{row.delta != null && row.delta !== 0 ? ` (${row.delta > 0 ? "+" : ""}${row.delta.toFixed(2)})` : ""}</span>
-                      </div>
-                    ))}
-                  </div>
+              {compareMode && <div className="callout callout-neutral"><span>{compareRuns.length < 2 ? `Select ${2 - compareRuns.length} more run(s) to compare.` : `Comparing ${compareRuns.length} runs against ${compareBaseline?.agentName ?? "the baseline"} (first pick). Add up to ${MAX_COMPARE_RUNS}.`}</span></div>}
+              {compareMode && compareRuns.length >= 2 && compareBaseline && (
+                <div className="table-scroll" style={{ marginTop: "1rem" }}>
+                  <table className="matrix-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        {compareRuns.map((run, index) => (
+                          <th key={`head-${run.runKey}`}>
+                            {run.agentName}
+                            <span className="model-chip model-chip-muted">{index === 0 ? "baseline" : run.modelId ?? NO_MODEL_LABEL}</span>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {COMPARE_METRICS.map((metric) => (
+                        <tr key={metric.label}>
+                          <td className="compare-row-label">{metric.label}</td>
+                          {compareRuns.map((run, index) => {
+                            const delta = index === 0 ? null : metric.delta(run, compareBaseline);
+                            return (
+                              <td key={`${metric.label}-${run.runKey}`} className={`compare-cell ${delta != null && delta > 0 ? "delta-pos" : delta != null && delta < 0 ? "delta-neg" : ""}`}>
+                                {metric.value(run)}
+                                {delta != null && delta !== 0 ? ` (${delta > 0 ? "+" : ""}${delta.toFixed(2)})` : ""}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                      <tr>
+                        <td className="compare-row-label">Run key</td>
+                        {compareRuns.map((run) => <td key={`key-${run.runKey}`} className="compare-cell"><button type="button" className="text-link button-reset" onClick={() => openRun(run.runKey)}>{run.runKey.slice(0, 12)}…</button></td>)}
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               )}
+
               <div className="run-list" style={{ marginTop: "1rem" }}>{historyRuns.length > 0 ? historyRuns.map((run) => <RunCard key={run.runKey} run={run} busy={activeRunAction?.endsWith(run.runKey) ?? false} onOpen={() => openRun(run.runKey)} onDelete={() => deleteRunAction(run.runKey)} compareMode={compareMode} comparePicked={compareKeys.includes(run.runKey)} onToggleCompare={() => toggleCompareKey(run.runKey)} />) : <div className="empty-state">Run history will appear here after the first execution.</div>}</div>
             </article>
           </section>

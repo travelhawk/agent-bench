@@ -1,0 +1,13 @@
+[
+  {
+    "label": "vanilla",
+    "agent": "agents/claude-code.md",
+    "review": "off"
+  },
+  {
+    "label": "vanilla+review",
+    "agent": "agents/claude-code.md",
+    "review": "off",
+    "followupPrompt": "Review the code you just wrote as if someone else had written it. Look for data-loss bugs, unhandled edge cases and spec requirements you missed. Then fix every issue you are sure about, re-run npm run typecheck, npm test and npm run build until they pass, and stop."
+  }
+]

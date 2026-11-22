@@ -22,6 +22,7 @@ export interface RunRecord {
   runKey: string;
   benchmarkKey: string | null;
   taskKey: string | null;
+  setupKey: string | null;
   modelId: string | null;
   reviewMode: ReviewMode | null;
   judgeTotalTokens: number;
@@ -60,6 +61,24 @@ export interface RunRecord {
   agentInputTokens: number;
   agentOutputTokens: number;
   agentCostUsd: number;
+  /** Hidden-check results, empty when the task declares no traps. */
+  trapResults?: TrapResult[];
+  /** Rank given by the blind reviewer (1 = best), null when no blind review ran. */
+  blindRank?: number | null;
+  blindNotes?: string | null;
+}
+
+export interface BenchmarkTrap {
+  id: string;
+  description: string;
+}
+
+export interface TrapResult {
+  id: string;
+  description: string;
+  /** error = the trap command failed before any test ran (e.g. port in use); see `detail`. */
+  status: "pass" | "fail" | "unknown" | "error";
+  detail?: string;
 }
 
 export interface RunInput {
@@ -105,6 +124,7 @@ export interface RunInput {
   agentInputTokens?: number;
   agentOutputTokens?: number;
   agentCostUsd?: number;
+  trapResults?: TrapResult[];
 }
 
 export interface RuntimeEvaluationRequest {
@@ -119,13 +139,18 @@ export interface RuntimeEvaluationRequest {
   artifactsRoot: string;
   benchmarksDir?: string;
   benchmarks: BenchmarkSuiteRecord[];
+  /** The model under test: handed to the agent runner, never to the judge. */
   model?: string;
+  /** The model that reviews the work. Defaults to AGENT_BENCH_JUDGE_MODEL. */
+  judgeModel?: string;
   gatewayApiKey?: string;
   review?: "auto" | "off";
   strictSandbox?: boolean;
   resolvedSandboxProvider?: SandboxSelection;
   trialIndex?: number | null;
   environmentFingerprint?: string | null;
+  /** Extra env for the runner (e.g. AGENT_BENCH_FOLLOWUP_PROMPT from a setup variant). */
+  runnerEnv?: Record<string, string>;
   setupSnapshot?: {
     key?: string | null;
     workflowPath?: string | null;
@@ -203,6 +228,9 @@ export interface BenchmarkTaskSandbox {
   verifyCommand?: string;
   provider?: BenchmarkSandboxProvider;
   timeoutMs: number;
+  /** Holdout test files, copied into `<workspace>/traps` only after the runner finished. */
+  trapsDir?: string;
+  trapCommand?: string;
 }
 
 export interface BenchmarkTaskRecord {
@@ -215,6 +243,7 @@ export interface BenchmarkTaskRecord {
   deliverableFormat: string;
   successChecks: string[];
   failureModes: string[];
+  traps?: BenchmarkTrap[];
   metadata: BenchmarkTaskMetadata;
   sandbox: BenchmarkTaskSandbox | null;
 }
@@ -252,9 +281,34 @@ export interface RunEvaluationResult {
   regressed: boolean;
 }
 
+/**
+ * One comparable configuration in a batch. A batch may carry any number of
+ * these, so three or more setups can be measured against each other in a
+ * single launch instead of one agent list pinned to one review model.
+ */
+export interface BatchSetupInput {
+  agentPath: string;
+  model?: string | null;
+  label?: string | null;
+  review?: "auto" | "off" | null;
+  /** Second prompt for runners that support it (claude-code: `claude -p --continue`). */
+  followupPrompt?: string | null;
+  buildPrompt?: string | null;
+  env?: Record<string, string>;
+}
+
+export interface BatchSetupSummary {
+  setupKey: string;
+  agentPath: string;
+  agentName: string;
+  modelLabel: string;
+  review: "auto" | "off";
+}
+
 export interface BatchRunFailure {
   agentPath: string;
   taskKey: string;
+  setupKey: string;
   message: string;
   run?: RunEvaluationResult;
 }
@@ -263,11 +317,30 @@ export interface BatchRunResult {
   runMode: RunMode;
   benchmarkKey: string;
   taskPlan: string[];
+  setups: BatchSetupSummary[];
   queueSize: number;
   completedRuns: number;
   failedRuns: number;
   runs: RunEvaluationResult[];
   failures: BatchRunFailure[];
+  blindReviews?: BlindReviewSummary[];
+}
+
+export interface BlindReviewSummary {
+  taskKey: string;
+  blindDir: string;
+  keyPath: string;
+  verdicts: Array<{ setupKey: string; runKey: string; letter: string; rank: number | null; notes: string | null }>;
+  /** What the reviewer itself spent, read from usage.json next to the blind folder. */
+  usage?: BlindReviewUsage;
+  error?: string;
+}
+
+export interface BlindReviewUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  durationMs: number;
 }
 
 export interface RunResultPayload {

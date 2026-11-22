@@ -1,20 +1,27 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
-export function createDb(dbPath: string): Database.Database {
-  return new Database(dbPath);
+/**
+ * Node ships SQLite in core, so there is no native module to rebuild whenever
+ * the local Node version changes. Everything else refers to this alias instead
+ * of naming the driver.
+ */
+export type Db = DatabaseSync;
+
+export function createDb(dbPath: string): Db {
+  return new DatabaseSync(dbPath);
 }
 
-function columnExists(db: Database.Database, table: string, column: string): boolean {
+function columnExists(db: Db, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return rows.some((row) => row.name === column);
 }
 
-function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string): void {
+function addColumnIfMissing(db: Db, table: string, column: string, definition: string): void {
   if (columnExists(db, table, column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-export function initializeSchema(db: Database.Database): void {
+export function initializeSchema(db: Db): void {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -120,6 +127,24 @@ export function initializeSchema(db: Database.Database): void {
   addColumnIfMissing(db, "runs", "judge_total_tokens", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "runs", "screenshot_file", "TEXT");
   addColumnIfMissing(db, "runs", "video_file", "TEXT");
+  addColumnIfMissing(db, "runs", "trap_results_json", "TEXT");
+  addColumnIfMissing(db, "runs", "blind_rank", "INTEGER");
+  addColumnIfMissing(db, "runs", "blind_notes", "TEXT");
+  addColumnIfMissing(db, "runs", "blind_review_key", "TEXT");
+
+  // One row per blind review (one reviewer call per task of a batch): what the
+  // reviewer spent, so exports long after the batch can still show it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS blind_reviews (
+      review_key TEXT PRIMARY KEY,
+      task_key TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+  `);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

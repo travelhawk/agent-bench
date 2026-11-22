@@ -136,14 +136,16 @@ test("buildComparisonMatrix aggregates per agent × model setup with token total
     assert.deepEqual(matrix.taskKeys, ["fix-react-bug", "security-audit-report"]);
     assert.deepEqual(matrix.benchmarkKeys, ["repo-maintenance"]);
 
-    const setupB = matrix.setups[0];
+    // coder-b only has a review-off run: no judge, so no score (n/a) and it ranks after the judged setup.
+    const setupB = matrix.setups[1];
     assert.equal(setupB.setupKey, "coder-b · anthropic/claude-sonnet-5");
-    assert.equal(setupB.avgScore, 8.6);
+    assert.equal(setupB.avgScore, null);
+    assert.equal(setupB.avgQuality, null);
     assert.equal(setupB.completedCount, 1);
     assert.equal(setupB.failedCount, 1);
     assert.equal(setupB.judgeTokens, 0);
 
-    const setupA = matrix.setups[1];
+    const setupA = matrix.setups[0];
     assert.equal(setupA.setupKey, "coder-a · openai/gpt-4.1-mini");
     assert.equal(setupA.avgScore, 6.2);
     assert.equal(setupA.avgQuality, 6);

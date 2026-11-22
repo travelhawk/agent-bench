@@ -1,7 +1,112 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-22
 
+Fixes from an independent review of the whole branch. The two guarantees held — traps never reach the
+workspace before the runner exits, and the blind key stays outside the reviewer's folder — but the
+review found ways a measurement could still go quietly wrong.
+
+- **The blind folder keeps more of its blindness.** The strip list missed `.agent/` and `.oneshot/`,
+  two of the three workflow-state folders this repo's own fixture `.gitignore` anticipates, plus
+  `.cursor/`, `.specstory/`, `.vscode/`, `.aider.*` and a workspace `.env`. A workflow that leaves
+  state behind, next to one that leaves none, splits the builds into two groups before the reviewer
+  reads a line of code. Every unrecognised dotted directory is now dropped as well, at any depth, so
+  new agent tooling cannot sign its own build; the list is matched case-insensitively, because
+  `Claude.md` used to survive while `CLAUDE.md` was stripped; and symlinks are skipped, since a link
+  can name the run it came from or lead back out to `traps/`
+- **A task can no longer hide the holdout inside its own fixture.** Benchmarks are user-written
+  markdown, so `Fixture Dir: .` used to copy `traps/` into the workspace before the agent started and
+  invalidate every number of that run, with no error. The runner now refuses that layout
+- **One locked file no longer costs a batch its whole blind review.** Laying out the letter folders sat
+  outside the per-task error handling, so a single failed copy replaced every task's summary with an
+  error — including tasks already reviewed, whose ranks were in the database
+- **Trap totals agree between the terminal and the exports.** They counted an errored trap differently,
+  so the same run printed `n/a` in one place and `0/5` in the other. An errored trap is neither a pass
+  nor a fail, so it no longer counts as decided anywhere
+- **The workbench and its report are built from the same runs.** The board rendered 100 runs while
+  "Copy report" and "Download" rendered 200, so the exported artefact disagreed with the view it came
+  from. Both use one window now
+- **Ctrl-C stops a run without waiting on the process table.** On Windows the leftover reaper was the
+  only thing that killed the tree, and it reads the process list through PowerShell, which can come
+  back empty under load: one failed enumeration left the agent and its dev server running. The tracked
+  child is now killed directly first, and the enumeration gives up after 8 seconds instead of 30
+- **The leftover reaper cannot kill an unrelated process.** An exited pid stays a tree root so orphans
+  are still found, but once Windows reuses that id, the new owner's children have our dead pid as their
+  parent, and the run-start cutoff never excluded them. A dead root now only adopts children that
+  started while it was last known to be alive
+- **`--trials` runs record which trial they were.** The trial number was computed and then dropped
+  between the planner and the job, so `runs.trial_index` was NULL for every trial of every batch
+- **A retried cell replays its setup's behaviour, not just its label.** The rebuilt job carried the
+  setup key but not the prompts or env, so a retry could file a plain run under the column of a setup
+  that has a follow-up prompt — a corrupted column that still looks valid
+- **Export escaping.** Setup labels are free text and went into Markdown tables unescaped, so a `|`
+  broke the table; in CSV they were not defused, so a label starting with `=` became a formula in
+  Excel. This suite ships a `csv-formula-roundtrip` trap for that exact bug in the builds it measures
+- **Corrected the Node floor from 22.5 to 22.13.** `node:sqlite` exists from 22.5.0 but needed
+  `--experimental-sqlite` until 22.13.0, so 22.5 to 22.12 was published as supported although the CLI
+  cannot start there. The published binary is now a small guard that checks the version before anything
+  imports `node:sqlite`; the old `doctor` FAIL branch could never print, because the process died at
+  module load with a raw "No such built-in module" stack
+- The npm tarball no longer ships the compiled web app and test suite (`dist/app`, `dist/tests`)
+
+Everything else in this release:
+
+- The comparison board's review-cost line no longer starts mid-sentence. With every run judged, the
+  two optional clauses before it dropped out and left a bare "only 10 run(s) spent fresh judge tokens"
+- Added a `LICENSE` file (MIT). `package.json` had declared MIT since the start, but without the file
+  GitHub showed no license, which legally means all rights reserved
+- Prepared the package for npm: `files`, `repository`, `author`, `homepage` and `bugs`, so an install
+  ships the CLI together with the benchmark suites and the example workspace
+- Fixed `agent-bench ui` failing on Windows with `spawn EINVAL`. It spawned the `node_modules/.bin`
+  shim, and since Node 20.12 Windows refuses to spawn a `.cmd` file without a shell. The Next
+  entrypoint now runs under this process's own node binary, which needs no shell on any platform
+- `agent-bench ui` outside a checkout now says that the workbench needs the repository and that every
+  other command works where it stands. Turbopack cannot treat a directory inside `node_modules` as a
+  project root, so the packaged app would have failed later with "Could not find the Next.js package"
+- Fixed `init` seeding a workspace from the wrong directory when run from an installed package:
+  `resolvePackagedBenchmarksDir` searched for a directory named `benchmarks` and found the compiled
+  `dist/src/benchmarks` module directory first, so a fresh workspace got `files.js` and `metadata.js`
+  instead of suites, and the `workflow-builds` suite — the one the README's comparison uses — was
+  missing entirely. The packaged paths now anchor on the package root
+- Fixed `init` never creating `.env` outside a checkout: it only looked for `.env.sample` in the current
+  directory, which a fresh workspace does not have. It now falls back to the packaged template
+- Made the shipped `workflow-builds` setups portable: `vanilla+review` now uses a plain review prompt
+  instead of a slash command from a third-party plugin pinned to one local path and version. Comparing a
+  plugin workflow is documented as a user-supplied setup instead of shipped as a default
+- Rewrote the README around what the tool does and how to run a comparison. It used to open with roughly
+  fifty lines of release notes before the first command; those live in this file
+- Replaced the placeholder workflow template in `AGENTS.md` with guidance specific to this repository,
+  and removed its duplicate under `.agents/` and the stale `Creator.env_sample`
+
+- Fixed a fake quality score without a judge: rules/`--no-judge` runs stored a constant quality 6.00 and a "rules score" that rated the agent markdown wording. Quality and judge score are now `n/a` in every view (stored old values of rules runs are ignored), the rules-mode total uses only objective build signals, "Rules score" is gone from the winners, and setups without a judge are ordered by traps, then blind rank
+- Fixed the blind reviewer cost missing in `export` and `matrix`: reviewer usage is stored per review (`blind_reviews` table, `runs.blind_review_key`) and counted in batch totals on every export path. `agent-bench blind-import <blind-folder>` backfills older reviews
+- Fixed `compare-setups --trials n` running each setup only once: the option was parsed but never passed to the batch. Trials now work on `compare-setups` and `compare-models`; the comparison adds a metrics block per setup (wall time, agent input/output tokens, agent cost as avg with min-max) and batch totals including the blind reviewer's cost
+- Fixed every trap ending `unknown` when a build left a server on port 4173: the trap command now gets a free port in `AGENT_BENCH_TRAP_PORT`, leftover child processes of runner/verify/trap commands are killed, and a trap command that dies before any test ran marks traps `error` with the first output line as a footnote
+- Fixed the batch dying silently during blind review: the default reviewer ran `taskkill /IM node.exe`, which also killed agent-bench. The reviewer now denies name-based kills, writes `usage.json`, and a failing review never costs the batch its report. Top-level CLI errors now always print message and stack
+- Added **traps** (hidden checks): `## Traps` (`- <id>: <description>`) plus `Traps Dir:` / `Trap Command:` in a task's `## Sandbox`. The holdout tests are copied into the workspace only after the runner finished; results are mapped per trap id from a Vitest or Playwright JSON report, stored per run (`trap_results_json`) and shown as a trap matrix in the terminal and in md/csv/json/html exports. `agent-bench traps --workspace <dir>` runs them against any finished build
+- Added **blind review**: `--blind-review "<command>"` on `compare-models` and the new `compare-setups`. Completed workspaces are anonymised to shuffled letters (key stored outside the reviewer's folder), the reviewer writes `ranking.json`, and ranks land on the runs (`blind_rank`, `blind_notes`) and in every export. Default reviewer: `agents/blind-reviewer/run.mjs` (`claude -p` with a rubric)
+- Added the `claude-code` agent (`claude -p --permission-mode bypassPermissions` in the workspace, optional `--continue` follow-up per setup, usage self-report) and `compare-setups --setups-file --setups a,b` for workflow variants without new agent files. `init` installs both agents
+- Added `Env Passthrough:` for agent files, and the sandbox now keeps `SystemRoot`, `ComSpec`, `PATHEXT`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` so Windows runners (npm, `claude`, Playwright) find their config and auth
+- Added the `workflow-builds` benchmark with the Haushaltsbuch task (Vite + TS spec build) and five Playwright traps: double-delete, corrupt-storage, two-tabs, amount-thousands, csv-formula-roundtrip
+- Added `agent-bench compare-models --models a,b,c`: one command plans one setup per model, runs the batch against a constant agent and task, prints the ranked table with a winner per metric, and with `--format md|csv|json|html` (plus `--out`) writes the shareable report in the same step. Takes `--agent`, `--benchmark`, `--task`, `--judge-model`, `--no-judge`, and `--db`; refuses fewer than two distinct models
+- Added `agent-bench doctor`: checks Node (`node:sqlite` needs 22.5+, stable in 24), that the database opens, the gateway key, benchmark suites, agents (and how many are actually executable), and the sandbox provider. Prints PASS / WARN / FAIL with the fix next to each problem and exits non-zero only on a FAIL, so a missing gateway key is a warning rather than a blocker
+- **Separated the model under test from the judge model.** A runner-backed agent spends `--model` on its own work, so handing that same model to the grader would vary two things at once in a model-vs-model comparison. `resolveJudgeModelForRun` now resolves the judge from `--judge-model` / `AGENT_BENCH_JUDGE_MODEL` and only falls back to `model` for review-only agents, which have no model of their own. A batch uses one judge across every setup. Previously the runner was handed the *judge-resolved* model, so with `--model` unset it silently received `openai/gpt-4.1-mini`. `judgeModel` is threaded through `runSingle`, `runBatch`, `POST /api/run/batch`, and the run summary, which now records `model` and `judgeModel` separately
+- Added a shipped `model-coder` agent (`examples/sample-workspace/agents/model-coder.md` + `run.mjs`): a model-agnostic single-shot coding runner that reads the task brief and workspace, asks `AGENT_BENCH_PROVIDER_MODEL` for a complete set of file edits, applies them, restores `tests/` so the verifier cannot be gamed, refuses writes that resolve outside the workspace, and self-reports token usage to `result/usage.json`. A model-vs-model comparison no longer requires writing a runner first
+- An agent can now declare `Requires Network: yes` in its markdown. A runner that calls a model needs egress even when the task itself does not, so a sandboxed run satisfies both the task's and the agent's declaration instead of forcing every benchmark task to open the network
+- `agent-bench init` now seeds a usable workspace instead of only creating the database: it installs the benchmark suites, the executable `model-coder` agent, and a `.env` from `.env.sample` when each is missing, then names the next command. Previously `init` left a workspace with nothing to run, and `doctor` would have told the user to run `init` again
+- Added `--judge-model` to `agent-bench run`, and split the Test Lab's single model field into **Model(s) under test** and a separate **Judge model**, both persisted. The batch request carries `judgeModel`
+- Fixed `node --test` verifiers reporting no test metrics. `parseNodeTestTapSummary` only matched TAP output (`# pass 2`), but `node --test` prints `ℹ pass 2` under its default reporter, so a sandboxed run's test counts were silently dropped and the outcome fell back to binary pass/fail. Both reporter shapes now parse. The existing runner tests only passed because they ran *inside* `node --test`, which made the nested runner emit TAP
+- Fixed a setup labelled by its own model rendering the model twice (`anthropic/claude-opus-5 · anthropic/claude-opus-5`) in the terminal matrix, the Markdown and HTML exports, and the workbench comparison board. Added `setupModelSuffix` next to `setupDisplayName` so all five render sites share one rule
+- Extracted the terminal comparison renderer into `src/core/matrix-print.ts`, so `matrix` and `compare-models` print the same table from the same code and the formatting is testable without a database
+- Replaced the `better-sqlite3` native module with Node's built-in **`node:sqlite`**. `better-sqlite3` has to be compiled per Node ABI, so every Node upgrade broke the database with `ERR_DLOPEN_FAILED` until `pnpm rebuild better-sqlite3` succeeded — which itself needs a working node-gyp/MSBuild toolchain. `node:sqlite` ships with Node, needs no build step, and reads the same database files, so existing `~/.agent-bench/data.db` histories are untouched. Drops the `better-sqlite3` and `@types/better-sqlite3` dependencies and adds `engines.node >= 22.5.0`; CI now runs Node 24, where `node:sqlite` is stable
+- Added comparison **export and sharing**: the Comparison tab can copy or download the current comparison as Markdown, CSV, JSON (`agent-bench.comparison/v1`), or a self-contained HTML report, and can copy a deep link (`?view=compare&benchmark=...`) for people who already run the workbench. A per-row **Share** checkbox narrows the export to a chosen subset of setups. Every export ranks all setups and names a winner per metric (score, quality, tests, speed, leanest tokens, cheapest). The HTML report embeds no scripts and makes no external requests, and all untrusted labels are escaped
+- Added `agent-bench export` (`--format --benchmark --task --setups --limit --title --share-url --out`) and `GET /api/comparison/export`, plus `GET /api/comparison` for the raw matrix. Like the comparison itself, both render only from persisted SQLite rows, so sharing costs zero tokens
+- A batch can now compare **more than two setups**: `/api/run/batch` accepts `setups: [{ agentPath, model, label, review }]`, so each agent carries its own review model instead of one model being pinned across the whole batch. Labels must be unique, identical agent+model entries collapse, and the previous `agents[] + model` form still works as the single-model shorthand. Capped at 12 setups (and the existing 48 runs) per launch
+- The Test Lab's `Review model` field became `Review model(s)` — one model per line — and previews the resulting setups as chips before launch; the plan metric now reads `Setups × Tasks = Runs`
+- `agent-bench compare` now takes two or more run keys (`compare <a> <b> <c>`) and reports each as a delta against the first, plus a winner line; `--left/--right` still works. Run History compares up to six runs side by side instead of exactly two
+- Runs now persist their `setup_key`: the column existed and the runtime already carried a `setupSnapshot`, but the service never populated it, so every comparison had to re-derive the setup from the agent name and model and custom batch labels were lost. A custom label now shows up everywhere a setup is named: the Comparison leaderboard and heatmap, `agent-bench matrix`, and every export
+- Fixed batch runs recording `agentVersion: "v1"` for every agent: the version probe used `/v\\d+/i` (a literal backslash followed by `d`) instead of `/v\d+/i`, so it never matched. The single-run path was already correct
+- Failed batch jobs now persist their setup key, workflow path, and model id, so a failure shows up in the right comparison column instead of an unattributed row
 - Added a **Comparison** view to the workbench: every agent × model setup side by side with score, quality, test pass counts, average duration, agent tokens, judge tokens, and cost as visual bars, plus a per-task score heatmap and a benchmark filter — all aggregated client-side from persisted runs, so browsing and re-rendering the comparison never spends tokens
 - Added an `agent-bench matrix` CLI command that prints the same agent × model comparison (with ASCII score bars and per-task averages) from the local SQLite history
 - Runs now persist their `benchmark_key`, `task_key`, `model_id`, `review_mode`, and `judge_total_tokens`; previously the model used for a run was dropped on insert, which made model-vs-model comparison impossible from history

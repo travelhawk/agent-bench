@@ -7,9 +7,9 @@ import { executeBatchPlan, runBatch } from "../src/server/service";
 
 test("executeBatchPlan keeps later jobs running when one job fails", async () => {
   const jobs = [
-    { benchmarkKey: "product-builds", taskKey: "simple-feedback-web-app", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1" },
-    { benchmarkKey: "product-builds", taskKey: "release-notes-cli", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1" },
-    { benchmarkKey: "repo-maintenance", taskKey: "security-audit-report", agentPath: "agents/reviewer.md", agentName: "reviewer", agentVersion: "v1" }
+    { benchmarkKey: "product-builds", taskKey: "simple-feedback-web-app", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1", setupKey: "coder · gpt", review: "auto" as const },
+    { benchmarkKey: "product-builds", taskKey: "release-notes-cli", agentPath: "agents/coder.md", agentName: "coder", agentVersion: "v1", setupKey: "coder · gpt", review: "auto" as const },
+    { benchmarkKey: "repo-maintenance", taskKey: "security-audit-report", agentPath: "agents/reviewer.md", agentName: "reviewer", agentVersion: "v1", setupKey: "reviewer · gpt", review: "auto" as const }
   ];
 
   const order: string[] = [];
@@ -34,6 +34,7 @@ test("executeBatchPlan keeps later jobs running when one job fails", async () =>
     {
       agentPath: "agents/coder.md",
       taskKey: "release-notes-cli",
+      setupKey: "coder · gpt",
       message: "judge gateway timed out"
     }
   ]);

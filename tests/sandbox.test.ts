@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,8 +9,30 @@ import {
   resolveCommandLookupSpec,
   resolveShellSpec,
   runSandboxedCommand,
+  stopActiveChildren,
   supportsDockerSandbox
 } from "../src/runtime/sandbox";
+
+/**
+ * Best-effort cleanup. Windows releases a killed process's directory handle some
+ * time after the kill call returns, so a removal right afterwards fails with
+ * EPERM or EBUSY, and rm's own maxRetries covers neither. Wait for the handle,
+ * but never fail a test over a leftover directory under os.tmpdir(): the run
+ * asserts what stopActiveChildren did, and that is checked before this point.
+ */
+async function removeDir(dir: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 
 test("resolveCommandLookupSpec uses where on Windows and which elsewhere", () => {
   assert.deepEqual(resolveCommandLookupSpec("node", "win32"), {
@@ -91,6 +114,36 @@ test("runSandboxedCommand can execute inside the docker provider when available"
       process.env.AGENT_BENCH_SANDBOX_DOCKER_IMAGE = previousImage;
     }
 
-    rmSync(workspace, { recursive: true, force: true });
+    await removeDir(workspace);
+  }
+});
+
+test("stopActiveChildren kills a running detached command (used by the SIGINT/SIGTERM handler)", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "agent-bench-sigint-"));
+  const previousProvider = process.env.AGENT_BENCH_SANDBOX_PROVIDER;
+  process.env.AGENT_BENCH_SANDBOX_PROVIDER = "process";
+  try {
+    writeFileSync(path.join(root, "hold.js"), "setTimeout(() => {}, 60000);\n");
+    const started = Date.now();
+    const pending = runSandboxedCommand({
+      command: "node hold.js",
+      cwd: root,
+      workspaceDir: root,
+      artifactsDir: root,
+      timeoutMs: 60000,
+      allowNetwork: false,
+      label: "sigint",
+      killLeftovers: true
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await stopActiveChildren();
+    const result = await pending;
+    assert.ok(Date.now() - started < 30000, "command should end well before its timeout");
+    assert.equal(result.timedOut, false);
+    assert.equal(result.provider, "process");
+  } finally {
+    if (previousProvider === undefined) delete process.env.AGENT_BENCH_SANDBOX_PROVIDER;
+    else process.env.AGENT_BENCH_SANDBOX_PROVIDER = previousProvider;
+    await removeDir(root);
   }
 });

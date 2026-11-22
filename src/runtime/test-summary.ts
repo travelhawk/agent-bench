@@ -9,19 +9,26 @@ export function isNodeTestRunnerCommand(verifyCommand: string): boolean {
   return /\bnode(\.exe)?\s+(--test\b|--experimental-test-runner\b)/.test(verifyCommand);
 }
 
+/**
+ * `node --test` reports its totals in two shapes: `# pass 2` under a TAP
+ * reporter, and `ℹ pass 2` under the default spec reporter. A task owns its
+ * verify command, so the harness reads whichever shape that command produced
+ * instead of rewriting it to force one reporter.
+ */
+function matchSummaryCount(stdout: string, label: "tests" | "pass" | "fail"): number | null {
+  const pattern = new RegExp(String.raw`^(?:#|ℹ)\s+` + label + String.raw`\s+(\d+)\s*$`, "m");
+  const match = stdout.match(pattern);
+  return match ? Number(match[1]) : null;
+}
+
 export function parseNodeTestTapSummary(stdout: string): TestRunSummary | null {
-  const testsMatch = stdout.match(/^# tests (\d+)$/m);
-  const passMatch = stdout.match(/^# pass (\d+)$/m);
-  const failMatch = stdout.match(/^# fail (\d+)$/m);
+  const total = matchSummaryCount(stdout, "tests");
+  const passed = matchSummaryCount(stdout, "pass");
+  const failed = matchSummaryCount(stdout, "fail");
 
-  if (!testsMatch || !passMatch || !failMatch) return null;
+  if (total == null || passed == null || failed == null) return null;
 
-  return {
-    available: true,
-    total: Number(testsMatch[1]),
-    passed: Number(passMatch[1]),
-    failed: Number(failMatch[1])
-  };
+  return { available: true, total, passed, failed };
 }
 
 /**

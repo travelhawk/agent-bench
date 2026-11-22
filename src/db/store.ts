@@ -1,5 +1,5 @@
-import Database from "better-sqlite3";
-import { RunInput, RunRecord } from "../types";
+import { Db } from "./schema";
+import { BlindReviewUsage, RunInput, RunRecord, TrapResult } from "../types";
 
 export interface DashboardSummary {
   totalRuns: number;
@@ -7,7 +7,7 @@ export interface DashboardSummary {
   totalCost: number;
 }
 
-export function insertRun(db: Database.Database, input: RunInput): RunRecord {
+export function insertRun(db: Db, input: RunInput): RunRecord {
   db.prepare(`
     INSERT INTO runs (
       run_key, experiment_key, benchmark_key, task_key, setup_key, workflow_path, model_id, trial_index,
@@ -18,7 +18,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
       diff_available, diff_files_changed, diff_insertions, diff_deletions,
       verifier_tests_available, verifier_tests_total, verifier_tests_passed,
       quality_score, agent_usage_available, agent_input_tokens, agent_output_tokens, agent_cost_usd,
-      review_mode, judge_total_tokens, screenshot_file, video_file
+      review_mode, judge_total_tokens, screenshot_file, video_file, trap_results_json
     ) VALUES (
       @run_key, @experiment_key, @benchmark_key, @task_key, @setup_key, @workflow_path, @model_id, @trial_index,
       @agent_name, @agent_version, @suite_name, @status,
@@ -28,7 +28,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
       @diff_available, @diff_files_changed, @diff_insertions, @diff_deletions,
       @verifier_tests_available, @verifier_tests_total, @verifier_tests_passed,
       @quality_score, @agent_usage_available, @agent_input_tokens, @agent_output_tokens, @agent_cost_usd,
-      @review_mode, @judge_total_tokens, @screenshot_file, @video_file
+      @review_mode, @judge_total_tokens, @screenshot_file, @video_file, @trap_results_json
     )
   `).run({
     run_key: input.runKey,
@@ -71,7 +71,8 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
     review_mode: input.reviewMode ?? null,
     judge_total_tokens: input.judgeTotalTokens ?? 0,
     screenshot_file: input.screenshotFile ?? null,
-    video_file: input.videoFile ?? null
+    video_file: input.videoFile ?? null,
+    trap_results_json: input.trapResults && input.trapResults.length > 0 ? JSON.stringify(input.trapResults) : null
   });
 
   const row = db.prepare(`
@@ -81,7 +82,7 @@ export function insertRun(db: Database.Database, input: RunInput): RunRecord {
   return mapRun(row);
 }
 
-export function getRunByKey(db: Database.Database, runKey: string): RunRecord | null {
+export function getRunByKey(db: Db, runKey: string): RunRecord | null {
   const row = db.prepare(`
     SELECT * FROM runs WHERE run_key = ?
   `).get(runKey) as Record<string, unknown> | undefined;
@@ -89,14 +90,87 @@ export function getRunByKey(db: Database.Database, runKey: string): RunRecord | 
   return row ? mapRun(row) : null;
 }
 
-export function deleteRunByKey(db: Database.Database, runKey: string): boolean {
+/** Stores the blind reviewer's verdict on an already persisted run. */
+export function setBlindReview(db: Db, runKey: string, rank: number | null, notes: string | null): void {
+  db.prepare(`UPDATE runs SET blind_rank = ?, blind_notes = ? WHERE run_key = ?`).run(rank, notes, runKey);
+}
+
+/** Records (or replaces) what one blind review spent and links it to the reviewed runs. */
+export function saveBlindReviewUsage(db: Db, input: {
+  reviewKey: string;
+  taskKey: string | null;
+  usage: BlindReviewUsage | null;
+  runKeys: string[];
+}): void {
+  const usage = input.usage ?? { inputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0 };
+  db.prepare(`
+    INSERT INTO blind_reviews (review_key, task_key, input_tokens, output_tokens, cost_usd, duration_ms, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(review_key) DO UPDATE SET
+      task_key = excluded.task_key,
+      input_tokens = excluded.input_tokens,
+      output_tokens = excluded.output_tokens,
+      cost_usd = excluded.cost_usd,
+      duration_ms = excluded.duration_ms
+  `).run(
+    input.reviewKey,
+    input.taskKey,
+    Math.round(usage.inputTokens),
+    Math.round(usage.outputTokens),
+    usage.costUsd,
+    Math.round(usage.durationMs),
+    new Date().toISOString()
+  );
+  const link = db.prepare(`UPDATE runs SET blind_review_key = ? WHERE run_key = ?`);
+  for (const runKey of input.runKeys) link.run(input.reviewKey, runKey);
+}
+
+/**
+ * Sums the blind reviews that reviewed any of these runs (each review counted
+ * once). Null when none of the runs was blind-reviewed with stored usage.
+ */
+export function sumBlindReviewUsageForRuns(db: Db, runKeys: string[]): BlindReviewUsage | null {
+  if (runKeys.length === 0) return null;
+  const reviewKeys = new Set<string>();
+  const lookup = db.prepare(`SELECT blind_review_key FROM runs WHERE run_key = ?`);
+  for (const runKey of runKeys) {
+    const row = lookup.get(runKey) as { blind_review_key?: unknown } | undefined;
+    if (row?.blind_review_key) reviewKeys.add(String(row.blind_review_key));
+  }
+  if (reviewKeys.size === 0) return null;
+  const read = db.prepare(`SELECT input_tokens, output_tokens, cost_usd, duration_ms FROM blind_reviews WHERE review_key = ?`);
+  const total: BlindReviewUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0 };
+  let found = 0;
+  for (const key of reviewKeys) {
+    const row = read.get(key) as Record<string, unknown> | undefined;
+    if (!row) continue;
+    found += 1;
+    total.inputTokens += Number(row.input_tokens ?? 0);
+    total.outputTokens += Number(row.output_tokens ?? 0);
+    total.costUsd += Number(row.cost_usd ?? 0);
+    total.durationMs += Number(row.duration_ms ?? 0);
+  }
+  return found > 0 ? total : null;
+}
+
+function parseTrapResults(value: unknown): TrapResult[] {
+  if (typeof value !== "string" || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as TrapResult[] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function deleteRunByKey(db: Db, runKey: string): boolean {
   const result = db.prepare(`
     DELETE FROM runs WHERE run_key = ?
   `).run(runKey);
   return result.changes > 0;
 }
 
-export function listRuns(db: Database.Database, limit = 20): RunRecord[] {
+export function listRuns(db: Db, limit = 20): RunRecord[] {
   const rows = db.prepare(`
     SELECT * FROM runs
     ORDER BY datetime(created_at) DESC, id DESC
@@ -106,12 +180,12 @@ export function listRuns(db: Database.Database, limit = 20): RunRecord[] {
   return rows.map(mapRun);
 }
 
-export function getBestScore(db: Database.Database): number | null {
+export function getBestScore(db: Db): number | null {
   const row = db.prepare(`SELECT MAX(score) as best FROM runs`).get() as { best: number | null };
   return row.best;
 }
 
-export function getDashboardSummary(db: Database.Database): DashboardSummary {
+export function getDashboardSummary(db: Db): DashboardSummary {
   const totalRuns = (db.prepare(`SELECT COUNT(*) as c FROM runs`).get() as { c: number }).c;
   const avgScore = (db.prepare(`SELECT COALESCE(AVG(score), 0) as s FROM runs`).get() as { s: number }).s;
   const totalCost = (db.prepare(`SELECT COALESCE(SUM(cost_usd), 0) as c FROM runs`).get() as { c: number }).c;
@@ -134,6 +208,7 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     runKey: String(row.run_key),
     benchmarkKey: row.benchmark_key == null ? null : String(row.benchmark_key),
     taskKey: row.task_key == null ? null : String(row.task_key),
+    setupKey: row.setup_key == null ? null : String(row.setup_key),
     modelId: row.model_id == null ? null : String(row.model_id),
     reviewMode: row.review_mode == null ? null : String(row.review_mode) as RunRecord["reviewMode"],
     judgeTotalTokens: Number(row.judge_total_tokens ?? 0),
@@ -171,6 +246,9 @@ function mapRun(row: Record<string, unknown>): RunRecord {
     agentUsageAvailable: Boolean(row.agent_usage_available),
     agentInputTokens: Number(row.agent_input_tokens ?? 0),
     agentOutputTokens: Number(row.agent_output_tokens ?? 0),
-    agentCostUsd: Number(row.agent_cost_usd ?? 0)
+    agentCostUsd: Number(row.agent_cost_usd ?? 0),
+    trapResults: parseTrapResults(row.trap_results_json),
+    blindRank: row.blind_rank == null ? null : Number(row.blind_rank),
+    blindNotes: row.blind_notes == null ? null : String(row.blind_notes)
   };
 }
